@@ -4,36 +4,41 @@
 
 ## 結論（このプロジェクトは何か）
 
-**Stack Atlas** は、リポジトリから「インフラ → 画面 → コンポーネント → 型」を抽出し、
+**Stack Atlas** は、リポジトリ（1 つでも複数でも）から「インフラ → 画面 → コンポーネント → 型」を抽出し、
 層を Z 軸に積み重ねた 3D マップとして 1 画面で表示するツール。
 ホバーで依存先・影響範囲が赤くハイライトされ、データフローとキャッシュの挙動がアニメーションで見え、ノードにメモを書ける。
 
-現状は **Phase 0〜5 がフィクスチャリポジトリ（`examples/fixture-repo/`）に対して完了**している。
-抽出器 → `graph.json` → ビューアの 3 部品、`stack-atlas` CLI（build / validate / serve / diff / init-flows）、メモ共有・差分表示・配信テンプレートまで動く。
-次のゴールは **ユーザーの実リポジトリへの適用**（未決事項 Q2）。最初の単一 HTML プロトタイプ（`prototype/`）は参照用に残している。
+現状: **Phase 0〜5（フィクスチャ `examples/fixture-repo/`）と Phase 7「どんな構成にもはめる」が完了**し、**Phase 6（実リポジトリへの適用）はグラフ生成まで完了**。
+抽出器 12 個（files / cdktf / terraform / cloudformation / nextjs-app / ts-imports / go / openapi / sql / api-link / cache / screenshots）→ `graph.json` → ビューア、`stack-atlas` CLI（build / validate / serve / diff / init-flows）、メモ共有・差分表示・配信テンプレートまで動く。
+ユーザーの実リポジトリ 2 つ（`damage-web`: Next 静的エクスポート → S3 + CloudFront、`damage-platform`: Go Lambda ×5 ＋ Terraform HCL ＋ OpenAPI ＋ SQL）で **149 ノード / 330 エッジ / エラー 0 / 警告 0**。
+残りは、150 ノードで密になるビューアのレイアウト・LOD・検索（**進行中**）、実アプリのスクショ・flows・配信先。最初の単一 HTML プロトタイプ（`prototype/`）は参照用に残している。
 
 ## まず読む順番
 
 1. `HANDOFF.md` — 現在地（§0）、経緯・決定事項・ユーザーの反応・未決事項（必読）
 2. `docs/02-architecture.md` — アーキテクチャ（抽出器 → graph.json → ビューア）と実装状況
 3. `docs/03-graph-schema.md` + `packages/schema/graph.schema.json` — 中間フォーマット
-4. `docs/06-roadmap.md` — フェーズ別タスクと達成状況（Phase 6 が次）
+4. `docs/06-roadmap.md` — フェーズ別タスクと達成状況（Phase 6 の残りと Phase 7-6 が進行中）
 5. `docs/08-design-phase0-1.md` — Phase 0・1 の設計・決定事項 D1〜D8
 6. `docs/09-design-phase2-5.md` — Phase 2〜5 の設計・決定事項 D9〜D13、設定ファイル（§3.3）
-7. `docs/10-screenshots-guide.md`（`data-component` と screenshots の設定）、`docs/11-sharing.md`（メモ・差分・配信）、`docs/ci-example.yml`
-8. 必要に応じて `docs/05-viewer-spec.md`（UI 仕様）、`docs/04-extractors.md`（抽出方法）、各 `extractors/*/README.md`
+7. `docs/12-design-generalization.md` — Phase 6・7 の設計（複数 repo、Terraform / Go / OpenAPI / SQL、`classify` / `files` / `kinds`）、決定事項 D14〜D19、末尾に実装結果
+8. `docs/13-apply-to-your-repo.md` — 実リポジトリへの適用ガイド（設定キー一覧、ID の規約、制限）
+9. `docs/10-screenshots-guide.md`（`data-component` と screenshots の設定）、`docs/11-sharing.md`（メモ・差分・配信）、`docs/ci-example.yml`
+10. 必要に応じて `docs/05-viewer-spec.md`（UI 仕様）、`docs/04-extractors.md`（抽出方法）、各 `extractors/*/README.md`
 
 ## 現在の状態と次のタスク
 
-Phase 0〜5 はフィクスチャに対して完了している（テストは `pnpm test` で 253 件、viewer の e2e は 18 件通過・3 件スキップ）。
-**実リポジトリでは一度も動かしていない**。次は Phase 6（`docs/06-roadmap.md`）。着手前に最初に確認すること:
+テストは `pnpm test` で 379 件、viewer の e2e は 18 件。`examples/fixture-poly/`（2 repo の合成）は 56 ノード / 95 エッジ / 2 フロー / エラー 0。
+実リポジトリでは設定を**この公開リポジトリの外**（兄弟ディレクトリ。`repos: { web: ../damage-web, platform: ../damage-platform }`）に置いて build し、149 / 330 / エラー 0 / 警告 0 を確認した（内訳は `HANDOFF.md` §0）。
 
-1. 未決事項 Q2: 対象リポジトリの構成（モノレポか、infra / web / api の分け方、CDKtf の synth 出力の有無、Next の `app/` の場所）
-2. `stack-atlas build <repo> -o out --verbose` を実行し、`detect()` と config（`cdktf.out` / `next.appDir` / `ts.tsconfig` / `deploy` / `api.client`）が合っているか
-3. api-link の取りこぼし（`build` の警告）を `stack-atlas.overrides.yaml` で補う
-4. CloudFront の behavior と ISR 設定のバッジが実際の設定と一致するか（cache 抽出器とルール）
-5. スクショ（`storageState` で認証、`data-component` の付与）、`flows.yaml`、CI（`docs/ci-example.yml`）
-6. 配信先（S3 + CloudFront か `serve`）をユーザーと決める（Q5 は静的ビルドまで実装済みで、配信先は未選定）
+次にやること（`docs/06-roadmap.md` Phase 6 の未了と Phase 7-6）:
+
+1. ビューアの大規模 graph 対応（レイアウトの広がり、ラベルの LOD、検索ボックス）— 別タスクで**進行中**。完了を主張しない
+2. 実アプリのスクショ: サイトを起動し、`data-component` を付け、`screenshots`（`baseUrl` / `routes` / `storageState`）を書く
+3. 実アプリの `flows.yaml`（`init-flows` で雛形は出る。文を直す）
+4. 配信先（S3 + CloudFront か `serve`。Q5）と CI（`docs/ci-example.yml`）
+5. 設定を `damage-web` にコミットするか、非公開の別ディレクトリに置くかをユーザーと決める
+6. fixture-poly の end-to-end を CI に足す（7-7）
 
 ## ユーザーについて
 
@@ -47,6 +52,8 @@ Phase 0〜5 はフィクスチャに対して完了している（テストは `
 ## 作業ルール
 
 - 解析対象は業務コードになりうる。**ソースコードを外部 SaaS に送らない**。抽出もビューアもローカル／自前ホスティングで完結させる。
+- **実リポジトリ（`damage-web` / `damage-platform`）の中身はこの公開リポジトリに入れない**: コード、リソース名、ルート、テーブル名、環境変数名、graph.json、スクショ、issues.json のいずれも。名前と件数だけ書いてよい。実リポジトリ用の config / overrides / flows は実リポジトリ側か非公開の兄弟ディレクトリに置く。
+- 抽出器を書くときの規約: 設定セクションは `sectionFor(ctx, config.xxx)` で自分の repo かを判定する。kind は `classifyKind(ctx, file, defaultKind)` で決めてから ID の接頭辞を付ける（`applyClassify` は ID を変えないため）。`file` は repo 相対パスで返す（複数 repo の `<repo>/` はパイプラインが付ける。自分で付けるなら `repoFile()`）。推定で線を引いたら必ず warn に `推定` と「明示できるキー」を書く（D18）。
 - ビューアは graph.json だけを入力にし、特定プロジェクトの知識をハードコードしない。**ビューアは `@stack-atlas/core` に依存しない**（`@stack-atlas/schema` だけ）。
 - スタック固有の処理はすべて抽出器（extractor）側に閉じ込める。
 - 抽出器の契約は `packages/core/src/types.ts`。変えるときは core 側と各抽出器の両方を直す。
@@ -66,22 +73,26 @@ tsconfig.base.json  eslint.config.js  .prettierrc  .editorconfig  .nvmrc(22)
 .github/workflows/ci.yml           ← lint・typecheck・test・build・サンプル検証・e2e
 packages/
   schema/                          ← graph.json の JSON Schema（正）・型・validateGraph()・検証 CLI
-  core/                            ← 抽出器の契約（src/types.ts）、merge / overrides / flows / rules/ / buildGraph()（src/pipeline.ts）、diff、memos
+  core/                            ← 抽出器の契約（src/types.ts）、repo / classify / deploy / merge / overrides / flows / rules/ / buildGraph()（src/pipeline.ts）、diff、memos
+  tf-graph/                        ← IaC 共通: Terraform JSON → infra ノード・エッジ・cache（cdktf / terraform / cloudformation が使う）
   cli/                             ← stack-atlas コマンド（src/commands/ に build / validate / serve / diff / init-flows）
   viewer/                          ← Vite + TypeScript + three.js の静的アプリ（src/graph・layout・scene・screen・ui、e2e/）
-extractors/
-  cdktf/  nextjs-app/  ts-imports/  ← インフラ層・画面層・コンポーネント／型層
-  api-link/  cache/  screenshots/  ← フロント→API 結線・キャッシュ情報・スクショと regions（READMEあり、screenshots は docs/10）
+extractors/                        ← 12 個。CLI の順: files → cdktf → terraform → cloudformation → nextjs-app → ts-imports → go → openapi → sql → api-link → cache → screenshots
+  files/  cdktf/  terraform/  cloudformation/   ← glob → ノード、インフラ層（CDKtf / HCL / CDK・SAM・CFn）
+  nextjs-app/  ts-imports/  go/                 ← 画面層、TS のコンポーネント／型層、Go のパッケージ
+  openapi/  sql/                                ← 契約: endpoint: と schema:
+  api-link/  cache/  screenshots/               ← フロント→API 結線・キャッシュ情報・スクショと regions（READMEあり、screenshots は docs/10）
 examples/
-  fixture-repo/                    ← 合成モノレポ（config / overrides / flows / memos / 手書き cdk.tf.json / site/）。ワークスペース外
+  fixture-repo/                    ← 合成モノレポ（CDKtf ＋ Next on Lambda ＋ TS。config / overrides / flows / memos / 手書き cdk.tf.json / site/）。ワークスペース外
+  fixture-poly/                    ← 合成 2 リポジトリ（web: Next 静的エクスポート、platform: Go ＋ Terraform HCL ＋ OpenAPI ＋ SQL）。ワークスペース外
   race-site.graph.json             ← 手書きサンプル（プロトタイプのデータ）
 docs/
   01〜07                           ← ビジョン・アーキテクチャ・スキーマ・抽出器・ビューア仕様・ロードマップ・既存ツール
-  08-design-phase0-1.md  09-design-phase2-5.md   ← 設計と決定事項、末尾に実装結果
-  10-screenshots-guide.md  11-sharing.md  ci-example.yml   ← 利用ガイドと CI テンプレート
+  08-design-phase0-1.md  09-design-phase2-5.md  12-design-generalization.md   ← 設計と決定事項、末尾に実装結果
+  10-screenshots-guide.md  11-sharing.md  13-apply-to-your-repo.md  ci-example.yml   ← 利用ガイドと CI テンプレート
   images/                          ← プロトタイプと phase1-* / phase5-* のスクリーンショット
 prototype/                         ← 単一 HTML のプロトタイプ（three.js r160。参照用）
 scripts/                           ← export-prototype-data / validate-graph（互換ラッパ）/ sync-samples
 ```
 
-主なコマンド: `pnpm atlas build examples/fixture-repo -o out --with-viewer --no-screenshots` → `pnpm atlas serve out`、`pnpm validate <graph.json>`、`pnpm dev`（ビューア開発サーバ）。
+主なコマンド: `pnpm atlas build examples/fixture-repo -o out --with-viewer --no-screenshots`（または `examples/fixture-poly`）→ `pnpm atlas serve out`、`pnpm validate <graph.json>`、`pnpm dev`（ビューア開発サーバ）。

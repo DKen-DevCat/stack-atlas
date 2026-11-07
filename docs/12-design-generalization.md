@@ -183,3 +183,61 @@ kinds:                       # 追加 kind の表示定義（graph.json にそ�
 | 7-3 | backend / 結線 | `extractors/go`、`extractors/openapi`、`extractors/sql`、api-link の一般化（clients / callers / targets / endpoint 照合）、nextjs-app の static export と Pages Router |
 | 7-4 | fixture | `examples/fixture-poly/`（web ＋ platform）、README、期待する ID 表 |
 | 7-5 | 統合 | 実リポジトリで `build` → overrides を書く → ビューアで確認（結果は非公開）。fixture-poly の e2e を CI に。docs 更新 |
+
+## 6. 実装結果
+
+7-1〜7-5 を実装した（ビューアの大規模 graph 対応を除く。§6.4）。テストは全体で 379 件（schema 18 / core 86 / viewer 88 / cli 27 / tf-graph 12 / files 6 / cdktf 9 / terraform 9 / cloudformation 10 / nextjs-app 14 / ts-imports 10 / go 13 / openapi 8 / sql 9 / api-link 27 / cache 15 / screenshots 18）。viewer の e2e は 18 件。
+フィクスチャ `examples/fixture-poly/` は 56 ノード / 95 エッジ / 2 フロー / エラー 0 / 警告 0。実リポジトリ 2 つ（非公開。中身はここに書かない）では 149 ノード / 330 エッジ / エラー 0 / 警告 0。使い方は `docs/13-apply-to-your-repo.md`。
+
+### 6.1 設計どおりにできたこと
+
+- `repos` と `sectionFor`、複数 repo のとき `file` を `<repo>/<path>` にする（D14）。抽出器は repo 相対パスを返せばよく、パイプラインが修飾する。`repoFile()` / `fileInRepo()` / `splitRepoFile()` が補助
+- `classify`（`classifyKind()` を抽出器が、`applyClassify()` をパイプラインが使う）、`files` 抽出器、`kinds`（schema と viewer の kind レジストリ）（D19）
+- `deploy.*.{app,handlers,go,nodes}`。`app: next` は S3 でも Lambda でもよい
+- `packages/tf-graph` ＋ terraform（`@cdktf/hcl2json`、module・`var` / `local` / `output` の参照解決、root の自動検出、tfvars）・cloudformation（CDK / SAM / CFn）（D15）
+- go（toolchain なし）、openapi（`endpoint:` と schema の `type:`）、sql（`CREATE TABLE` → `schema:`）（D16・D17）
+- api-link の一般化（`api.clients` / `callers` / `targets`、ラッパー自動検出、照合順 API Gateway → endpoint → `meta.apiRoutes` → `@route`）。nextjs-app の `output: 'export'`・Pages Router・`route.ts`。ts-imports の `classify` と複数 repo の lib 衝突
+- 推定は必ず warn（`推定: …（… で明示できます）`）を出し、設定で上書きできる（D18）
+
+### 6.2 設計からのずれ
+
+| 論点 | 設計 | 実装 |
+|---|---|---|
+| Terraform の ID 衝突 | 規定なし | 同じモジュールで型違いの同名リソースが両方ノードになったら、衝突した全部の末尾を `<type>.<name>` にする（例 `infra:static_site/aws_s3_bucket.site`）。tf-graph の `idOf` 後の共通規則 |
+| `meta.cdktf` | `meta.infra` に寄せる | `meta.infra` が正、`meta.cdktf` は同じ値の別名として残した（既存の rules / api-link / ビューアとの互換） |
+| パイプラインのループ | repo ごとに抽出器を回す | **抽出器が外側、repo が内側**（抽出器 × repo の宣言順）。後続の抽出器が全 repo の先行の結果を `upstream` で読めるようにするため。api-link が他 repo の endpoint / Go ルートを引くのに必要 |
+| `deploy` の検査 | 規定なし | キーの infra ノードが無い・`nodes` の ID が無いのは**エラー**（人が書いたものなので厳密に。overrides と同じ）、`go` / `handlers` が 1 つも合わなければ警告 |
+| `classify` | ID を kind の接頭辞に合わせる | パイプラインの `applyClassify()` は kind / layer だけ書き換え **ID は変えない**（メモ・overrides・flows の結合キー）。ID の接頭辞まで変えたいときは抽出器が `classifyKind()` で作る時点に決める（ts-imports / go） |
+| openapi の重複 | 規定なし | 同じ契約の写しが複数 repo にあれば、上流に openapi 由来の同じ ID があるものは出さない（最初の repo の写しが残る。info ログ） |
+| ラッパー検出 | 本体に `fetch(\`${X}${引数}\`)` を持つ関数 | 推移的にたどる（fetcher → request → fetch）、client ファイルどうしで名前共有、`fetch(getFullUrl(endpoint))` や `BASE + path` も可。パスの前にリテラル（`${BASE}/api${path}`）があるものは検出しない |
+| api-link の `targets` | 無ければ API Gateway、Function URL の Lambda が 1 つなら自動 | API Gateway → Function URL の Lambda。Function URL の Lambda が複数なら、`deploy` / `uses` を 4 段たどって endpoint を実装するハンドラに着くものだけに絞り、1 つに決まれば推定（warn）、決まらなければ info で `api.targets` を促す。fixture-poly は Function URL が 2 つ（api / gmail_webhook）だが gmail_webhook は Go のルートに着かないので `api` に決まる（`examples/fixture-poly/README.md` の「自動では 1 つに決まらない」は実装前の想定で、現在は決まる） |
+| Go の Lambda ↔ `cmd/*` | `function_name` の末尾か `image_uri` | `image_config.command` を先に見て、次に `function_name` / `image_uri` / `handler` / ID / name を `-<name>` 末尾・`/<name>` 含有で照合（`_` と `-` は同一視） |
+| Next の S3 deploy 推定 | CloudFront の origin の S3 が 1 つ | 同じ。CloudFront（`aws_cloudfront_distribution`）からエッジが出ている S3 が 1 つのときだけ。warn `推定` |
+| terraform の `sourceDir` | file / line の探索範囲 | 互換のために残したが実質不要（読んだモジュールの .tf を直接 grep する） |
+| terraform の module の外 | 規定なし | レジストリ / git の module は warn を出して読まない。深さは 5 まで |
+| CloudFormation の対応表 | `TYPE_MAP` | 無い型は `aws_<service>_<resource>` に機械変換（配管の判定がそのまま効く）。SAM の `Events`（Api / HttpApi / SQS / SNS ほか）と `FunctionUrlConfig` も変換 |
+| cache | 規定なし | openapi は `Cache-Control` を宣言する操作だけ cache（`info`）。CloudFront Function は `function_association` を behavior の `rules` に足す |
+
+### 6.3 実リポジトリでの結果（公開してよい数だけ）
+
+構成は `damage-web`（Next.js 16 App Router、静的エクスポート → S3 ＋ CloudFront）＋ `damage-platform`（Go の Lambda 5 つ、素の Terraform HCL、Aurora、Cognito、EventBridge Scheduler、OpenAPI、SQL マイグレーション）。設定は**この公開リポジトリの外**（兄弟ディレクトリで `repos` が両 repo を指す）に置いた。
+
+| 抽出器 | ノード / エッジ | 備考 |
+|---|---|---|
+| terraform | 16 / 22 | module インスタンス 11、リソース 70、未解決の参照 0 |
+| nextjs-app | 6 / 6 | |
+| ts-imports | 78 / 188 | |
+| go | 19 / 50 | |
+| openapi | 27 / 21 | endpoint 10 |
+| sql | 7 / 14 | |
+| api-link | 7 / 30 | 10 endpoint すべてに client の呼び出しと Go ハンドラが結べた |
+| 合計 | 149 / 330 | エラー 0、警告 0 |
+
+Lambda 5 つ → Go 入口の推定、DB の推定、Function URL の呼び先の推定は、すべて当たっていた（各 1 行の `推定` が出る。`deploy` / `sql.db` / `api.targets` で黙らせられる）。
+ビューアでは、endpoint を指すと「route → コンポーネント → fetcher → endpoint → Go ハンドラ → テーブル」が点灯した。
+
+### 6.4 残っていること
+
+- ビューアの大規模 graph 対応: 150 ノード前後で層内のレイアウトが密になり読みにくい。レイアウトの広がり・ラベルの LOD・検索ボックスを**進行中**（別タスク）
+- 実アプリのスクショ（起動したサイトと `data-component` が要る）、`flows.yaml`、配信先の選定
+- 設定を `damage-web` に置くか、非公開の別ディレクトリに置くか（ユーザーの判断）

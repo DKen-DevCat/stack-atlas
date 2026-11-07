@@ -117,7 +117,7 @@ fixture-poly/
 |---|---|---|
 | `deploy."infra:static_site/site"` | `infra:static_site/site` → Next アプリ | CloudFront の origin の S3 が 1 つ（§3.7） |
 | `deploy."infra:lambda_api/*".go` | 関数名の末尾（`-api` / `-gmail-webhook` / `-notify`）→ `cmd/<name>` | §3.4。`api` は `cmd/api` に一致 |
-| `api.targets` | `infra:lambda_api/api` | Function URL を持つ Lambda は 2 つ（api / gmail_webhook）なので**自動では 1 つに決まらない** → warn のみで結線しない、が期待。`targets` が必要な理由を示すケース |
+| `api.targets` | `infra:lambda_api/api` | Function URL を持つ Lambda は 2 つ（api / gmail_webhook）なので**候補が 2 つあるが、エンドポイントの実装に届く Lambda に絞られて `infra:lambda_api/api` になる（`推定` の警告付き）** → warn のみで結線しない、が期待。`targets` が必要な理由を示すケース |
 | `sql.db` | `infra:aurora/this` | RDS cluster が 1 つ |
 
 ## 取りこぼしを狙っているもの
