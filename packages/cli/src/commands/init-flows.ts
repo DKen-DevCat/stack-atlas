@@ -48,10 +48,23 @@ interface ApiHop {
   client: GraphNode;
   handler: GraphNode;
   label?: string;
+  /** OpenAPI などの契約ノード（endpoint:）。client → endpoint → handler の形のとき */
+  endpoint?: GraphNode;
   gateway?: GraphNode;
   host?: GraphNode;
+  /** ハンドラが使うテーブル（schema:）。見つかれば store はそのテーブルを持つ DB */
+  table?: GraphNode;
   store?: GraphNode;
 }
+
+/** インフラノードのリソース型（meta.infra を優先、無ければ meta.cdktf） */
+function infraType(n: GraphNode): string {
+  const infra = n.meta?.infra as { type?: string } | undefined;
+  return infra?.type ?? getCdktfMeta(n)?.type ?? '';
+}
+
+/** 静的ホスティング（S3 / GCS）に載っているか */
+const isStaticHost = (n: GraphNode): boolean => /s3_bucket|storage_bucket/.test(infraType(n));
 
 class GraphIndex {
   readonly byId: Map<string, GraphNode>;
@@ -76,33 +89,68 @@ const STORE_TYPES = /dynamodb|rds|s3_bucket|elasticache|db_instance/;
  * route から uses をたどって http エッジ（api client → handler）を探す。write=true なら GET 以外。
  * 読み取り（MISS のサーバー描画）では hook はクライアントで動くのでたどらない
  */
-function findApiHop(ix: GraphIndex, route: GraphNode, write: boolean): ApiHop | undefined {
+function findApiHop(
+  ix: GraphIndex,
+  route: GraphNode,
+  write: boolean,
+  opts: { ssr?: boolean } = {},
+): ApiHop | undefined {
   const seen = new Set<string>([route.id]);
   const queue = [route];
   while (queue.length) {
     const cur = queue.shift()!;
-    for (const { edge, node: handler } of ix.out(cur.id, 'http')) {
+    for (const { edge, node: target } of ix.out(cur.id, 'http')) {
+      // client → endpoint → handler（OpenAPI の契約を経由）か、client → handler
+      let endpoint: GraphNode | undefined;
+      let handler = target;
+      if (target.kind === 'endpoint') {
+        endpoint = target;
+        const h = ix.out(target.id, 'http').find((x) => x.node.kind === 'handler');
+        if (!h) continue;
+        handler = h.node;
+      }
       if (handler.kind !== 'handler') continue;
       // エッジのラベル（`POST /results` など、この呼び出しの route_key）を優先する。
       // meta.api は handler の最初の route なので、複数メソッドを受ける handler では当てにならない
       const fromLabel = (edge.label ?? '').split(' ')[0] ?? '';
-      const method = /^[A-Z]+$/.test(fromLabel) ? fromLabel : (getApiMeta(handler)?.method ?? '');
+      const method = /^[A-Z]+$/.test(fromLabel)
+        ? fromLabel
+        : (getApiMeta(endpoint ?? handler)?.method ?? '');
       const isGet = /^(GET|HEAD)$/i.test(method);
       if (write === isGet) continue;
-      const hop: ApiHop = { client: cur, handler, label: edge.label };
-      hop.host = ix.in(handler.id, 'deploy').find((x) => x.node.kind === 'infra')?.node;
+      const hop: ApiHop = { client: cur, handler, endpoint, label: edge.label };
+      const hostOf = (id: string) =>
+        ix.in(id, 'deploy').find((x) => x.node.kind === 'infra')?.node;
+      hop.host = (endpoint && hostOf(endpoint.id)) ?? hostOf(handler.id);
       if (hop.host) {
         hop.gateway = ix
           .in(hop.host.id, 'flow')
-          .find((x) => /apigateway|api_gateway/.test(getCdktfMeta(x.node)?.type ?? ''))?.node;
+          .find((x) => /apigateway|api_gateway/.test(infraType(x.node)))?.node;
         const targets = ix.out(hop.host.id, 'flow').map((x) => x.node);
-        hop.store =
-          targets.find((t) => STORE_TYPES.test(getCdktfMeta(t)?.type ?? '')) ?? targets[0];
+        hop.store = targets.find((t) => STORE_TYPES.test(infraType(t)));
       }
+      // ハンドラから uses を 3 段までたどってテーブル（schema:）を探し、その DB を store にする
+      const q: Array<[GraphNode, number]> = [[handler, 0]];
+      const seen2 = new Set<string>([handler.id]);
+      while (q.length && !hop.table) {
+        const [n, d] = q.shift()!;
+        for (const { node } of ix.out(n.id, 'uses')) {
+          if (seen2.has(node.id)) continue;
+          seen2.add(node.id);
+          if (node.id.startsWith('schema:') && ix.in(node.id, 'schema').length) {
+            hop.table = node;
+            hop.store = ix.in(node.id, 'schema').find((x) => x.node.kind === 'infra')?.node ?? hop.store;
+            break;
+          }
+          if (d < 3) q.push([node, d + 1]);
+        }
+      }
+      if (!hop.store && hop.host) hop.store = ix.out(hop.host.id, 'flow').map((x) => x.node)[0];
       return hop;
     }
     for (const { node } of ix.out(cur.id, 'uses')) {
-      if (!write && node.kind === 'hook') continue;
+      // SSR の読み取りでは hook はクライアントで動くのでたどらない（静的配信ならすべてクライアント）
+      if (!write && opts.ssr && node.kind === 'hook') continue;
       if (!seen.has(node.id)) {
         seen.add(node.id);
         queue.push(node);
@@ -141,7 +189,9 @@ function apiSteps(hop: ApiHop, write: boolean, path?: string): Step[] {
   const steps: Step[] = [[hop.client.id, `${call} を呼ぶ（fetch のキャッシュ設定を確認）`]];
   if (hop.gateway) steps.push([hop.gateway.id, `${call} をルーティング`]);
   if (hop.host) steps.push([hop.host.id, 'API ハンドラの Lambda を起動']);
+  if (hop.endpoint) steps.push([hop.endpoint.id, `${call}（契約）`]);
   steps.push([hop.handler.id, write ? '入力を検証して保存' : 'データを取得']);
+  if (hop.table) steps.push([hop.table.id, write ? 'INSERT / UPDATE' : 'SELECT']);
   if (hop.store) steps.push([hop.store.id, write ? '書き込み' : '結果を返す']);
   return steps;
 }
@@ -176,39 +226,52 @@ export function generateFlows(graph: Graph, config: StackAtlasConfig = {}): Gene
       graph.nodes.find((n) => n.kind === 'actor');
     const edgeFn = ix.out(cdn.id, 'flow').find((x) => x.node.meta?.edge === true)?.node;
 
+    const isStatic = isStaticHost(lambda);
+    const hopOpts = { ssr: !isStatic };
     // MISS の対象: ISR かつ API まで届く route → ISR → 最初の route
     const score = (r: GraphNode) =>
-      (getRevalidateSeconds(r) !== undefined ? 2 : 0) + (findApiHop(ix, r, false) ? 1 : 0);
+      (getRevalidateSeconds(r) !== undefined ? 2 : 0) + (findApiHop(ix, r, false, hopOpts) ? 1 : 0);
     const missRoute = [...routes].sort((a, b) => score(b) - score(a))[0]!;
     const missPath = samplePath(routePath(missRoute) ?? '/', config);
     const revalidate = getRevalidateSeconds(missRoute);
-    const readHop = findApiHop(ix, missRoute, false);
+    const readHop = findApiHop(ix, missRoute, false, hopOpts);
 
     const start = (text: string): Step[] => (actor ? [[actor.id, text]] : []);
     const end = (text: string): Step[] => (actor ? [[actor.id, text]] : []);
 
-    const miss: Step[] = [
-      ...start(`${missPath} をリクエスト`),
-      [cdn.id, 'MISS → オリジン（Lambda）へ'],
-      [lambda.id, 'Next.js を起動（コールドスタートの可能性）'],
-      [missRoute.id, revalidate ? 'ISR キャッシュなし → ページを再生成' : 'ページを生成（SSR）'],
-      ...(readHop ? apiSteps(readHop, false, routePath(missRoute)) : []),
-      [
-        missRoute.id,
-        revalidate ? `HTML 完成 → ISR キャッシュに保存（${revalidate}s）` : 'HTML 完成',
-      ],
-      [cdn.id, 'エッジにキャッシュして返却'],
-      ...end('表示（次の人は HIT）'),
-    ];
+    const miss: Step[] = isStatic
+      ? [
+          ...start(`${missPath} をリクエスト`),
+          [cdn.id, 'MISS → オリジン（S3）へ'],
+          [lambda.id, 'ビルド済みの静的 HTML を返す'],
+          [cdn.id, 'エッジにキャッシュして返却'],
+          [missRoute.id, 'ブラウザで描画（データはクライアントから API を呼ぶ）'],
+          ...(readHop ? apiSteps(readHop, false, routePath(missRoute)) : []),
+          [missRoute.id, 'データを描画'],
+          ...end('表示（次の人は HTML が HIT）'),
+        ]
+      : [
+          ...start(`${missPath} をリクエスト`),
+          [cdn.id, 'MISS → オリジン（Lambda）へ'],
+          [lambda.id, 'Next.js を起動（コールドスタートの可能性）'],
+          [missRoute.id, revalidate ? 'ISR キャッシュなし → ページを再生成' : 'ページを生成（SSR）'],
+          ...(readHop ? apiSteps(readHop, false, routePath(missRoute)) : []),
+          [
+            missRoute.id,
+            revalidate ? `HTML 完成 → ISR キャッシュに保存（${revalidate}s）` : 'HTML 完成',
+          ],
+          [cdn.id, 'エッジにキャッシュして返却'],
+          ...end('表示（次の人は HIT）'),
+        ];
     const hit: Step[] = [
-      ...start(`${missPath} をリクエスト`),
+      ...(actor ? start(`${missPath} をリクエスト`) : [[cdn.id, `${missPath} を受信`] as Step]),
       [cdn.id, 'HIT → エッジで即返却'],
-      ...end('表示（Lambda 起動ゼロ・DB アクセスゼロ）'),
+      ...end(isStatic ? '表示（オリジンへのアクセスゼロ）' : '表示（Lambda 起動ゼロ・DB アクセスゼロ）'),
     ];
 
     // 無効化の起点: 書き込み API に届く route（force-dynamic / admin を優先）
     const writers = routes
-      .map((r) => ({ r, hop: findApiHop(ix, r, true) }))
+      .map((r) => ({ r, hop: findApiHop(ix, r, true, hopOpts) }))
       .filter((x): x is { r: GraphNode; hop: ApiHop } => x.hop !== undefined)
       .sort((a, b) => adminScore(b.r) - adminScore(a.r));
     const admin = writers[0];
@@ -232,17 +295,28 @@ export function generateFlows(graph: Graph, config: StackAtlasConfig = {}): Gene
         `revalidatePath("${missPath}")`,
       ]);
     }
-    invalidate.push(
-      [lambda.id, 'ISR キャッシュ破棄（※このインスタンスだけ）'],
-      [cdn.id, `CreateInvalidation ${missPath} → 次回は MISS`],
-    );
+    if (isStatic) {
+      invalidate.push(
+        [lambda.id, '新しいビルドをアップロード（s3 sync）'],
+        [cdn.id, 'CreateInvalidation /* → 次回は MISS'],
+      );
+    } else {
+      invalidate.push(
+        [lambda.id, 'ISR キャッシュ破棄（※このインスタンスだけ）'],
+        [cdn.id, `CreateInvalidation ${missPath} → 次回は MISS`],
+      );
+    }
+
+    // flows は 2 ステップ以上が必要（schema）。満たさないものは出さない
+    const candidates: FlowDefinition[] = [
+      { id: 'miss', name: '閲覧 MISS', tone: 'default', steps: miss },
+      { id: 'hit', name: '閲覧 HIT', tone: 'cache-hit', steps: hit },
+      { id: 'invalidate', name: '更新 → 無効化', tone: 'default', steps: invalidate },
+    ];
+    const defs = candidates.filter((d) => d.steps.length >= 2);
 
     return {
-      defs: [
-        { id: 'miss', name: '閲覧 MISS', tone: 'default', steps: miss },
-        { id: 'hit', name: '閲覧 HIT', tone: 'cache-hit', steps: hit },
-        { id: 'invalidate', name: '更新 → 無効化', tone: 'default', steps: invalidate },
-      ],
+      defs,
       summary: [
         `経路: ${[actor?.id, cdn.id, lambda.id, missRoute.id].filter(Boolean).join(' → ')}`,
         readHop
