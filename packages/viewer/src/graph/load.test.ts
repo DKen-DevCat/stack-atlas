@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   graphUrlFromSearch,
+  prevUrlFromSearch,
   loadGraphFromFile,
   parseGraphText,
   resolveAssetUrl,
@@ -10,6 +11,15 @@ import {
 import { SAMPLE_PATH } from './testSample';
 
 const sampleText = readFileSync(SAMPLE_PATH, 'utf8');
+
+describe('prevUrlFromSearch', () => {
+  it('?prev= を ?graph= と同じ規則で解決する', () => {
+    expect(
+      prevUrlFromSearch('?graph=out/graph.json&prev=prev/graph.json', 'http://h/atlas/index.html'),
+    ).toBe('http://h/atlas/prev/graph.json');
+    expect(prevUrlFromSearch('?graph=g.json', 'http://h/')).toBeNull();
+  });
+});
 
 describe('graphUrlFromSearch', () => {
   it('ページの URL を基準に解決する', () => {

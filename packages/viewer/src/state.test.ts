@@ -60,3 +60,35 @@ describe('computeVisuals', () => {
     expect(v.edges[edgeIndex('comp:RaceCard', 'type:Race')]!.visible).toBe(true);
   });
 });
+
+describe('差分の優先順位', () => {
+  const diff = {
+    added: new Set(['comp:ResultTable']),
+    changed: new Map([['type:Race', ['name']]]),
+  };
+  it('通常時は追加・変更の印とゴーストを出す', () => {
+    const v = computeVisuals(model, initialState(4), diff);
+    expect(v.nodes.get('comp:ResultTable')!.diff).toBe('added');
+    expect(v.nodes.get('type:Race')!.diff).toBe('changed');
+    expect(v.nodes.get('infra:cloudfront')!.diff).toBeNull();
+    expect(v.ghostOpacity).toBe(0.25);
+  });
+  it('ハイライト・フロー・キャッシュが差分より優先', () => {
+    for (const s of [
+      { ...initialState(4), hoverId: 'type:Race' },
+      { ...initialState(4), flowId: 'miss' },
+      { ...initialState(4), cacheOn: true },
+    ]) {
+      const v = computeVisuals(model, s, diff);
+      expect(v.nodes.get('comp:ResultTable')!.diff).toBeNull();
+      expect(v.ghostOpacity).toBeGreaterThan(0);
+      expect(v.ghostOpacity).toBeLessThan(0.25);
+    }
+  });
+  it('差分オフ・差分なしなら何も出さない', () => {
+    const off = computeVisuals(model, { ...initialState(4), diffOn: false }, diff);
+    expect(off.nodes.get('comp:ResultTable')!.diff).toBeNull();
+    expect(off.ghostOpacity).toBe(0);
+    expect(computeVisuals(model, initialState(4)).ghostOpacity).toBe(0);
+  });
+});

@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { LocalMemoStore, memoKey, storageScope } from './memos';
+import {
+  LocalMemoStore,
+  memoKey,
+  mergeMemos,
+  orphanIds,
+  parseMemos,
+  serializeMemos,
+  SharedMemoStore,
+  storageScope,
+} from './memos';
 
 function fakeStorage() {
   const m = new Map<string, string>();
@@ -40,5 +49,104 @@ describe('LocalMemoStore', () => {
     const n = new LocalMemoStore('s', null);
     n.set('a', 'b');
     expect(n.get('a')).toBe('b');
+  });
+});
+
+describe('共有メモのマージ', () => {
+  it('parseMemos は文字列だけを残し、形が違えば null', () => {
+    expect(parseMemos({ a: 'x', b: 1, c: '  ' })).toEqual({ a: 'x' });
+    expect(parseMemos([])).toBeNull();
+    expect(parseMemos('x')).toBeNull();
+    expect(parseMemos(null)).toBeNull();
+  });
+
+  it('mergeMemos: 共有が土台、ローカルの上書きと削除が勝つ', () => {
+    expect(mergeMemos({ a: 'A', b: 'B', c: 'C' }, { b: 'B2', d: 'D' }, new Set(['c']))).toEqual({
+      a: 'A',
+      b: 'B2',
+      d: 'D',
+    });
+  });
+
+  it('serializeMemos はキー順に並べる', () => {
+    expect(serializeMemos({ b: '2', a: '1' })).toBe('{\n  "a": "1",\n  "b": "2"\n}\n');
+  });
+
+  it('orphanIds は graph に無い ID を昇順で返す', () => {
+    expect(orphanIds({ z: '1', a: '2', keep: '3' }, new Set(['keep']))).toEqual(['a', 'z']);
+  });
+});
+
+describe('SharedMemoStore', () => {
+  it('共有メモを読み、ローカル編集で「未保存」になり、共有と同じに戻すと消える', () => {
+    const st = fakeStorage();
+    const s = new SharedMemoStore('p', { a: 'A', b: 'B' }, st);
+    expect(s.get('a')).toBe('A');
+    expect(s.status('a')).toBe('shared');
+    expect(s.status('x')).toBe('none');
+    expect(s.unsavedIds()).toEqual([]);
+
+    s.set('a', 'A2');
+    expect(s.get('a')).toBe('A2');
+    expect(s.status('a')).toBe('local');
+    s.set('a', 'A');
+    expect(s.status('a')).toBe('shared');
+
+    s.set('c', 'C');
+    s.set('b', '');
+    expect(s.get('b')).toBe('');
+    expect(s.status('b')).toBe('local');
+    expect(s.unsavedIds()).toEqual(['b', 'c']);
+    expect(s.all()).toEqual({ a: 'A', c: 'C' });
+
+    // 再読み込みしても上書き・削除は残る（従来の localStorage キーと互換）
+    expect(JSON.parse(st.m.get(memoKey('p'))!)).toEqual({ c: 'C' });
+    const s2 = new SharedMemoStore('p', { a: 'A', b: 'B' }, st);
+    expect(s2.all()).toEqual({ a: 'A', c: 'C' });
+    expect(s2.unsavedIds()).toEqual(['b', 'c']);
+  });
+
+  it('従来の LocalMemoStore のメモはローカルの上書きとして読める', () => {
+    const st = fakeStorage();
+    new LocalMemoStore('p', st).set('a', 'old');
+    const s = new SharedMemoStore('p', { a: 'shared', b: 'B' }, st);
+    expect(s.get('a')).toBe('old');
+    expect(s.status('a')).toBe('local');
+    expect(s.status('b')).toBe('shared');
+  });
+
+  it('setShared（サーバー保存の成功）で未保存の印が消える', () => {
+    const st = fakeStorage();
+    const s = new SharedMemoStore('p', { a: 'A', b: 'B' }, st);
+    s.set('a', 'A2');
+    s.set('b', '');
+    s.set('c', 'C');
+    s.setShared(s.all());
+    expect(s.unsavedIds()).toEqual([]);
+    expect(s.all()).toEqual({ a: 'A2', c: 'C' });
+    expect(s.status('a')).toBe('shared');
+    expect(st.m.get(memoKey('p'))).toBe('{}');
+    expect(st.m.has('stack-atlas-memos-deleted:p')).toBe(false);
+  });
+
+  it('孤立メモの移し替えと削除', () => {
+    const st = fakeStorage();
+    const ids = new Set(['comp:New', 'type:Race']);
+    const s = new SharedMemoStore(
+      'p',
+      { 'comp:Old': '旧メモ', 'type:Race': '既存', gone: 'x' },
+      st,
+    );
+    expect(orphanIds(s.all(), ids)).toEqual(['comp:Old', 'gone']);
+
+    s.move('comp:Old', 'comp:New');
+    expect(s.get('comp:New')).toBe('旧メモ');
+    expect(s.get('comp:Old')).toBe('');
+    // 移し先に既にあれば続ける
+    s.move('comp:New', 'type:Race');
+    expect(s.get('type:Race')).toBe('既存\n旧メモ');
+    s.set('gone', '');
+    expect(orphanIds(s.all(), ids)).toEqual([]);
+    expect(s.unsavedIds()).toEqual(['comp:Old', 'gone', 'type:Race']);
   });
 });

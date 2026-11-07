@@ -632,6 +632,221 @@ table.ct td:first-child {
   display: flex;
 }
 
+/* ---- 開く ▾ メニュー ---- */
+.openmenu {
+  position: relative;
+}
+.openmenu .menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 180px;
+  background: #151922f5;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 4px;
+  z-index: 8;
+  box-shadow: 0 8px 24px #0008;
+}
+.openmenu.open .menu {
+  display: block;
+}
+.openmenu .mi {
+  display: block;
+  padding: 7px 10px;
+  font-size: 12px;
+  border-radius: 7px;
+  cursor: pointer;
+  color: var(--text);
+  white-space: nowrap;
+}
+.openmenu .mi:hover {
+  background: #2a3242;
+}
+
+/* ---- 差分（?prev=） ---- */
+.btn.diffpill {
+  border-radius: 999px;
+  font-family: var(--mono);
+}
+.btn.diffpill.on {
+  background: #10291a;
+  border-color: #4ade8088;
+  color: #bbf7d0;
+}
+.nl .db {
+  display: none;
+  margin-left: 6px;
+  font-size: 9px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  vertical-align: 1px;
+}
+.nl.diff-added .db.added,
+.nl.diff-changed .db.changed,
+.nl.ghost .db {
+  display: inline-block;
+}
+.db.added {
+  background: #4ade8022;
+  color: var(--ok);
+  border: 1px solid #4ade8066;
+}
+.db.changed {
+  background: #fbbf2422;
+  color: var(--warn);
+  border: 1px solid #fbbf2466;
+}
+.db.removed {
+  background: #6b728033;
+  color: #d1d5db;
+  border: 1px solid #9ca3af66;
+}
+.nl.diff-added {
+  border-color: var(--ok);
+}
+.nl.diff-changed {
+  border-color: var(--warn);
+}
+.nl.ghost {
+  cursor: default;
+  border-style: dashed;
+  border-color: #6b7280;
+  color: #9ca3af;
+  background: #11151d99;
+}
+.panel .dinfo {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.panel .dinfo[hidden] {
+  display: none;
+}
+.panel .dinfo.added {
+  background: #4ade8018;
+  color: #bbf7d0;
+  border: 1px solid #4ade8055;
+}
+.panel .dinfo.changed {
+  background: #fbbf2418;
+  color: #fde68a;
+  border: 1px solid #fbbf2455;
+}
+
+/* ---- メモ（共有） ---- */
+.panel h3.mhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mchip:empty {
+  display: none;
+}
+.mchip {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  letter-spacing: 0;
+}
+.mchip.shared {
+  background: #38bdf822;
+  color: var(--info);
+  border: 1px solid #38bdf866;
+}
+.mchip.local {
+  background: #fbbf2422;
+  color: var(--warn);
+  border: 1px solid #fbbf2466;
+}
+.msave.ok {
+  color: var(--ok);
+}
+.msave.error {
+  color: #ffb4b4;
+}
+.btn[hidden] {
+  display: none;
+}
+
+/* ---- 孤立メモ ---- */
+.orphans {
+  position: fixed;
+  top: 58px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(520px, calc(100vw - 28px));
+  max-height: calc(100vh - 90px);
+  overflow: auto;
+  background: var(--panel);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 16px 14px;
+  z-index: 9;
+  font-size: 12px;
+}
+.orphans[hidden] {
+  display: none;
+}
+.orphans .ohead {
+  position: relative;
+  padding-right: 28px;
+  font-size: 13px;
+}
+.orphans .x {
+  top: -6px;
+  right: -8px;
+}
+.orphans ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.orphans li {
+  border-top: 1px solid var(--line);
+  padding: 8px 0;
+}
+.orphans li code {
+  font-size: 11px;
+  color: #9fb4ff;
+  word-break: break-all;
+}
+.orphans .otext {
+  margin-top: 4px;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+.orphans .row {
+  margin-top: 6px;
+}
+.orphans .moverow[hidden] {
+  display: none;
+}
+.orphans input.mv {
+  flex: 1;
+  min-width: 160px;
+  background: #0b0e13;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 5px 8px;
+  font: 12px var(--mono);
+}
+.orphans .err {
+  color: #ffb4b4;
+  font-size: 11px;
+  align-self: center;
+}
+.btn.orphanbtn {
+  border-color: #fbbf2466;
+  color: #fde68a;
+}
+
 /* ---- スマホ ---- */
 @media (max-width: 760px) {
   .top h1 small,

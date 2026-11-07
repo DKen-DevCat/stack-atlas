@@ -6,6 +6,8 @@ import { edgeBaseStyle, type EdgeVisualState } from '../state';
 import { anchorToward, type SceneNode } from './nodes';
 
 const SEG = 14;
+/** 1 本の線の頂点数 */
+export const EDGE_POINTS = SEG + 1;
 const ARC = 1.2;
 
 export interface SceneEdge {

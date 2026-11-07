@@ -49,7 +49,16 @@ export function parseGraphText(text: string, source: string, baseUrl?: string): 
 
 /** `?graph=` の値をページの URL 基準で絶対 URL にする。指定がなければ null */
 export function graphUrlFromSearch(search: string, pageHref: string): string | null {
-  const v = new URLSearchParams(search).get('graph');
+  return urlParam(search, pageHref, 'graph');
+}
+
+/** `?prev=`（差分表示の比較元の graph.json）の値をページの URL 基準で絶対 URL にする */
+export function prevUrlFromSearch(search: string, pageHref: string): string | null {
+  return urlParam(search, pageHref, 'prev');
+}
+
+function urlParam(search: string, pageHref: string, name: string): string | null {
+  const v = new URLSearchParams(search).get(name);
   if (!v) return null;
   try {
     return new URL(v, pageHref).href;

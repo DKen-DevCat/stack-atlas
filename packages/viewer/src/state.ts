@@ -1,9 +1,10 @@
 /**
  * 表示状態（ホバー・選択・フロー・キャッシュ・展開・層の表示）と、そこから決まる見た目。
- * 優先順位「ハイライト ＞ フロー ＞ キャッシュ ＞ 通常」はここ（computeVisuals）の 1 か所で決める。
+ * 優先順位「ハイライト ＞ フロー ＞ キャッシュ ＞ 差分 ＞ 通常」はここ（computeVisuals）の 1 か所で決める。
  * three.js・DOM に依存しない純関数。
  */
 import type { Edge } from '@stack-atlas/schema';
+import type { DiffMarks } from './graph/diff';
 import { computeHighlight, edgeHighlight, type Highlight } from './graph/closure';
 import { edgeKindStyle } from './graph/kinds';
 import type { GraphModel } from './graph/model';
@@ -13,6 +14,8 @@ export interface ViewState {
   selectedId: string | null;
   flowId: string | null;
   cacheOn: boolean;
+  /** 差分の色分け（?prev= があるときだけ意味を持つ） */
+  diffOn: boolean;
   /** 0 = 重ねる、1 = 展開（目標値） */
   explodeTarget: number;
   /** layers と同じ長さ */
@@ -25,6 +28,7 @@ export function initialState(layerCount: number): ViewState {
     selectedId: null,
     flowId: null,
     cacheOn: false,
+    diffOn: true,
     explodeTarget: 1,
     layerVisible: Array.from({ length: layerCount }, () => true),
   };
@@ -37,6 +41,8 @@ export interface NodeVisualState {
   visible: boolean;
   ringVisible: boolean;
   ringOpacity: number;
+  /** 差分の印（追加・変更）。上位の表示（ハイライト・フロー・キャッシュ）があるときや差分オフのときは null */
+  diff: 'added' | 'changed' | null;
 }
 
 export interface EdgeVisualState {
@@ -50,7 +56,12 @@ export interface Visuals {
   nodes: Map<string, NodeVisualState>;
   /** model.edges と同じ順番 */
   edges: EdgeVisualState[];
+  /** 削除ノード（ゴースト）・削除エッジ（破線）の不透明度。0 なら隠す */
+  ghostOpacity: number;
 }
+
+/** ゴースト（削除ノード）の通常時の不透明度 */
+export const GHOST_OPACITY = 0.25;
 
 export const HIGHLIGHT_COLORS = { down: '#ff3b3b', up: '#ff8a5c' } as const;
 
@@ -69,12 +80,19 @@ export function highlightTarget(state: ViewState): string | null {
   return state.hoverId ?? state.selectedId;
 }
 
-export function computeVisuals(model: GraphModel, state: ViewState): Visuals {
+export function computeVisuals(
+  model: GraphModel,
+  state: ViewState,
+  diff: DiffMarks | null = null,
+): Visuals {
   const a = highlightTarget(state);
   const hl = computeHighlight(model, a);
   const flow = state.flowId ? model.flows.find((f) => f.id === state.flowId) : undefined;
   const flowSet = flow ? new Set(flow.steps.map((s) => s.node)) : null;
   const layerOn = (i: number) => state.layerVisible[i] ?? true;
+  const diffShown = !!diff && state.diffOn;
+  // 差分の色分けはハイライト・フロー・キャッシュがないときだけ
+  const diffActive = diffShown && !hl.a && !flowSet && !state.cacheOn;
 
   const nodes = new Map<string, NodeVisualState>();
   for (const n of model.nodes) {
@@ -92,6 +110,13 @@ export function computeVisuals(model: GraphModel, state: ViewState): Visuals {
       visible,
       ringVisible: state.cacheOn && visible && !!n.node.cache,
       ringOpacity: visual === 'dim' || visual === 'soft' ? 0.15 : 0.85,
+      diff: !diffActive
+        ? null
+        : diff!.added.has(n.id)
+          ? 'added'
+          : diff!.changed.has(n.id)
+            ? 'changed'
+            : null,
     });
   }
 
@@ -110,5 +135,12 @@ export function computeVisuals(model: GraphModel, state: ViewState): Visuals {
     return { visible, color: base.color, opacity: base.opacity * k };
   });
 
-  return { hl, nodes, edges };
+  const ghostOpacity = !diffShown
+    ? 0
+    : hl.a
+      ? 0.06
+      : flowSet || state.cacheOn
+        ? 0.1
+        : GHOST_OPACITY;
+  return { hl, nodes, edges, ghostOpacity };
 }

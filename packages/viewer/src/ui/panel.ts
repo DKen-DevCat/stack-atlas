@@ -1,10 +1,12 @@
 /**
  * 詳細パネル: 種類・層、名前、ファイル、［スクショ欄］、［キャッシュ表］、コード抜粋、
- * 使っているもの／使われている場所（チップでその要素へ飛ぶ）、メモ、カメラを寄せる
+ * 使っているもの／使われている場所（チップでその要素へ飛ぶ）、メモ（共有／ローカル未保存の印・書き出し・サーバー保存）、
+ * カメラを寄せる。差分表示中は追加・変更の印と変わったフィールド
  */
 import type { GraphModel, ModelNode } from '../graph/model';
 import { TONE_COLORS } from '../graph/kinds';
 import { h } from './dom';
+import type { MemoStatus } from './memos';
 
 export interface PanelHandlers {
   onClose(): void;
@@ -13,6 +15,10 @@ export interface PanelHandlers {
   onMemo(id: string, text: string): void;
   onShot(id: string, file: File): void;
   onShotReset(id: string): void;
+  /** 「memos.json を書き出す」 */
+  onExportMemos(): void;
+  /** 「サーバーに保存」（POST /api/memos） */
+  onSaveMemos(): void;
 }
 
 export interface ScreenInfo {
@@ -39,8 +45,19 @@ export class Panel {
   private readonly uses = h('div', { class: 'chips' });
   private readonly used = h('div', { class: 'chips' });
   private readonly memo = h('textarea', {
-    attrs: { placeholder: 'ここに気づき・TODO・決定事項を書き込む（このブラウザに保存）' },
+    attrs: {
+      placeholder:
+        'ここに気づき・TODO・決定事項を書き込む（このブラウザに保存。共有するには memos.json を書き出すかサーバーに保存）',
+    },
   });
+  private readonly memoChip = h('span', { class: 'mchip' });
+  private readonly saveBtn = h(
+    'button',
+    { class: 'btn', attrs: { type: 'button' } },
+    'サーバーに保存',
+  );
+  private readonly saveMsg = h('div', { class: 'src msave' });
+  private readonly diffInfo = h('div', { class: 'dinfo' });
   private current: ModelNode | null = null;
 
   constructor(
@@ -80,6 +97,21 @@ export class Panel {
     this.memo.addEventListener('input', () => {
       if (this.current) handlers.onMemo(this.current.id, this.memo.value);
     });
+    const exportBtn = h(
+      'button',
+      {
+        class: 'btn',
+        title: 'すべてのメモ（共有＋このブラウザの編集）を memos.json としてダウンロード',
+        attrs: { type: 'button' },
+      },
+      'memos.json を書き出す',
+    );
+    exportBtn.addEventListener('click', () => handlers.onExportMemos());
+    this.saveBtn.title =
+      'serve --repo で開いているとき、リポジトリの .stack-atlas/memos.json に書き戻す';
+    this.saveBtn.hidden = true;
+    this.diffInfo.hidden = true;
+    this.saveBtn.addEventListener('click', () => handlers.onSaveMemos());
     const focus = h(
       'button',
       { class: 'btn', attrs: { type: 'button' } },
@@ -90,7 +122,7 @@ export class Panel {
     this.el = h(
       'aside',
       { class: 'panel', attrs: { 'aria-label': '詳細' } },
-      h('header', {}, this.kind, this.name, this.file, close),
+      h('header', {}, this.kind, this.name, this.file, this.diffInfo, close),
       h(
         'div',
         { class: 'body' },
@@ -102,8 +134,10 @@ export class Panel {
         this.uses,
         h('h3', {}, '使われている場所'),
         this.used,
-        h('h3', {}, 'メモ'),
+        h('h3', { class: 'mhead' }, 'メモ', this.memoChip),
         this.memo,
+        h('div', { class: 'row mrow' }, exportBtn, this.saveBtn),
+        this.saveMsg,
         h('div', { class: 'row' }, focus),
       ),
     );
@@ -161,6 +195,35 @@ export class Panel {
     );
     this.memo.value = memo;
     this.el.classList.add('open');
+  }
+
+  /** メモの状態の印: 「共有」「ローカル（未保存）」。メモが無ければ出さない */
+  setMemoStatus(st: MemoStatus): void {
+    this.memoChip.className = `mchip ${st}`;
+    this.memoChip.textContent =
+      st === 'shared' ? '共有' : st === 'local' ? 'ローカル（未保存）' : '';
+    this.memoChip.title =
+      st === 'shared'
+        ? 'memos.json（共有）のメモです'
+        : st === 'local'
+          ? 'このブラウザでの編集です。memos.json を書き出すかサーバーに保存するまで共有されません'
+          : '';
+  }
+
+  setCanSave(on: boolean): void {
+    this.saveBtn.hidden = !on;
+  }
+
+  setSaveMessage(text: string, tone: 'ok' | 'error' | '' = ''): void {
+    this.saveMsg.textContent = text;
+    this.saveMsg.className = `src msave ${tone}`;
+  }
+
+  /** 差分の情報（追加・変更）。null なら隠す */
+  setDiffInfo(info: { mark: 'added' | 'changed'; text: string } | null): void {
+    this.diffInfo.hidden = !info;
+    this.diffInfo.className = `dinfo ${info?.mark ?? ''}`;
+    this.diffInfo.textContent = info?.text ?? '';
   }
 
   updateScreenInfo(s: ScreenInfo): void {
