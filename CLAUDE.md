@@ -43,7 +43,7 @@ Phase 1 の完了条件は「`examples/race-site.graph.json` を読み込んだ�
 - スタック固有の処理はすべて抽出器（extractor）側に閉じ込める。
 - graph.json を変えたら `packages/schema/graph.schema.json`・`packages/schema/src/types.ts`・`docs/03-graph-schema.md` を同時に更新し、
   `pnpm validate examples/race-site.graph.json` が通ること（型とスキーマのずれは `pnpm test` で検出される）。
-- コミット前に `pnpm lint && pnpm typecheck && pnpm test && pnpm build` を通す（CI と同じ）。
+- コミット前に `pnpm lint && pnpm typecheck && pnpm test && pnpm build` を通す（CI と同じ）。ビューアを触ったら `pnpm --filter @stack-atlas/viewer e2e` も（CI で実行される）。
 - プロトタイプ（`prototype/`）は参照用として残す。新実装で置き換えても削除しない。
 - UI の文言は日本語。
 
@@ -64,7 +64,17 @@ packages/
     src/types.ts              ← graph.json の TypeScript 型（手書き）
     src/validate.ts           ← validateGraph()：スキーマ検証＋参照整合性チェック
     src/cli.ts                ← stack-atlas-validate <file...>（pnpm validate の実体）
-  viewer/                     ← @stack-atlas/viewer（Vite + TypeScript + three.js。Phase 0 は空のアプリ）
+  viewer/                     ← @stack-atlas/viewer（Vite + TypeScript + three.js。graph.json を読む静的アプリ）
+    src/main.ts               ← 入口: ?graph= / ドロップ / ファイル選択 → 検証 → Viewer。WebGL がなければメッセージ
+    src/app.ts                ← Viewer: シーン・UI の組み立て、操作、ループ
+    src/state.ts              ← ViewState と computeVisuals()（優先順位 ハイライト＞フロー＞キャッシュ＞通常 をここだけで決める）
+    src/graph/                ← 純粋ロジック（Vitest）: load.ts（入力・検証・URL 解決）、model.ts（GraphModel）、
+                                 closure.ts（ハイライト規則）、kinds.ts（kind → 色・形・日本語名）
+    src/layout/               ← auto.ts（自動レイアウト）、plate.ts（層の Y・板のサイズ・autoLayout への入力）
+    src/scene/                ← three.js: renderer / plates / nodes / edges / flow / camera / picking
+    src/screen/texture.ts     ← 画面ノードの Canvas（スクショ遅延読み込み・プレースホルダ・region ハイライト）
+    src/ui/                   ← DOM: topbar / layerChips / legend / panel / flowPill / labels / issues / emptyState / memos
+    e2e/                      ← Playwright のスモークテスト（pnpm --filter @stack-atlas/viewer e2e）
 docs/
   01-vision.md                ← ユーザーの元の要望と要件
   02-architecture.md          ← 目標アーキテクチャと現状の差分
@@ -82,4 +92,5 @@ examples/race-site.graph.json ← プロトタイプのデータを graph.json �
 scripts/
   export-prototype-data.mjs   ← プロトタイプ → graph.json 変換
   validate-graph.mjs          ← 互換ラッパ（中身は packages/schema の CLI）
+  sync-samples.mjs            ← examples/*.graph.json を packages/viewer/public/samples/ へコピー（dev / build の前に自動）
 ```

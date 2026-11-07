@@ -7,3 +7,5 @@ blob-report/
 playwright/.cache/
 *.tsbuildinfo
 .DS_Store
+packages/viewer/public/samples/
+packages/viewer/e2e/__screenshots__/

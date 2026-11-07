@@ -1,16 +1,17 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import {
-  autoLayout,
-  type LayoutEdgeInput,
-  type LayoutNodeInput,
-  type LayoutResult,
-} from './auto';
+import { autoLayout, type LayoutEdgeInput, type LayoutNodeInput, type LayoutResult } from './auto';
 
 const EPS = 1e-6;
 
-function n(id: string, layer: number, w = 2, d = 1.3, fixed?: { x: number; z: number }): LayoutNodeInput {
+function n(
+  id: string,
+  layer: number,
+  w = 2,
+  d = 1.3,
+  fixed?: { x: number; z: number },
+): LayoutNodeInput {
   return { id, layer, footprint: { w, d }, ...(fixed ? { fixed } : {}) };
 }
 
@@ -129,7 +130,9 @@ describe('autoLayout basics', () => {
     for (let i = 0; i < 3; i++) nodes.push(n(`c${i}`, 1));
     const r = autoLayout(nodes, edges);
     expectSane(nodes, r);
-    const zs = new Set(nodes.filter((x) => x.id.startsWith('s')).map((x) => r.positions.get(x.id)!.z));
+    const zs = new Set(
+      nodes.filter((x) => x.id.startsWith('s')).map((x) => r.positions.get(x.id)!.z),
+    );
     expect(zs.size).toBeGreaterThan(1);
     for (const x of nodes.filter((q) => q.id.startsWith('c'))) {
       expect(zs.has(r.positions.get(x.id)!.z)).toBe(false);
@@ -204,7 +207,9 @@ describe('race-site sample', () => {
     id: nd.id,
     layer: layerIndex.get(nd.layer)!,
     footprint:
-      nd.kind === 'page' || nd.kind === 'layout' ? { w: 6.4, d: 4.2 } : (FOOTPRINTS[nd.kind] ?? { w: 2, d: 1.3 }),
+      nd.kind === 'page' || nd.kind === 'layout'
+        ? { w: 6.4, d: 4.2 }
+        : (FOOTPRINTS[nd.kind] ?? { w: 2, d: 1.3 }),
   }));
   const res = autoLayout(nodes, g.edges);
 
@@ -253,7 +258,14 @@ describe('scale', () => {
     for (let l = 0; l < 4; l++) {
       for (let i = 0; i < per; i++) {
         const screen = l === 1 && i % 5 === 0;
-        nodes.push(n(`n${l}_${i}`, l, screen ? 6.4 : 1.6 + Math.floor(rnd() * 4) * 0.3, screen ? 4.2 : 1.1 + rnd() * 0.5));
+        nodes.push(
+          n(
+            `n${l}_${i}`,
+            l,
+            screen ? 6.4 : 1.6 + Math.floor(rnd() * 4) * 0.3,
+            screen ? 4.2 : 1.1 + rnd() * 0.5,
+          ),
+        );
       }
     }
     for (let l = 0; l < 4; l++) {

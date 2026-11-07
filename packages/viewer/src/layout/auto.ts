@@ -276,11 +276,13 @@ export function autoLayout(
     for (const i of orphan) target.set(i, maxT === -Infinity ? 0 : maxT);
     const isOrphan = new Set(orphan);
 
-    const widthOf = (xs: number[]) => xs.reduce((s, i) => s + W(i), 0) + gap * Math.max(0, xs.length - 1);
+    const widthOf = (xs: number[]) =>
+      xs.reduce((s, i) => s + W(i), 0) + gap * Math.max(0, xs.length - 1);
     const screens = free.filter(isScreen);
     const others = free.filter((i) => !isScreen(i));
     const needSplit = widthOf(free) > cap;
-    const groups = needSplit && screens.length > 0 && others.length > 0 ? [screens, others] : [free];
+    const groups =
+      needSplit && screens.length > 0 && others.length > 0 ? [screens, others] : [free];
 
     const rows: Row[] = [];
     for (const g of groups) {
@@ -300,7 +302,11 @@ export function autoLayout(
       }
       for (const b of buckets) {
         if (b.length === 0) continue;
-        const xs = resolve1D(b.map(W), b.map((i) => target.get(i)!), gap);
+        const xs = resolve1D(
+          b.map(W),
+          b.map((i) => target.get(i)!),
+          gap,
+        );
         let lo = Infinity;
         let hi = -Infinity;
         b.forEach((id, j) => {

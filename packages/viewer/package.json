@@ -5,17 +5,21 @@
   "description": "Stack Atlas の 3D ビューア（graph.json を読んで描画する静的アプリ）",
   "type": "module",
   "scripts": {
+    "predev": "node ../../scripts/sync-samples.mjs",
     "dev": "vite",
+    "prebuild": "node ../../scripts/sync-samples.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@stack-atlas/schema": "workspace:*",
     "three": "0.187.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/three": "0.187.0",
     "vite": "^8.3.6"
   }
