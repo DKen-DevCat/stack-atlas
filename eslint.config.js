@@ -11,6 +11,7 @@ export default tseslint.config(
       '**/node_modules/**',
       'prototype/**',
       'examples/fixture-repo/**',
+      'examples/fixture-poly/**',
     ],
   },
   js.configs.recommended,

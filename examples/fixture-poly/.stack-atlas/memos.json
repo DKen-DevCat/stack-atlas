@@ -1,0 +1,4 @@
+{
+  "infra:static_site/this": "index.html 補完は CloudFront Function。/calendar/ のような末尾スラッシュ前提（trailingSlash: true）",
+  "endpoint:GET /today": "締め日（月初）をまたぐと合計が 0 になる件。OpenAPI の説明を直したい"
+}

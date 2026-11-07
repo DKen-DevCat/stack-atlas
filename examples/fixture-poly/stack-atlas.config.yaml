@@ -1,0 +1,62 @@
+# fixture-poly の設定（docs/12 §3.1）。2 リポジトリ: web（Next 静的エクスポート）と platform（Go + Terraform HCL）
+project:
+  name: expense-tracker (fixture-poly)
+  description: 合成の 2 リポジトリ構成（Go + HCL + Next static export + OpenAPI + SQL）
+
+repos:
+  web: ./web
+  platform: ./platform
+
+terraform:
+  repo: platform
+  root: infra/envs/dev
+  sourceDir: infra
+
+next:
+  repo: web
+  appDir: src/app
+  tsconfig: tsconfig.json
+
+ts:
+  repo: web
+  tsconfig: [tsconfig.json]
+
+go:
+  repo: platform
+  entries: ["cmd/*"]
+
+openapi:
+  files:
+    - { repo: platform, path: openapi/today.yaml }
+
+sql:
+  repo: platform
+  migrations: ["migrations/*.up.sql"]
+  db: "infra:aurora/this"
+
+api:
+  repo: web
+  clients:
+    - "src/lib/fetcher/**/*.ts"
+    - "src/feature/**/request.ts"
+    - "src/components/*.tsx"
+  callers: ["fetcher"]
+  targets: ["infra:lambda_api/api"]
+
+deploy:
+  "infra:static_site/site": { app: next }
+  "infra:lambda_api/api": { go: cmd/api }
+  "infra:lambda_api/gmail_webhook": { go: cmd/gmail-webhook }
+  "infra:lambda_api/notify": { go: cmd/notify }
+
+classify:
+  - { repo: platform, glob: "internal/domain/**", kind: type }
+  - { repo: platform, glob: "internal/store/**", kind: schema }
+
+kinds:
+  endpoint: { name: "API エンドポイント", color: "#38bdf8", layer: types }
+
+screenshots:
+  repo: web
+  baseUrl: "http://localhost:4174"
+  routes: {}
