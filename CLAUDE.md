@@ -8,24 +8,32 @@
 層を Z 軸に積み重ねた 3D マップとして 1 画面で表示するツール。
 ホバーで依存先・影響範囲が赤くハイライトされ、データフローとキャッシュの挙動がアニメーションで見え、ノードにメモを書ける。
 
-現状は **単一 HTML のプロトタイプ**（`prototype/stack-atlas.html`）だけがあり、データは手書き。
-次のゴールは **どんなプロジェクトにも適用できる汎用ツール** にすること。
+現状は **Phase 0〜5 がフィクスチャリポジトリ（`examples/fixture-repo/`）に対して完了**している。
+抽出器 → `graph.json` → ビューアの 3 部品、`stack-atlas` CLI（build / validate / serve / diff / init-flows）、メモ共有・差分表示・配信テンプレートまで動く。
+次のゴールは **ユーザーの実リポジトリへの適用**（未決事項 Q2）。最初の単一 HTML プロトタイプ（`prototype/`）は参照用に残している。
 
 ## まず読む順番
 
-1. `HANDOFF.md` — 経緯・決定事項・ユーザーの反応・未決事項（必読）
-2. `docs/02-architecture.md` — 目標アーキテクチャ（抽出器 → graph.json → ビューア）
+1. `HANDOFF.md` — 現在地（§0）、経緯・決定事項・ユーザーの反応・未決事項（必読）
+2. `docs/02-architecture.md` — アーキテクチャ（抽出器 → graph.json → ビューア）と実装状況
 3. `docs/03-graph-schema.md` + `packages/schema/graph.schema.json` — 中間フォーマット
-4. `docs/06-roadmap.md` — フェーズ別タスクと完了条件
-5. `docs/08-design-phase0-1.md` — Phase 0・1 の設計、タスク一覧、決定事項（Git 連携セッションで作成）
-6. 必要に応じて `docs/05-viewer-spec.md`（UI 仕様）、`docs/04-extractors.md`（抽出方法）
+4. `docs/06-roadmap.md` — フェーズ別タスクと達成状況（Phase 6 が次）
+5. `docs/08-design-phase0-1.md` — Phase 0・1 の設計・決定事項 D1〜D8
+6. `docs/09-design-phase2-5.md` — Phase 2〜5 の設計・決定事項 D9〜D13、設定ファイル（§3.3）
+7. `docs/10-screenshots-guide.md`（`data-component` と screenshots の設定）、`docs/11-sharing.md`（メモ・差分・配信）、`docs/ci-example.yml`
+8. 必要に応じて `docs/05-viewer-spec.md`（UI 仕様）、`docs/04-extractors.md`（抽出方法）、各 `extractors/*/README.md`
 
-## 最初のタスク
+## 現在の状態と次のタスク
 
-`docs/06-roadmap.md` の **Phase 0 → Phase 1** から始める。
-Phase 1 の完了条件は「`examples/race-site.graph.json` を読み込んだビューアが、プロトタイプと同等に描画される」こと。
+Phase 0〜5 はフィクスチャに対して完了している（テストは `pnpm test` で 235 件、viewer の e2e は 18 件通過・3 件スキップ）。
+**実リポジトリでは一度も動かしていない**。次は Phase 6（`docs/06-roadmap.md`）。着手前に最初に確認すること:
 
-着手前に `HANDOFF.md` の「未決事項」のうち Phase 1 に関係するもの（リポジトリ構成・パッケージマネージャ）をユーザーに確認する。
+1. 未決事項 Q2: 対象リポジトリの構成（モノレポか、infra / web / api の分け方、CDKtf の synth 出力の有無、Next の `app/` の場所）
+2. `stack-atlas build <repo> -o out --verbose` を実行し、`detect()` と config（`cdktf.out` / `next.appDir` / `ts.tsconfig` / `deploy` / `api.client`）が合っているか
+3. api-link の取りこぼし（`build` の警告）を `stack-atlas.overrides.yaml` で補う
+4. CloudFront の behavior と ISR 設定のバッジが実際の設定と一致するか（cache 抽出器とルール）
+5. スクショ（`storageState` で認証、`data-component` の付与）、`flows.yaml`、CI（`docs/ci-example.yml`）
+6. 配信先（S3 + CloudFront か `serve`）をユーザーと決める（Q5 は静的ビルドまで実装済みで、配信先は未選定）
 
 ## ユーザーについて
 
@@ -39,58 +47,41 @@ Phase 1 の完了条件は「`examples/race-site.graph.json` を読み込んだ�
 ## 作業ルール
 
 - 解析対象は業務コードになりうる。**ソースコードを外部 SaaS に送らない**。抽出もビューアもローカル／自前ホスティングで完結させる。
-- ビューアは graph.json だけを入力にし、特定プロジェクトの知識をハードコードしない。
+- ビューアは graph.json だけを入力にし、特定プロジェクトの知識をハードコードしない。**ビューアは `@stack-atlas/core` に依存しない**（`@stack-atlas/schema` だけ）。
 - スタック固有の処理はすべて抽出器（extractor）側に閉じ込める。
+- 抽出器の契約は `packages/core/src/types.ts`。変えるときは core 側と各抽出器の両方を直す。
 - graph.json を変えたら `packages/schema/graph.schema.json`・`packages/schema/src/types.ts`・`docs/03-graph-schema.md` を同時に更新し、
   `pnpm validate examples/race-site.graph.json` が通ること（型とスキーマのずれは `pnpm test` で検出される）。
-- コミット前に `pnpm lint && pnpm typecheck && pnpm test && pnpm build` を通す（CI と同じ）。ビューアを触ったら `pnpm --filter @stack-atlas/viewer e2e` も（CI で実行される）。
+- コミット前に `pnpm lint && pnpm typecheck && pnpm test` を通す（`pnpm build` も CI と同じ）。ビューアを触ったら `pnpm --filter @stack-atlas/viewer e2e` も（CI で実行される。Chromium が必要）。
+- フィクスチャ（`examples/fixture-repo/`）はワークスペース外。ID の規約は `examples/fixture-repo/README.md`。
 - プロトタイプ（`prototype/`）は参照用として残す。新実装で置き換えても削除しない。
 - UI の文言は日本語。
 
 ## リポジトリ内容
 
 ```
-CLAUDE.md                     ← これ
-HANDOFF.md                    ← 経緯・決定事項・未決事項
-README.md                     ← 概要と開発の始め方
-package.json                  ← pnpm workspace のルート（build / test / lint / typecheck / format / validate）
-pnpm-workspace.yaml
-tsconfig.base.json            ← 各パッケージ共通の TypeScript 設定
-eslint.config.js  .prettierrc  .editorconfig  .nvmrc(22)
-.github/workflows/ci.yml      ← lint・typecheck・test・build・サンプル検証
+CLAUDE.md  HANDOFF.md  README.md   ← 作業指示・経緯と現在地・front page
+package.json  pnpm-workspace.yaml  ← pnpm workspace のルート（build / test / lint / typecheck / validate / atlas / dev）
+tsconfig.base.json  eslint.config.js  .prettierrc  .editorconfig  .nvmrc(22)
+.github/workflows/ci.yml           ← lint・typecheck・test・build・サンプル検証・e2e
 packages/
-  schema/                     ← @stack-atlas/schema
-    graph.schema.json         ← JSON Schema (draft 2020-12)。これが正
-    src/types.ts              ← graph.json の TypeScript 型（手書き）
-    src/validate.ts           ← validateGraph()：スキーマ検証＋参照整合性チェック
-    src/cli.ts                ← stack-atlas-validate <file...>（pnpm validate の実体）
-  viewer/                     ← @stack-atlas/viewer（Vite + TypeScript + three.js。graph.json を読む静的アプリ）
-    src/main.ts               ← 入口: ?graph= / ドロップ / ファイル選択 → 検証 → Viewer。WebGL がなければメッセージ
-    src/app.ts                ← Viewer: シーン・UI の組み立て、操作、ループ
-    src/state.ts              ← ViewState と computeVisuals()（優先順位 ハイライト＞フロー＞キャッシュ＞通常 をここだけで決める）
-    src/graph/                ← 純粋ロジック（Vitest）: load.ts（入力・検証・URL 解決）、model.ts（GraphModel）、
-                                 closure.ts（ハイライト規則）、kinds.ts（kind → 色・形・日本語名）
-    src/layout/               ← auto.ts（自動レイアウト）、plate.ts（層の Y・板のサイズ・autoLayout への入力）
-    src/scene/                ← three.js: renderer / plates / nodes / edges / flow / camera / picking
-    src/screen/texture.ts     ← 画面ノードの Canvas（スクショ遅延読み込み・プレースホルダ・region ハイライト）
-    src/ui/                   ← DOM: topbar / layerChips / legend / panel / flowPill / labels / issues / emptyState / memos
-    e2e/                      ← Playwright のスモークテスト（pnpm --filter @stack-atlas/viewer e2e）
+  schema/                          ← graph.json の JSON Schema（正）・型・validateGraph()・検証 CLI
+  core/                            ← 抽出器の契約（src/types.ts）、merge / overrides / flows / rules/ / buildGraph()（src/pipeline.ts）、diff、memos
+  cli/                             ← stack-atlas コマンド（src/commands/ に build / validate / serve / diff / init-flows）
+  viewer/                          ← Vite + TypeScript + three.js の静的アプリ（src/graph・layout・scene・screen・ui、e2e/）
+extractors/
+  cdktf/  nextjs-app/  ts-imports/  ← インフラ層・画面層・コンポーネント／型層
+  api-link/  cache/  screenshots/  ← フロント→API 結線・キャッシュ情報・スクショと regions（READMEあり、screenshots は docs/10）
+examples/
+  fixture-repo/                    ← 合成モノレポ（config / overrides / flows / memos / 手書き cdk.tf.json / site/）。ワークスペース外
+  race-site.graph.json             ← 手書きサンプル（プロトタイプのデータ）
 docs/
-  01-vision.md                ← ユーザーの元の要望と要件
-  02-architecture.md          ← 目標アーキテクチャと現状の差分
-  03-graph-schema.md          ← graph.json 仕様
-  04-extractors.md            ← スタック別の抽出方法
-  05-viewer-spec.md           ← ビューアの UI・インタラクション仕様（プロトタイプ準拠）
-  06-roadmap.md               ← フェーズ別タスクと完了条件
-  07-existing-tools.md        ← 既存ツール調査
-  08-design-phase0-1.md       ← Phase 0・1 の設計とタスク一覧
-  images/                     ← プロトタイプのスクリーンショット
-prototype/
-  stack-atlas.html            ← 動くプロトタイプ（three.js r160、単一ファイル。参照用）
-  README.md
-examples/race-site.graph.json ← プロトタイプのデータを graph.json に変換したもの
-scripts/
-  export-prototype-data.mjs   ← プロトタイプ → graph.json 変換
-  validate-graph.mjs          ← 互換ラッパ（中身は packages/schema の CLI）
-  sync-samples.mjs            ← examples/*.graph.json を packages/viewer/public/samples/ へコピー（dev / build の前に自動）
+  01〜07                           ← ビジョン・アーキテクチャ・スキーマ・抽出器・ビューア仕様・ロードマップ・既存ツール
+  08-design-phase0-1.md  09-design-phase2-5.md   ← 設計と決定事項、末尾に実装結果
+  10-screenshots-guide.md  11-sharing.md  ci-example.yml   ← 利用ガイドと CI テンプレート
+  images/                          ← プロトタイプと phase1-* / phase5-* のスクリーンショット
+prototype/                         ← 単一 HTML のプロトタイプ（three.js r160。参照用）
+scripts/                           ← export-prototype-data / validate-graph（互換ラッパ）/ sync-samples
 ```
+
+主なコマンド: `pnpm atlas build examples/fixture-repo -o out --with-viewer --no-screenshots` → `pnpm atlas serve out`、`pnpm validate <graph.json>`、`pnpm dev`（ビューア開発サーバ）。

@@ -1,70 +1,101 @@
 # Stack Atlas
 
-インフラ → 画面 → コンポーネント → 型 を層として 3D に積み、1 画面で依存関係・データフロー・キャッシュを追えるようにするツール（開発初期）。
+インフラ → 画面 → コンポーネント → 型 を層として 3D に積み、1 画面で依存関係・データフロー・キャッシュを追えるようにするツール。
 
-![overview](docs/images/01-overview.png)
+## 結論
 
-- 引き継ぎの概要: [HANDOFF.md](HANDOFF.md)
-- Claude 向けの作業指示: [CLAUDE.md](CLAUDE.md)
-- 動くプロトタイプ: [prototype/](prototype/)
-- 仕様: [docs/](docs/)
+リポジトリ（CDKtf ＋ Next.js App Router ＋ TypeScript）を解析して `graph.json` を作り、静的な 3D ビューアで開く。
+ホバーで依存先（赤）と影響範囲（橙）が光り、データフロー（HIT / MISS / 無効化）とキャッシュ設定が見え、ノードにメモを書いてチームで共有できる。
+解析もビューアもローカル／自前ホスティングで完結し、ソースコードを外部に送らない。
+Phase 0〜5 はフィクスチャリポジトリ（`examples/fixture-repo/`）で完了済み。次は実リポジトリへの適用（[docs/06-roadmap.md](docs/06-roadmap.md) の Phase 6）。
 
-| | |
-|---|---|
-| ![hover](docs/images/02-hover-component.png) | ![cache](docs/images/03-cache-flow.png) |
-| 画面内の ResultTable を指すと、同じ部品を使う画面と型が光る | キャッシュモードと「閲覧 MISS」フロー |
+## 全体像
 
-## 開発
+```
+ リポジトリ                    抽出器（スタック固有）                graph.json              ビューア（汎用）
+┌─────────────┐   cdktf / nextjs-app / ts-imports      ┌────────────┐   ?graph=   ┌──────────────────┐
+│ infra/ apps/ │ ─ api-link / cache / screenshots ───▶ │ nodes      │ ──────────▶ │ 3D 表示・ハイライト │
+│ flows.yaml   │   ＋ overrides / flows / memos        │ edges      │             │ フロー・キャッシュ │
+│ overrides…   │   （packages/core がマージ・検証）     │ flows      │             │ メモ・差分         │
+└─────────────┘                                        └────────────┘             └──────────────────┘
+```
 
-Node 22 と pnpm（`corepack enable` で `package.json` の `packageManager` のバージョンが使われる）が必要。
+ビューアは graph.json だけを読み、特定のスタックを知らない。スタック固有の処理はすべて抽出器に閉じる。詳細は [docs/02-architecture.md](docs/02-architecture.md)。
+
+## クイックスタート
+
+Node 22 と pnpm（`corepack enable`）が必要。フィクスチャを解析してビューアで開く。
 
 ```sh
 pnpm install
-pnpm dev                                  # ビューアの開発サーバ（packages/viewer、Vite）
-pnpm build                                # 全パッケージをビルド。ビューアは packages/viewer/dist/ に静的ファイルが出る
-pnpm test                                 # Vitest
-pnpm lint && pnpm typecheck               # ESLint と tsc
-pnpm validate examples/race-site.graph.json   # graph.json のスキーマ＋参照整合性チェック
+pnpm build
+pnpm atlas build examples/fixture-repo -o out --with-viewer --no-screenshots
+pnpm atlas serve out        # → http://127.0.0.1:4173/ を開く
 ```
+
+手書きサンプルをビューアの開発サーバで見る場合:
+
+```sh
+pnpm dev                    # → http://localhost:5173/?graph=samples/race-site.graph.json
+```
+
+## CLI
+
+`pnpm atlas <コマンド>`（ビルド後は `stack-atlas <コマンド>`）。
+
+| コマンド | 内容 |
+|---|---|
+| `build <repo> [-o <outDir>] [--with-viewer] [--no-screenshots] [-v]` | 解析して `graph.json` / `issues.json` / `memos.json`（と `shots/`、ビューア）を `outDir` に出す。検証エラーがあれば終了コード 1 |
+| `validate <graph.json...>` | スキーマと参照整合性の検証（`pnpm validate <file>` でも可） |
+| `serve <outDir> [--port 4173] [--host 127.0.0.1] [--repo <repo>]` | `outDir` を配信。`--repo` を付けるとビューアのメモ保存が `<repo>/.stack-atlas/memos.json` に書き戻される |
+| `diff <prev.json> <next.json>` | 2 つの graph.json の追加・削除・変更を表示 |
+| `init-flows <repo> [--out <file>] [--force]` | いまのグラフから `flows.yaml` の雛形（MISS / HIT / 無効化）を書く |
+
+## 自分のリポジトリに適用する
+
+解析対象のリポジトリ直下に次を置き、`stack-atlas build <repo> -o out --with-viewer` を実行する。
+
+- `stack-atlas.config.yaml`: 抽出器の入力（`cdktf` / `next` / `ts` / `deploy` / `api` / `screenshots`）。キーは [docs/09-design-phase2-5.md](docs/09-design-phase2-5.md) §3.3、動く例は [examples/fixture-repo/stack-atlas.config.yaml](examples/fixture-repo/stack-atlas.config.yaml)
+- `stack-atlas.overrides.yaml`: 静的解析で取れない結線の補正（`nodes` / `edges` / `remove` / `deploy`）
+- `flows.yaml`: データフロー。`stack-atlas init-flows <repo>` で雛形を作って直す
+- `data-component="Name"`: 画面の領域を取りたいコンポーネントのルート要素に付ける属性。[docs/10-screenshots-guide.md](docs/10-screenshots-guide.md)
+- `.stack-atlas/memos.json`: チーム共有メモ（Git 管理）。共有・差分・配信は [docs/11-sharing.md](docs/11-sharing.md)、CI は [docs/ci-example.yml](docs/ci-example.yml)
+
+## パッケージ
 
 | パッケージ | 内容 |
 |---|---|
-| `packages/schema`（`@stack-atlas/schema`） | graph.json の JSON Schema・TypeScript 型・`validateGraph()`・検証 CLI |
-| `packages/viewer`（`@stack-atlas/viewer`） | 3D ビューア（Vite + TypeScript + three.js）。graph.json だけを入力に描画する静的アプリ |
+| `packages/schema`（`@stack-atlas/schema`） | graph.json の JSON Schema・型・`validateGraph()`・検証 CLI |
+| `packages/core`（`@stack-atlas/core`） | 抽出器の契約（`src/types.ts`）、マージ、overrides、flows、ルールエンジン、`buildGraph()` |
+| `packages/cli`（`@stack-atlas/cli`） | `stack-atlas` コマンド |
+| `packages/viewer`（`@stack-atlas/viewer`） | 3D ビューア（Vite + TypeScript + three.js）。core に依存しない静的アプリ |
+| `extractors/cdktf` | インフラ層（`cdk.tf.json`）。CloudFront / API Gateway のキャッシュ情報も作る |
+| `extractors/nextjs-app` | 画面層（App Router の route / layout、route segment config） |
+| `extractors/ts-imports` | コンポーネント層・型層と `uses` エッジ（ts-morph） |
+| `extractors/api-link` | フロント → API の結線（client ⇔ route_key ⇔ Lambda ⇔ ハンドラ） |
+| `extractors/cache` | SWR / React Query、Lambda 上の ISR、server component の fetch のキャッシュ情報 |
+| `extractors/screenshots` | Playwright で画面のスクショと `data-component` の領域を取る |
 
-## ビューアを使う
-
-```sh
-pnpm dev
-# → http://localhost:5173/?graph=samples/race-site.graph.json
-```
-
-- **サンプル**: `examples/*.graph.json` は `scripts/sync-samples.mjs` が `packages/viewer/public/samples/` にコピーする（`pnpm dev`・`pnpm build` の前に自動で実行。コピー先は Git に入れない）。
-  ビルド結果 `packages/viewer/dist/` にも `samples/` が入るので、`dist/` を置いた場所で `?graph=samples/race-site.graph.json` が開ける。
-  開発サーバと `vite preview` では、リポジトリの `examples/` を `/examples/` でも配信している（`?graph=../../examples/race-site.graph.json` でも開ける）。
-- **自分の graph.json を開く**（どれか）:
-  1. URL で指定: `?graph=<graph.json の URL>`。相対パスはページ基準。graph.json 内の `screen.screenshot` は **graph.json の URL 基準**で読み込む。
-     別オリジンに置くなら CORS の許可が必要。
-  2. ファイルをページにドラッグ＆ドロップ
-  3. トップバーの「開く」、または graph を指定せずに開いたときの「graph.json を選ぶ」
-
-  ファイルから開いた場合は相対パスのスクリーンショットを読めないので、画面はプレースホルダ（ルート名と regions の枠）で描く。
-- 読み込み時に `validateGraph()` で検証し、エラー（赤）・警告（黄）を一覧で出す。参照エラーがあっても読める範囲で描画を続ける。
-- メモとスクショの差し替えはブラウザの localStorage に保存する（キーは `project.name`、なければ graph の URL／ファイル名ごと）。
-- WebGL が使えない環境ではメッセージを出す。
-
-### テスト
+## テスト
 
 ```sh
-pnpm test                                  # Vitest（closure・model・load・state・layout など）
-pnpm --filter @stack-atlas/viewer e2e      # Playwright のスモークテスト（ビルドして vite preview で配信）
-DOCS_SCREENSHOTS=1 pnpm --filter @stack-atlas/viewer e2e docs-screenshots   # docs/images/phase1-*.png を撮り直す
+pnpm test                                   # 全パッケージの Vitest（235 件）
+pnpm lint && pnpm typecheck                 # ESLint と tsc
+pnpm --filter @stack-atlas/viewer e2e       # Playwright のスモークテスト（18 件、3 件はスキップ。Chromium が必要）
+DOCS_SCREENSHOTS=1 pnpm --filter @stack-atlas/viewer e2e docs-screenshots   # docs/images/ を撮り直す
 ```
 
-e2e は Chromium をヘッドレスで使う（WebGL は SwiftShader）。初回は `pnpm --filter @stack-atlas/viewer exec playwright install chromium` が必要
-（`/opt/pw-browsers/chromium` がある環境ではそれを使う）。スクリーンショットは `packages/viewer/e2e/__screenshots__/overview.png` に保存する（比較はしない）。
+初回は `pnpm --filter @stack-atlas/viewer exec playwright install chromium` が必要（`/opt/pw-browsers/chromium` があればそれを使う）。
+
+## ギャラリー
 
 | | |
 |---|---|
-| ![phase1](docs/images/phase1-overview.png) | ![phase1 hover](docs/images/phase1-hover-component.png) |
-| Phase 1 のビューアでサンプルを表示 | ResultTable を指したところ |
+| ![overview](docs/images/phase1-overview.png) | ![hover](docs/images/phase1-hover-component.png) |
+| 層を積んだ全体像 | ResultTable を指すと、使う画面と型が光る |
+| ![cache flow](docs/images/phase1-cache-flow.png) | ![diff](docs/images/phase5-diff.png) |
+| キャッシュモードと「閲覧 MISS」フロー | 前回との差分（追加は緑、削除はゴースト） |
+
+## 関連ドキュメント
+
+[HANDOFF.md](HANDOFF.md)（経緯・決定事項・未決事項）、[CLAUDE.md](CLAUDE.md)（作業指示）、[docs/](docs/)（仕様）、[prototype/](prototype/)（最初の単一 HTML プロトタイプ。参照用）。

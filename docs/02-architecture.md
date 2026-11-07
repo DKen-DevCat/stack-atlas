@@ -57,20 +57,25 @@
 - 入力方法: URL パラメータ（`?graph=./graph.json`）、ドラッグ＆ドロップ、CLI の `serve` から配信
 - UI・インタラクション仕様は `05-viewer-spec.md`（プロトタイプの挙動を仕様化したもの）
 
-## 現状（プロトタイプ）との差分
+## 実装状況
 
-| 部分 | プロトタイプの状態 | 汎用化で必要なこと |
+プロトタイプからの汎用化は Phase 0〜5 でフィクスチャに対して完了している（`docs/06-roadmap.md`）。
+
+| 部分 | プロトタイプの状態 | 実装後の状態 |
 |---|---|---|
-| 3D 描画、ハイライト、メモ、フローのアニメーション | ほぼ汎用 | graph.json から組み立てる形に分離するだけ |
-| 層の数・色 | `LAYERS` 配列で可変 | graph.json の `layers` から読む |
-| ノード配置（x, z） | 手置き | **自動レイアウト**（後述）。`position` があれば優先 |
-| 画面ノードの判定 | `L === 1` 固定 | `screen` フィールドの有無、または `kind` が `page` / `layout` |
-| 画面の中身 | ページ ID ごとの Canvas 描画関数 | `screen.screenshot` の画像＋`regions`。ない場合はプレースホルダ |
-| ノードの関係データ | 手書きの `NODES` / `EDGES` | 抽出器で生成 |
-| キャッシュ | 手書きの `CACHE` | 抽出器で生成（判定ロジックも含む） |
-| フロー | 手書きの `FLOWS` | `flows.yaml` から生成 |
-| メモ | localStorage | memos.json（Git 共有）など。未決事項 Q4 |
-| ノード ID | 短い独自名 | `<kind>:<識別子>` 規約 |
+| 3D 描画、ハイライト、メモ、フローのアニメーション | ほぼ汎用 | `packages/viewer` が graph.json から組み立てる（実装済み） |
+| 層の数・色 | `LAYERS` 配列で可変 | graph.json の `layers` から読む。2〜6 層で e2e 確認（実装済み） |
+| ノード配置（x, z） | 手置き | 自動レイアウト（`layout/auto.ts`、決定的）。`position` があれば優先（実装済み） |
+| 画面ノードの判定 | `L === 1` 固定 | `screen` フィールド、または `kind` が `page` / `layout`（実装済み） |
+| 画面の中身 | ページ ID ごとの Canvas 描画関数 | `screen.screenshot` ＋ `regions`。無ければプレースホルダ（実装済み） |
+| ノードの関係データ | 手書きの `NODES` / `EDGES` | 抽出器 cdktf / nextjs-app / ts-imports / api-link ＋ overrides（実装済み） |
+| キャッシュ | 手書きの `CACHE` | cdktf・nextjs-app・api-link・cache 抽出器と core のルールエンジン（実装済み） |
+| フロー | 手書きの `FLOWS` | `flows.yaml`（`init-flows` で雛形）（実装済み） |
+| スクショ・領域 | ダミー画面 | screenshots 抽出器（Playwright、`data-component`）（実装済み） |
+| メモ | localStorage | `.stack-atlas/memos.json`（Git 共有）、`serve` の書き戻し、孤立メモ一覧（実装済み） |
+| 差分・配信 | なし | `?prev=` と `stack-atlas diff`、`build --with-viewer`、`docs/ci-example.yml`（実装済み） |
+| ノード ID | 短い独自名 | `<kind>:<識別子>` 規約（実装済み） |
+| 実リポジトリでの動作 | — | **未検証**（Phase 6）。Terraform / CDK / SAM などの抽出器、LOD、エディタ連携は未着手 |
 
 ## 自動レイアウトの方針（Phase 1）
 
@@ -83,24 +88,26 @@
 
 最初は 1＋2 で十分。プロトタイプの手置き座標は、自動レイアウトの見た目を評価する基準として使える。
 
-## 推奨リポジトリ構成（このツール自体）
+## リポジトリ構成（このツール自体）
 
-未決事項 Q1 の確定待ち。案:
+pnpm モノレポ（docs/08 D1）。`examples/fixture-repo/` はワークスペース外。
 
 ```
-stack-atlas/
+project-map/
   packages/
-    schema/          graph.json の型定義（TypeScript）＋ JSON Schema
-    viewer/          Vite + TypeScript + three.js。静的ビルド
-    core/            抽出器のインターフェース、マージ、補正、検証
-    cli/             `stack-atlas build` / `serve`
+    schema/          graph.json の JSON Schema（正）・型・validateGraph()・検証 CLI
+    core/            抽出器の契約（src/types.ts）、マージ、overrides、flows、ルールエンジン（src/rules/）、buildGraph()、diff、memos
+    cli/             stack-atlas コマンド（build / validate / serve / diff / init-flows）
+    viewer/          Vite + TypeScript + three.js。graph.json だけを読む静的アプリ（core に依存しない）
   extractors/
-    cdktf/
-    nextjs-app/
-    ts-imports/
-    api-link/
-    cache/
-    screenshots/     Playwright
+    cdktf/           インフラ層（cdk.tf.json）
+    nextjs-app/      画面層（App Router）
+    ts-imports/      コンポーネント層・型層（ts-morph）
+    api-link/        フロント → API の結線
+    cache/           SWR / React Query / ISR / fetch のキャッシュ情報
+    screenshots/     Playwright でスクショと regions
   examples/
-  prototype/
+    fixture-repo/    合成モノレポ（Phase 2〜5 の入力）
+    race-site.graph.json
+  docs/  prototype/  scripts/
 ```

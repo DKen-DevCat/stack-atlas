@@ -148,3 +148,20 @@ screenshots:
 | D11 | cdk.tf.json は手書きで用意し、cdktf synth は CI で動かさない | プロバイダのダウンロードが重く、ネットワークに依存する |
 | D12 | 設定は YAML 1 ファイル（`stack-atlas.config.yaml`）。overrides と flows は別ファイル | 生成の入力と人の補正を分ける |
 | D13 | メモの正は `.stack-atlas/memos.json`。ビューアからの保存は `serve` 経由か JSON ダウンロード | 業務コードと同じリポジトリで Git 管理し、外部 SaaS を使わない |
+
+## 6. 実装結果
+
+Phase 2〜5 はフィクスチャ（`examples/fixture-repo/`）に対して完了した。`stack-atlas build examples/fixture-repo` は 33 ノード・55 エッジ・3 フロー、検証エラー 0 件。
+テストは全体で 235 件（core 50、cli 21、cdktf 9、nextjs-app 8、ts-imports 7、api-link 12、cache 14、screenshots 17）。設計からずれた点:
+
+- **`applyDeployConfig`**: `config.deploy`（Lambda とアプリ・ハンドラの対応）は抽出器ごとに解釈せず、core の `applyDeployConfig`（`packages/core/src/deploy.ts`）がマージ後にまとめて `deploy` エッジと `meta.deployApp` を付ける。cdktf と nextjs-app も同じキーを読む。
+- **キャッシュ情報の出どころ**: `cache` 抽出器だけが作るのではなく、CloudFront・HTTP API・Lambda@Edge は cdktf、route の ISR・dynamic は nextjs-app、api client の `fetch` オプションは api-link が作る。`cache` 抽出器は残りを埋める（hook の SWR / React Query、Lambda 上の ISR、server component の fetch）。`cache` のあるノードには触らない。
+- **hook のキャッシュの tone**: SWR / React Query の設定は `ok`（`warn` や `info` にはしない）。route の fetch は `info`、`no-store` は `off`。
+- **screenshots の出力先**: `config.screenshots.outDir` の既定は `.stack-atlas/out`。CLI の `build` は `outDir` を `-o` と同じにし、PNG を `<outDir>/shots/<slug>.png`、`screen.screenshot` を `shots/<slug>.png`（graph.json 基準の相対パス）にする。`--no-screenshots` で抽出器を飛ばせる。スクショ失敗時はそのルートだけ飛ばす。README は無く、使い方は `docs/10-screenshots-guide.md`。
+- **`detect()` に upstream が渡らない**: `detect(repo)` は先行の抽出器の結果を見られない。cache 抽出器は config のキーや直下の `next.config` / package.json の依存で判定し、`extract` で upstream に対象ノードが無ければ空を返す。
+- **api-link の自己完結**: cdk.tf.json を自分で読み直す（`aws_apigatewayv2_route` / `integration`）。上流のノードがあれば ID を引き、無ければ `handler:` / `lib:` を自分で作る。REST API・ALB は未対応。
+- **`init-flows` コマンド**: 設計の 4-3 どおり。いまのグラフから `miss` / `hit` / `invalidate` を作る。ノード ID は実在するものだけ。既存ファイルは `--force` が無ければ上書きしない。
+- **ルールエンジン**: `lambda-fs-isr` → `two-tier-staleness` → `cookie-cache-key` → `no-store-behind-cdn` の順（`DEFAULT_RULES`）。
+- **差分表示のゴースト**: 削除ノードは今の graph の同じ層に灰色の箱で置く。前回のレイアウト位置を基準に、今のノードと重ならないよう横にずらす。ホバー・フロー・キャッシュ表示中は薄くする（`docs/11-sharing.md`）。
+- **ts-imports**: Lambda のエントリファイル（`apps/api/src/index.ts`）も `lib:` になる。不要なら overrides の `remove` で消す。
+- **未検証**: 実リポジトリ（Q2）。差分は config と `detect()` で吸収する想定（D9）で、Phase 6 で確認する。

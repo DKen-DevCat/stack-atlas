@@ -2,6 +2,66 @@
 
 作成: 2026-11-07（チャットセッションから Git 連携セッションへの引き継ぎ）
 
+## 0. 現在地（2026-11-07 Git 連携セッション後）
+
+### 結論
+
+Phase 0〜5 は **フィクスチャリポジトリ（`examples/fixture-repo/`）に対して完了**した。実リポジトリ（Q2）が未確認のため、実物では一度も動かしていない。
+次のゲートは **Q2（最初に解析する実リポジトリ）の確認**で、そこから Phase 6（`docs/06-roadmap.md`）に進む。以降の §1〜§7 は引き継ぎ時点の記録（履歴）として残している。
+
+### フェーズごとに作ったもの
+
+| Phase | 成果物 |
+|---|---|
+| 0 | pnpm モノレポ、`packages/schema`（JSON Schema・型・`validateGraph()`・検証 CLI）、CI |
+| 1 | `packages/viewer`: graph.json 入力（`?graph=`・ドロップ・ファイル選択）、自動レイアウト、ハイライト、フロー、キャッシュモード、パネル、スクショ表示、スマホ幅、e2e |
+| 2 | `packages/core`（契約・マージ・overrides・flows・層割り当て・`buildGraph()`）、`packages/cli`、`extractors/{cdktf,nextjs-app,ts-imports,api-link}`、`examples/fixture-repo/` |
+| 3 | `extractors/screenshots`（Playwright、`data-component` → regions、storageState）、`docs/10-screenshots-guide.md` |
+| 4 | `extractors/cache`、core のルールエンジン、`flows.yaml` の読み込み、`stack-atlas init-flows` |
+| 5 | メモ共有（`memos.json`・`serve` の書き戻し・孤立メモ）、差分表示（`?prev=`・`stack-atlas diff`）、`build --with-viewer`、`docs/ci-example.yml`、`docs/11-sharing.md` |
+
+### テスト（2026-11-07 実測）
+
+- `pnpm test`: 235 件通過（schema 15 / core 50 / viewer 82 / cdktf 9 / nextjs-app 8 / api-link 12 / cache 14 / ts-imports 7 / screenshots 17 / cli 21）
+- `pnpm --filter @stack-atlas/viewer e2e`: 18 件通過、3 件スキップ（約 30 秒。Chromium が必要）
+
+### 動かし方
+
+```sh
+pnpm install && pnpm build
+pnpm atlas build examples/fixture-repo -o out --with-viewer --no-screenshots
+pnpm atlas serve out        # http://127.0.0.1:4173/
+pnpm dev                    # ビューアの開発サーバ。?graph=samples/race-site.graph.json
+```
+
+コマンドの一覧と自分のリポジトリへの適用方法は `README.md`。
+
+### 決定事項 D1〜D13
+
+- D1〜D8（pnpm モノレポ、handoff のルート展開、画面ノードの判定、three.js 同梱、決定的な自動レイアウト、型は手書きでスキーマが正、検証エラーでも描画継続、メモの保存先を差し替え可能に）: `docs/08-design-phase0-1.md` §5
+- D9〜D13（フィクスチャで Phase 2〜5 を完了、抽出器は順次実行、cdk.tf.json は手書き、設定は YAML 1 ファイル、メモの正は `.stack-atlas/memos.json`）: `docs/09-design-phase2-5.md` §5
+- 設計からのずれは各文書末尾の「実装結果」を参照。
+
+### 未決事項（更新後）
+
+| # | 論点 | 状態 |
+|---|---|---|
+| Q1 / Q1' | リポジトリ構成・handoff の展開 | **決定済み（推奨案）**: pnpm モノレポ、ルートに展開（D1・D2） |
+| Q2 | 最初に解析する実リポジトリ | **未決。ゲートになる項目**。構成を確認して Phase 6 へ |
+| Q3 | ハイライト色 | **決定済み（推奨案）**: 赤（依存先）＋橙（影響範囲）の 2 色を維持 |
+| Q4 | メモの保存先 | **実装済み**: `.stack-atlas/memos.json` を Git で共有（D13）。`serve --repo` で書き戻し、または JSON を書き出す |
+| Q5 | 共有・ホスティング | 静的ビルド（`build --with-viewer`）＋ S3 / CloudFront 用の `docs/ci-example.yml`、またはローカル `serve` を**実装済み**。配信先は未選定 |
+| Q6 | フロー定義 | **実装済み**: `flows.yaml` を人が書く＋ `init-flows` で雛形 |
+| Q7 | 対象スタック | CDKtf ＋ Next.js App Router ＋ TypeScript は**実装済み**。Terraform / AWS CDK / SAM / Vite / Remix などは後回し |
+| Q8 | プロダクト名 | **決定済み（推奨案）**: 当面「Stack Atlas」 |
+| Q9 | 配信形態の仮置き | **決定済み（推奨案）**: 静的ビルド |
+
+### 次にやること
+
+`docs/06-roadmap.md` の Phase 6。Q2 の確認 → 実リポジトリで `stack-atlas build` → config / `detect()` の調整 → api-link の取りこぼしを overrides で補う → スクショ（storageState）→ キャッシュのバッジ確認 → flows → CI。
+
+---
+
 ## 1. 結論
 
 - 「Figma に 3D を足したような、スタックからコードまで 1 画面で追える共有スペース」のプロトタイプを作り、ユーザーから高評価を得た。
@@ -38,7 +98,7 @@
 - `prototype/stack-atlas.html` — 動くプロトタイプ。three.js r160（jsDelivr）、OrbitControls、CSS2DRenderer。ビルド不要。
   - 機能: レイヤー展開／重ね、フロー 3 種、キャッシュモード、層の表示切替、パネル（コード抜粋・依存・キャッシュ・メモ・スクショ差し替え）、画面内パーツのホバー
   - メモとスクショは localStorage に保存（ブラウザ単位で共有されない）
-- `schema/graph.schema.json` — 中間フォーマットの JSON Schema 案（v1）
+- `packages/schema/graph.schema.json` — 中間フォーマットの JSON Schema 案（v1）
 - `examples/race-site.graph.json` — プロトタイプのデータを変換したサンプル（32 ノード、52 エッジ、3 フロー）。スキーマ検証済み
 - `scripts/export-prototype-data.mjs` — 上記の変換スクリプト（プロトタイプを修正したら再生成可能）
 - `scripts/validate-graph.mjs` — スキーマ＋参照整合性チェック
