@@ -9,3 +9,4 @@ playwright/.cache/
 .DS_Store
 packages/viewer/public/samples/
 packages/viewer/e2e/__screenshots__/
+out/

@@ -4,6 +4,7 @@ import { validateGraph } from '@stack-atlas/schema';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { runBuild } from '../commands/build.js';
 import { EXTRACTOR_PACKAGES, loadExtractors } from '../extractors.js';
@@ -188,4 +189,99 @@ describe('loadExtractors', () => {
     expect(EXTRACTOR_PACKAGES).toHaveLength(12);
     expect(EXTRACTOR_PACKAGES[0]).toBe('@stack-atlas/extractor-files');
   });
+});
+
+describe('build (fixture-poly)', () => {
+  it('2 リポジトリ構成のフィクスチャを検証エラー 0 でビルドし、主要なノード・エッジが出る', async () => {
+    const fixture = fileURLToPath(new URL('../../../../examples/fixture-poly', import.meta.url));
+    const out = mkdtempSync(join(tmpdir(), 'stack-atlas-poly-ci-'));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    let code: number;
+    try {
+      const extractors = await loadExtractors(createMemoryLogger(), { skip: ['screenshots'] });
+      code = await runBuild({
+        repo: fixture,
+        outDir: out,
+        extractors,
+        log: createMemoryLogger(),
+      });
+    } finally {
+      log.mockRestore();
+    }
+    expect(code).toBe(0);
+
+    type N = { id: string; file?: string };
+    type E = { from: string; to: string; kind: string };
+    const graph = JSON.parse(readFileSync(join(out, 'graph.json'), 'utf8')) as {
+      nodes: N[];
+      edges: E[];
+      flows: unknown[];
+      kinds: Record<string, unknown>;
+      project: { sources: string[] };
+    };
+    expect(validateGraph(graph).ok).toBe(true);
+    expect(
+      JSON.parse(readFileSync(join(out, 'issues.json'), 'utf8')).filter(
+        (i: { severity?: string; level?: string }) => (i.severity ?? i.level) === 'error',
+      ),
+    ).toEqual([]);
+
+    // ゆるい下限（ヒューリスティクスの小変更で壊れないように）
+    expect(graph.nodes.length).toBeGreaterThanOrEqual(50);
+    expect(graph.edges.length).toBeGreaterThanOrEqual(90);
+
+    const ids = new Set(graph.nodes.map((n) => n.id));
+    for (const id of [
+      'infra:lambda_api/api',
+      'infra:static_site/site',
+      'infra:aurora/this',
+      'infra:scheduler_notify/daily',
+      'handler:cmd/api',
+      'handler:internal/api',
+      'type:internal/domain',
+      'schema:internal/store',
+      'endpoint:GET /today',
+      'type:Today',
+      'schema:transactions',
+      'route:/',
+      'layout:/',
+      'comp:TotalCard',
+      'lib:fetcher',
+      'actor:user',
+    ]) {
+      expect(ids.has(id), `ノード ${id}`).toBe(true);
+    }
+
+    const has = (from: string, to: string, kind: string) =>
+      graph.edges.some((e) => e.from === from && e.to === to && e.kind === kind);
+    const edges: [string, string, string][] = [
+      ['infra:static_site/site', 'route:/', 'deploy'],
+      ['infra:lambda_api/api', 'handler:cmd/api', 'deploy'],
+      ['infra:lambda_api/api', 'endpoint:GET /today', 'deploy'],
+      ['endpoint:GET /today', 'handler:internal/api', 'http'],
+      ['infra:aurora/this', 'schema:transactions', 'schema'],
+      ['infra:scheduler_notify/daily', 'infra:lambda_api/notify', 'flow'],
+      ['infra:static_site/this', 'infra:static_site/site', 'flow'],
+      // 別モジュールの出力変数を辿った結線
+      ['infra:lambda_api/api', 'infra:aurora/db', 'flow'],
+    ];
+    for (const [f, t, k] of edges) expect(has(f, t, k), `${f} -> ${t} (${k})`).toBe(true);
+
+    // api-link: web の呼び出し側 (lib: / comp:) から endpoint への http
+    expect(
+      graph.edges.some(
+        (e) =>
+          e.kind === 'http' &&
+          e.to === 'endpoint:GET /today' &&
+          (e.from.startsWith('lib:') || e.from.startsWith('comp:')),
+      ),
+    ).toBe(true);
+
+    expect(graph.kinds.endpoint).toBeDefined();
+    expect(graph.project.sources).toEqual(['web', 'platform']);
+    expect(graph.flows).toHaveLength(2);
+    for (const n of graph.nodes) {
+      if (n.file) expect(n.file, n.id).toMatch(/^(web|platform)\//);
+    }
+  }, 60_000);
 });

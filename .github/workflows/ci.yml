@@ -31,6 +31,16 @@ jobs:
       - run: pnpm build
       - run: pnpm validate examples/race-site.graph.json
 
+      # フィクスチャ（単一 repo / 2 repo）を実際にビルドして graph.json を検証する
+      - run: pnpm atlas build examples/fixture-repo -o out/fixture-repo --no-screenshots
+      - run: pnpm atlas build examples/fixture-poly -o out/fixture-poly --no-screenshots
+      - run: pnpm validate out/fixture-repo/graph.json out/fixture-poly/graph.json
+      - name: Upload graphs
+        uses: actions/upload-artifact@v4
+        with:
+          name: graphs
+          path: out/**/graph.json
+
       # ビューアのスモークテスト（ヘッドレス。WebGL は SwiftShader）
       - name: Viewer e2e
         run: pnpm --filter @stack-atlas/viewer e2e
