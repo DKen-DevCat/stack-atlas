@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Stack Atlas — 3D構成マップ（プロトタイプ）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0d0f14; --panel:#151922ee; --line:#262c38; --text:#e6e9ef; --muted:#8b93a5;
+    --red:#ff3b3b; --coral:#ff8a5c; --cyan:#22d3ee;
+    --ok:#4ade80; --warn:#fbbf24; --off:#6b7280; --info:#38bdf8;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:"Noto Sans JP",system-ui,sans-serif;overflow:hidden;-webkit-font-smoothing:antialiased}
+  #stage{position:fixed;inset:0}
+  #labels{position:fixed;inset:0;pointer-events:none}
+  button{font:inherit;color:inherit}
+
+  #top{position:fixed;top:0;left:0;right:0;display:flex;gap:8px;align-items:center;padding:12px 14px;padding-top:max(12px,env(safe-area-inset-top));
+       background:linear-gradient(#0d0f14f2,#0d0f1400);z-index:5;flex-wrap:wrap}
+  #top h1{font-size:14px;font-weight:700;margin:0 6px 0 0;letter-spacing:.02em;white-space:nowrap}
+  #top h1 small{font-weight:400;color:var(--muted);margin-left:6px;font-size:11px}
+  .seg{display:flex;background:#1a1f2a;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .seg button{background:none;border:0;padding:6px 10px;font-size:12px;color:var(--muted);cursor:pointer;white-space:nowrap}
+  .seg button.on{background:#2a3242;color:var(--text)}
+  .btn{background:#1a1f2a;border:1px solid var(--line);border-radius:9px;padding:6px 10px;font-size:12px;cursor:pointer;white-space:nowrap;color:var(--muted)}
+  .btn:hover,.seg button:hover{color:var(--text)}
+  .btn.on{background:#3a2f0e;border-color:#fbbf2488;color:#fde68a}
+  .sp{flex:1}
+  .repo{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted);white-space:nowrap}
+
+  #layers{position:fixed;left:14px;top:96px;display:flex;flex-direction:column;gap:6px;z-index:4}
+  .lchip{display:flex;align-items:center;gap:8px;background:#151922cc;border:1px solid var(--line);border-radius:9px;padding:6px 10px;font-size:12px;cursor:pointer;user-select:none;min-width:190px}
+  .lchip i{width:10px;height:10px;border-radius:3px;flex:none}
+  .lchip span{color:var(--muted);font-family:"JetBrains Mono",monospace;font-size:10px;margin-left:auto}
+  .lchip.off{opacity:.35}
+
+  #legend{position:fixed;left:14px;bottom:14px;bottom:max(14px,env(safe-area-inset-bottom));background:#151922cc;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:11px;color:var(--muted);z-index:4;line-height:1.7;max-width:310px}
+  #legend b{display:inline-block;width:18px;height:3px;border-radius:2px;vertical-align:middle;margin-right:6px}
+  #legend .hint{margin-top:4px;border-top:1px solid var(--line);padding-top:6px}
+  #legend .cl{display:none}
+  body.cache-on #legend .cl{display:block}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 4px 0 2px}
+
+  #flowpill{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;bottom:max(18px,env(safe-area-inset-bottom));background:#0b2a33ee;border:1px solid #22d3ee66;color:#cffafe;
+            padding:8px 14px;border-radius:999px;font-size:12px;z-index:6;display:none;white-space:nowrap;max-width:calc(100vw - 28px);overflow:hidden;text-overflow:ellipsis}
+  #flowpill em{font-style:normal;color:var(--cyan);font-family:"JetBrains Mono",monospace;margin-right:8px}
+  #flowpill.hit{background:#2a2408ee;border-color:#fbbf2488;color:#fef3c7}
+  #flowpill.hit em{color:var(--warn)}
+
+  .nl{pointer-events:auto;cursor:pointer;transform:translateY(-22px);font-size:11px;line-height:1;padding:4px 7px;border-radius:6px;background:#11151dd9;border:1px solid #2b3240;white-space:nowrap;
+      transition:opacity .15s,background .15s,border-color .15s;user-select:none}
+  .nl .k{font-size:9px;color:var(--muted);margin-right:5px;font-family:"JetBrains Mono",monospace}
+  .nl .memo{margin-left:4px}
+  .nl .cb{display:none;margin-left:6px;font-size:9px;padding:2px 5px;border-radius:4px;font-family:"JetBrains Mono",monospace;vertical-align:1px}
+  body.cache-on .nl .cb{display:inline-block}
+  .cb.ok{background:#4ade8022;color:var(--ok);border:1px solid #4ade8066}
+  .cb.warn{background:#fbbf2422;color:var(--warn);border:1px solid #fbbf2466}
+  .cb.off{background:#6b728022;color:#9ca3af;border:1px solid #6b728066}
+  .cb.info{background:#38bdf822;color:var(--info);border:1px solid #38bdf866}
+  .nl.dim{opacity:.18}
+  .nl.soft{opacity:.4}
+  .nl.down{background:#3a0d10;border-color:var(--red);color:#ffd5d5}
+  .nl.up{background:#3a1b0f;border-color:var(--coral);color:#ffe2d4}
+  .nl.sel{background:var(--red);border-color:#fff;color:#fff}
+  .nl.flow{border-color:var(--cyan);color:#cffafe}
+  .pl{font-size:11px;color:var(--muted);white-space:nowrap;pointer-events:none;font-weight:500;letter-spacing:.03em}
+  .pl b{font-size:12px;margin-right:6px}
+
+  #panel{position:fixed;right:14px;top:70px;bottom:14px;width:370px;background:var(--panel);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:14px;z-index:7;
+         display:none;flex-direction:column;overflow:hidden}
+  #panel.open{display:flex}
+  #panel header{padding:14px 16px 10px;border-bottom:1px solid var(--line);position:relative}
+  #panel .kind{font-size:10px;color:var(--muted);font-family:"JetBrains Mono",monospace;text-transform:uppercase;letter-spacing:.06em}
+  #panel h2{margin:4px 0 2px;font-size:17px}
+  #panel .file{font-family:"JetBrains Mono",monospace;font-size:11px;color:#9fb4ff;word-break:break-all}
+  #panel .x{position:absolute;right:10px;top:10px;background:none;border:0;color:var(--muted);font-size:18px;cursor:pointer;padding:4px 8px}
+  #panel .body{overflow:auto;padding:12px 16px 16px;flex:1}
+  #panel h3{font-size:11px;color:var(--muted);font-weight:500;margin:16px 0 6px;letter-spacing:.04em}
+  #panel h3:first-child{margin-top:0}
+  pre{margin:0;background:#0b0e13;border:1px solid var(--line);border-radius:8px;padding:10px;font-family:"JetBrains Mono",monospace;font-size:11px;line-height:1.55;color:#c9d1e3;overflow:auto;white-space:pre}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:#1a1f2a;cursor:pointer}
+  .chip.d{border-color:#ff3b3b88}
+  .chip.u{border-color:#ff8a5c88}
+  .chip .t{color:var(--muted);font-size:9px;margin-left:4px;font-family:"JetBrains Mono",monospace}
+  .none{font-size:11px;color:var(--muted)}
+  textarea{width:100%;min-height:84px;resize:vertical;background:#0b0e13;border:1px solid var(--line);border-radius:8px;color:var(--text);padding:9px;font:12px/1.5 "Noto Sans JP",sans-serif}
+  textarea:focus{outline:none;border-color:#4f8cff}
+  .row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+  .src{font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5}
+  table.ct{width:100%;border-collapse:collapse;font-size:11px}
+  table.ct td{padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+  table.ct td:first-child{font-family:"JetBrains Mono",monospace;color:#c4b5fd;white-space:nowrap;width:1%}
+  .shotbtn{position:relative;overflow:hidden}
+  .shotbtn input{position:absolute;inset:0;opacity:0;cursor:pointer}
+
+  @media (max-width:760px){
+    #top h1 small,.repo{display:none}
+    #layers{top:150px;left:10px}
+    .lchip{min-width:0;padding:5px 8px;font-size:11px}
+    .lchip span{display:none}
+    #legend{display:none}
+    #panel{left:0;right:0;top:auto;bottom:0;width:auto;max-height:58vh;border-radius:16px 16px 0 0;padding-bottom:env(safe-area-inset-bottom)}
+    #flowpill{bottom:auto;top:150px;left:auto;right:10px;transform:none;max-width:60vw;white-space:normal;border-radius:12px}
+  }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="labels"></div>
+
+<div id="top">
+  <h1>Stack Atlas<small>3D構成マップ・プロトタイプ</small></h1>
+  <div class="seg" id="explodeSeg">
+    <button data-v="1" class="on">レイヤー展開</button>
+    <button data-v="0">重ねる</button>
+  </div>
+  <div class="seg" id="flowSeg">
+    <button data-v="" class="on">フローなし</button>
+    <button data-v="miss">閲覧 MISS</button>
+    <button data-v="hit">閲覧 HIT</button>
+    <button data-v="entry">入稿→反映</button>
+  </div>
+  <button class="btn" id="cacheBtn">⚡ キャッシュ</button>
+  <button class="btn" id="resetBtn">視点リセット</button>
+  <div class="sp"></div>
+  <div class="repo">source: infra/ · apps/web · apps/api · packages/types</div>
+</div>
+
+<div id="layers"></div>
+
+<div id="legend">
+  <div><b style="background:var(--red)"></b>依存先（使っている型・部品）</div>
+  <div><b style="background:var(--coral)"></b>影響範囲（これを使う画面・部品）</div>
+  <div><b style="background:var(--cyan)"></b>データフロー</div>
+  <div><b style="background:linear-gradient(90deg,#ff9f43,#4f8cff,#a78bfa)"></b>層またぎの線 = 上の層の色</div>
+  <div class="cl">キャッシュ:<span class="dot" style="background:var(--ok)"></span>効いている<span class="dot" style="background:var(--warn)"></span>要注意<span class="dot" style="background:var(--off)"></span>なし</div>
+  <div class="hint">ドラッグ: 回転 / 右ドラッグ: 移動 / ホイール: ズーム<br>画面の中のパーツにもホバーできます</div>
+</div>
+
+<div id="flowpill"></div>
+
+<aside id="panel">
+  <header>
+    <div class="kind" id="pKind"></div>
+    <h2 id="pName"></h2>
+    <div class="file" id="pFile"></div>
+    <button class="x" id="pClose" aria-label="閉じる">✕</button>
+  </header>
+  <div class="body">
+    <div id="pShot">
+      <h3>スクリーンショット</h3>
+      <div class="row" style="margin-top:0">
+        <label class="btn shotbtn">画像を貼る<input type="file" accept="image/*" id="pShotFile"></label>
+        <button class="btn" id="pShotReset">ダミーに戻す</button>
+      </div>
+      <div class="src">貼った画像の上に、コンポーネントの領域ハイライトが重なります（領域はダミー画面の位置。実装では data-component 属性の座標から自動取得する想定）</div>
+    </div>
+    <div id="pCache">
+      <h3>⚡ キャッシュ</h3>
+      <table class="ct" id="pCacheTbl"></table>
+    </div>
+    <h3>コード（抜粋）</h3>
+    <pre id="pCode"></pre>
+    <h3>使っているもの</h3>
+    <div class="chips" id="pUses"></div>
+    <h3>使われている場所</h3>
+    <div class="chips" id="pUsed"></div>
+    <div class="src">※ 依存関係は import / CDKtf の参照からリポジトリ解析で自動抽出する想定</div>
+    <h3>メモ（チーム共有の想定）</h3>
+    <textarea id="pMemo" placeholder="ここに気づき・TODO・決定事項を書き込む"></textarea>
+    <div class="row"><button class="btn" id="pFocus">この要素にカメラを寄せる</button></div>
+  </div>
+</aside>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+const isTouch=matchMedia('(hover: none)').matches;
+
+/* ================= data ================= */
+const LAYERS = [
+  { name:'インフラ',            sub:'infra/ · CDKtf',            color:'#ff9f43', y: 11 },
+  { name:'画面・ルート',         sub:'apps/web/app · Next.js',    color:'#4f8cff', y: 3.5 },
+  { name:'コンポーネント・hooks', sub:'apps/web/components',       color:'#a78bfa', y:-3.5 },
+  { name:'型・APIハンドラ',      sub:'packages/types · apps/api', color:'#4ade80', y:-10.5 },
+];
+const KIND = {
+  actor:{ja:'クライアント',color:'#cbd5e1',size:[1.6,1.0,1.6]},
+  infra:{ja:'インフラリソース',color:'#ff9f43',size:[2.6,1.0,1.8]},
+  layout:{ja:'レイアウト',color:'#6d9dff'},
+  page:{ja:'画面',color:'#4f8cff'},
+  component:{ja:'コンポーネント',color:'#a78bfa',size:[2.0,0.45,1.3]},
+  hook:{ja:'hook',color:'#2dd4bf',size:[1.8,0.45,1.2]},
+  lib:{ja:'ライブラリ',color:'#38bdf8',size:[2.0,0.45,1.3]},
+  type:{ja:'型定義',color:'#4ade80',size:[1.7,0.35,1.1]},
+  schema:{ja:'DBスキーマ',color:'#86efac',size:[1.9,0.35,1.2]},
+  handler:{ja:'APIハンドラ',color:'#38bdf8',size:[2.2,0.5,1.4]},
+};
+
+const NODES = [
+  {id:'user',L:0,k:'actor',name:'Browser',x:-17,z:0,file:'—',code:'GET https://races.example.com/races/42'},
+  {id:'cloudfront',L:0,k:'infra',name:'CloudFront',x:-11,z:0,file:'infra/stacks/cdn.ts',code:
+`new CloudfrontDistribution(this, "cdn", {
+  origin: [nextLambdaOrigin, staticS3Origin],
+  defaultCacheBehavior: {
+    targetOriginId: "next",
+    cachePolicyId: honorOriginHeaders.id, // s-maxage に従う
+  },
+  orderedCacheBehavior: [
+    { pathPattern: "/_next/static/*", targetOriginId: "s3" },
+    { pathPattern: "/admin/*", cachePolicyId: CachingDisabled,
+      lambdaFunctionAssociation: [authEdge] },
+  ],
+});`},
+  {id:'edge',L:0,k:'infra',name:'Lambda@Edge (auth)',x:-11,z:-6.5,file:'infra/stacks/edge.ts',code:
+`// viewer-request（/admin/* のみ）
+export const handler = async (e) => {
+  const req = e.Records[0].cf.request;
+  return (await verifyJwt(req)) ? req : redirect("/login");
+};`},
+  {id:'cognito',L:0,k:'infra',name:'Cognito',x:-4,z:-7,file:'infra/stacks/auth.ts',code:
+`new CognitoUserPool(this, "admins", {
+  name: "race-admins",
+  autoVerifiedAttributes: ["email"],
+});`},
+  {id:'s3',L:0,k:'infra',name:'S3 (static)',x:-4,z:6.5,file:'infra/stacks/cdn.ts',code:
+`new S3Bucket(this, "static", { bucket: "race-web-static" });
+// next build の .next/static をデプロイ`},
+  {id:'lambdaNext',L:0,k:'infra',name:'Lambda: Next.js',x:-2,z:0,file:'infra/stacks/web.ts',code:
+`new LambdaFunction(this, "next", {
+  functionName: "race-web",
+  handler: "run.sh",            // Lambda Web Adapter
+  memorySize: 1024,
+  filename: "apps/web/.next/standalone.zip",
+});`},
+  {id:'apigw',L:0,k:'infra',name:'API Gateway',x:5,z:0,file:'infra/stacks/api.ts',code:
+`new Apigatewayv2Api(this, "api", { protocolType: "HTTP" });
+// GET  /races/{id}
+// POST /results`},
+  {id:'lambdaApi',L:0,k:'infra',name:'Lambda: API',x:11,z:0,file:'infra/stacks/api.ts',code:
+`new LambdaFunction(this, "api", {
+  functionName: "race-api",
+  handler: "index.handler",
+  environment: { variables: { TABLE: table.name } },
+});`},
+  {id:'dynamo',L:0,k:'infra',name:'DynamoDB races',x:16.5,z:0,file:'infra/stacks/db.ts',code:
+`new DynamodbTable(this, "races", {
+  hashKey: "pk", rangeKey: "sk",
+  billingMode: "PAY_PER_REQUEST",
+});`},
+
+  // L1 screens
+  {id:'layout',L:1,k:'layout',name:'RootLayout',x:-11.5,z:-5,file:'apps/web/app/layout.tsx',code:
+`export default function RootLayout({ children }) {
+  return (
+    <html lang="ja"><body>
+      <Header />
+      {children}
+    </body></html>
+  );
+}`},
+  {id:'login',L:1,k:'page',name:'/login',x:-4,z:-5,file:'apps/web/app/login/page.tsx',code:
+`export default function Login() {
+  const { signIn } = useSession();
+  return <button onClick={signIn}>Cognito でサインイン</button>;
+}`},
+  {id:'admin',L:1,k:'page',name:'/admin/entry',x:3.5,z:-5,file:'apps/web/app/admin/entry/page.tsx',code:
+`export const dynamic = "force-dynamic";
+
+export default function Entry() {
+  async function save(v: EntryInput) {
+    "use server";
+    await api.postResult(v);
+    revalidatePath("/races/" + v.raceId);
+    await invalidateCdn("/races/" + v.raceId);
+  }
+  return (
+    <AuthGuard>
+      <EntryForm action={save} />
+      <ResultTable results={latest} editable />
+    </AuthGuard>
+  );
+}`},
+  {id:'home',L:1,k:'page',name:'/',x:-11.5,z:3.5,file:'apps/web/app/page.tsx',code:
+`"use client";
+export default function Home() {
+  const { data: races } = useRaces({ limit: 6 });
+  return races?.map(r => <RaceCard key={r.id} race={r} />);
+}`},
+  {id:'races',L:1,k:'page',name:'/races',x:-4,z:3.5,file:'apps/web/app/races/page.tsx',code:
+`"use client";
+export default function Races() {
+  const { data, page, setPage } = useRaces();
+  return (<>
+    {data?.map(r => <RaceCard key={r.id} race={r} />)}
+    <Pagination page={page} onChange={setPage} />
+  </>);
+}`},
+  {id:'race',L:1,k:'page',name:'/races/[id]',x:3.5,z:3.5,file:'apps/web/app/races/[id]/page.tsx',code:
+`export const revalidate = 60; // ISR
+
+export default async function RacePage({ params }) {
+  const res = await api.getRace(params.id);
+  if (!res.ok) notFound();
+  return <ResultTable results={res.data.results} />;
+}`},
+
+  // L2
+  {id:'Header',L:2,k:'component',name:'Header',x:-11.5,z:-4,file:'apps/web/components/Header.tsx',code:
+`export function Header() {
+  const { user } = useSession();
+  return <header>… {user?.name}</header>;
+}`},
+  {id:'RaceCard',L:2,k:'component',name:'RaceCard',x:-8,z:3.5,file:'apps/web/components/RaceCard.tsx',code:
+`export function RaceCard({ race }: { race: Race }) {
+  return <a href={"/races/" + race.id}>{race.name} / {race.date}</a>;
+}`},
+  {id:'Pagination',L:2,k:'component',name:'Pagination',x:-3,z:7,file:'apps/web/components/Pagination.tsx',code:
+`export function Pagination(
+  { page, onChange }: { page: number; onChange: (p: number) => void }
+) { … }`},
+  {id:'ResultTable',L:2,k:'component',name:'ResultTable',x:3.5,z:4,file:'apps/web/components/ResultTable.tsx',code:
+`export function ResultTable(
+  { results, editable }: { results: RaceResult[]; editable?: boolean }
+) {
+  return <table>{results.map(r => <Row key={r.rank} {...r} />)}</table>;
+}`},
+  {id:'EntryForm',L:2,k:'component',name:'EntryForm',x:6.5,z:-4.5,file:'apps/web/components/EntryForm.tsx',code:
+`export function EntryForm({ action }) {
+  const onSubmit = (v: EntryInput) => action(EntryInput.parse(v));
+  …
+}`},
+  {id:'AuthGuard',L:2,k:'component',name:'AuthGuard',x:1.5,z:-5,file:'apps/web/components/AuthGuard.tsx',code:
+`export function AuthGuard({ children }) {
+  const { user } = useSession();
+  return user ? children : <Redirect to="/login" />;
+}`},
+  {id:'useSession',L:2,k:'hook',name:'useSession',x:-5,z:-6.5,file:'apps/web/hooks/useSession.ts',code:
+`export function useSession(): {
+  user: Session | null;
+  signIn(): void;
+} { … }`},
+  {id:'useRaces',L:2,k:'hook',name:'useRaces',x:-6,z:0,file:'apps/web/hooks/useRaces.ts',code:
+`export function useRaces(q?: { limit?: number }) {
+  return useSWR<Race[]>(["races", q], () => api.getRaces(q), {
+    dedupingInterval: 2000,
+  });
+}`},
+  {id:'apiClient',L:2,k:'lib',name:'api client',x:10,z:1,file:'apps/web/lib/api.ts',code:
+`export const api = {
+  getRaces: (q) => get<ApiResponse<Race[]>>("/races", q),
+  getRace: (id: string) =>
+    get<ApiResponse<{ race: Race; results: RaceResult[] }>>(
+      "/races/" + id,
+      { next: { revalidate: 60, tags: ["race-" + id] } },
+    ),
+  postResult: (v: EntryInput) =>
+    post<ApiResponse<RaceResult>>("/results", v, { cache: "no-store" }),
+};`},
+
+  // L3
+  {id:'Session',L:3,k:'type',name:'Session',x:-5,z:-6.5,file:'packages/types/session.ts',code:
+`export type Session = {
+  sub: string;
+  name: string;
+  groups: "admin"[];
+};`},
+  {id:'Race',L:3,k:'type',name:'Race',x:-5,z:2,file:'packages/types/race.ts',code:
+`export type Race = {
+  id: string;
+  name: string;
+  date: string;   // ISO
+  venue: string;
+};`},
+  {id:'RaceResult',L:3,k:'type',name:'RaceResult',x:2,z:4.5,file:'packages/types/result.ts',code:
+`export type RaceResult = {
+  raceId: Race["id"];
+  rank: number;
+  runner: string;
+  time: string;
+};`},
+  {id:'EntryInput',L:3,k:'type',name:'EntryInput (zod)',x:6,z:-4,file:'packages/types/entry.ts',code:
+`export const EntryInput = z.object({
+  raceId: z.string(),
+  rank: z.number().int().positive(),
+  runner: z.string().min(1),
+  time: z.string(),
+});
+export type EntryInput = z.infer<typeof EntryInput>;`},
+  {id:'ApiResponse',L:3,k:'type',name:'ApiResponse<T>',x:9,z:6,file:'packages/types/api.ts',code:
+`export type ApiResponse<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: string };`},
+  {id:'getRaces',L:3,k:'handler',name:'handler: getRaces',x:12.5,z:1,file:'apps/api/src/getRaces.ts',code:
+`export const getRaces: Handler = async (e) => {
+  const items = await ddb.query({ pk: "RACE#" + e.pathParameters.id });
+  return ok(items.map(toRace));
+};`},
+  {id:'postResult',L:3,k:'handler',name:'handler: postResult',x:12.5,z:-4.5,file:'apps/api/src/postResult.ts',code:
+`export const postResult: Handler = async (e) => {
+  const input = EntryInput.parse(JSON.parse(e.body));
+  await ddb.put(toItem(input));
+  return ok(input);
+};`},
+  {id:'RaceItem',L:3,k:'schema',name:'RaceItem (DB)',x:16.5,z:-1.5,file:'apps/api/src/db/schema.ts',code:
+`export type RaceItem = {
+  pk: string;   // RACE#<id>
+  sk: string;   // META | RESULT#<rank>
+  name?: string;
+  runner?: string;
+  time?: string;
+};`},
+];
+
+const EDGES = [
+  ['user','cloudfront','flow'],['cloudfront','edge','flow'],['cloudfront','s3','flow'],['cloudfront','lambdaNext','flow'],
+  ['edge','cognito','flow'],['lambdaNext','apigw','flow'],['apigw','lambdaApi','flow'],['lambdaApi','dynamo','flow'],
+  ['lambdaNext','layout','deploy'],['lambdaNext','home','deploy'],['lambdaNext','races','deploy'],['lambdaNext','race','deploy'],
+  ['lambdaNext','admin','deploy'],['lambdaNext','login','deploy'],
+  ['lambdaApi','getRaces','deploy'],['lambdaApi','postResult','deploy'],['dynamo','RaceItem','schema'],
+  ['layout','Header','uses'],['home','RaceCard','uses'],['home','useRaces','uses'],
+  ['races','RaceCard','uses'],['races','Pagination','uses'],['races','useRaces','uses'],
+  ['race','ResultTable','uses'],['race','apiClient','uses'],
+  ['admin','AuthGuard','uses'],['admin','EntryForm','uses'],['admin','ResultTable','uses'],['admin','apiClient','uses'],
+  ['login','useSession','uses'],
+  ['Header','useSession','uses'],['AuthGuard','useSession','uses'],['RaceCard','Race','uses'],['ResultTable','RaceResult','uses'],
+  ['EntryForm','EntryInput','uses'],['useRaces','apiClient','uses'],['useRaces','Race','uses'],
+  ['useSession','Session','uses'],
+  ['apiClient','ApiResponse','uses'],['apiClient','Race','uses'],['apiClient','RaceResult','uses'],['apiClient','EntryInput','uses'],
+  ['apiClient','getRaces','http'],['apiClient','postResult','http'],
+  ['getRaces','Race','uses'],['getRaces','RaceItem','uses'],['getRaces','ApiResponse','uses'],
+  ['postResult','EntryInput','uses'],['postResult','RaceResult','uses'],['postResult','RaceItem','uses'],['postResult','ApiResponse','uses'],
+  ['RaceResult','Race','uses'],
+].map(([from,to,kind])=>({from,to,kind}));
+
+const EDGE_STYLE = {
+  flow:{c:'#ff9f43',o:.6}, deploy:{c:'#8aa4ff',o:.3}, schema:{c:'#4ade80',o:.35},
+  uses:{c:'#9ca3af',o:.28}, http:{c:'#38bdf8',o:.5},
+};
+
+/* ---- キャッシュ ---- */
+const CACHE = {
+  cloudfront:{badge:'CDN 4 behaviors',tone:'ok',rows:[
+    ['/_next/static/*','max-age=1年, immutable（S3）'],
+    ['/races/*','オリジンの s-maxage=60 に従う'],
+    ['/','s-maxage=30'],
+    ['/admin/*','CachingDisabled（素通し）']],
+    note:'キャッシュキーに Cookie を含めない設定にしておく（含めるとHIT率が崩壊）'},
+  s3:{badge:'1y immutable',tone:'ok',rows:[['Cache-Control','public, max-age=31536000, immutable'],['キー','ビルドハッシュ付きファイル名なので無効化不要']]},
+  edge:{badge:'キャッシュ判定の前',tone:'info',rows:[['トリガー','viewer-request（HIT/MISS判定より前に毎回実行）'],['範囲','/admin/* にだけ関連付け']],
+    note:'全パスに付けると、HITするリクエストでも毎回 Edge が起動する'},
+  lambdaNext:{badge:'ISR in /tmp',tone:'warn',rows:[['incrementalCache','Lambda の /tmp（インスタンスごと）'],['revalidatePath','実行したインスタンスにしか効かない']],
+    note:'インスタンス間で共有されないので古いページが混在しうる → S3 / DynamoDB の共有キャッシュに寄せたい'},
+  apigw:{badge:'no cache',tone:'off',rows:[['HTTP API','レスポンスキャッシュ機能なし（REST API ならステージキャッシュあり）']]},
+  home:{badge:'static + SWR',tone:'ok',rows:[['HTML','静的シェル（ビルド時生成）'],['データ','クライアントで useRaces（SWR）']]},
+  races:{badge:'static + SWR',tone:'ok',rows:[['HTML','静的シェル'],['データ','useRaces（SWR）']]},
+  race:{badge:'ISR 60s',tone:'warn',rows:[['revalidate','60秒'],['CDN','s-maxage=60, stale-while-revalidate'],['無効化','入稿時に revalidatePath + CloudFront invalidation']],
+    note:'ISR(60s) と CDN(60s) が二段になるので、最悪 約120秒 古い結果が見える'},
+  admin:{badge:'no-store',tone:'off',rows:[['レンダリング','force-dynamic（毎回 SSR）'],['CDN','CachingDisabled']]},
+  login:{badge:'no-store',tone:'off',rows:[['CDN','/login は private, no-store']]},
+  useRaces:{badge:'SWR 2s',tone:'ok',rows:[['dedupingInterval','2秒'],['revalidateOnFocus','true']]},
+  apiClient:{badge:'fetch cache',tone:'info',rows:[['getRace','next.revalidate=60, tags=[race-{id}]'],['postResult','cache: "no-store"']]},
+};
+const TONE={ok:'#4ade80',warn:'#fbbf24',off:'#6b7280',info:'#38bdf8'};
+
+const FLOWS = {
+  miss:[
+    ['user','/races/42 をリクエスト'],
+    ['cloudfront','MISS → オリジン（Lambda）へ'],
+    ['lambdaNext','Next.js 起動（コールドスタートの可能性）'],
+    ['race','ISRキャッシュなし → ページを再生成'],
+    ['apiClient','api.getRace("42")（fetch cache 60s / tag race-42）'],
+    ['apigw','GET /races/42（HTTP API はキャッシュなし）'],
+    ['lambdaApi','APIハンドラ Lambda 起動'],
+    ['getRaces','DynamoDB を Query'],
+    ['dynamo','RaceItem[] を返す'],
+    ['RaceResult','RaceItem → RaceResult に変換（型の境界）'],
+    ['ResultTable','results: RaceResult[] として描画'],
+    ['race','HTML完成 → ISRキャッシュ(/tmp)に保存'],
+    ['cloudfront','エッジに60秒キャッシュして返却'],
+    ['user','表示（次の人はHIT）'],
+  ],
+  hit:[
+    ['user','/races/42 をリクエスト'],
+    ['cloudfront','HIT（age 23s < s-maxage 60）→ エッジで即返却'],
+    ['user','表示（Lambda 起動ゼロ・DB アクセスゼロ）'],
+  ],
+  entry:[
+    ['user','管理者が /admin/entry を開く'],
+    ['cloudfront','/admin/* は CachingDisabled → 素通し'],
+    ['edge','viewer-request で JWT 検証（キャッシュ判定より前）'],
+    ['cognito','JWKS で署名確認'],
+    ['lambdaNext','認証OK → Next.js（dynamic SSR）'],
+    ['admin','入稿画面を表示'],
+    ['EntryForm','入力 → zod で EntryInput 検証'],
+    ['apiClient','POST /results（no-store）'],
+    ['apigw','ルーティング'],
+    ['lambdaApi','APIハンドラ Lambda 起動'],
+    ['postResult','EntryInput → RaceItem に変換'],
+    ['dynamo','PutItem'],
+    ['admin','保存成功 → revalidatePath("/races/42")'],
+    ['lambdaNext','ISRキャッシュ破棄（※このインスタンスだけ）'],
+    ['cloudfront','CreateInvalidation /races/42 → 次回はMISS'],
+  ],
+};
+
+/* ================= storage ================= */
+const MEMO_KEY='stack-atlas-memos-v1';
+let memos = { lambdaNext:'メモリ1024MB / standaloneビルド。コールドスタートを要観察', RaceResult:'rank を number で統一したい（CMS側は string で来る）' };
+try{ const s=localStorage.getItem(MEMO_KEY); if(s) memos=JSON.parse(s); }catch(e){}
+const saveMemos=()=>{ try{ localStorage.setItem(MEMO_KEY, JSON.stringify(memos)); }catch(e){} };
+const SHOT_KEY=id=>'stack-atlas-shot-'+id;
+
+/* ================= fake screens (canvas) ================= */
+const CW=768, CH=480, SW=6.4, SH=SW*CH/CW;
+const FONT='"Noto Sans JP", sans-serif';
+const RACES=[
+  {n:'第12回 杉並ハーフマラソン',d:'2026/11/03',v:'善福寺川緑地',h:210},
+  {n:'荒川リバーサイド10K',d:'2026/10/26',v:'荒川河川敷',h:160},
+  {n:'多摩川トレイル30K',d:'2026/10/19',v:'多摩川',h:130},
+  {n:'皇居ナイトラン',d:'2026/10/12',v:'皇居外苑',h:260},
+  {n:'湘南シーサイド21K',d:'2026/10/05',v:'江の島',h:190},
+  {n:'高尾山スカイレース',d:'2026/09/28',v:'高尾山',h:100},
+];
+const RUNNERS=[
+  ['1','1024','佐藤 健太','杉並RC','1:05:12'],['2','0311','鈴木 大輔','荻窪AC','1:05:48'],['3','0877','高橋 翔','チームK','1:06:30'],
+  ['4','1502','田中 優','—','1:07:02'],['5','0045','伊藤 誠','西荻走友会','1:07:41'],['6','1310','渡辺 拓海','杉並RC','1:08:15'],
+  ['7','0702','山本 陸','—','1:08:59'],['8','0950','中村 蓮','高円寺RC','1:09:20'],
+];
+function T(c,s,x,y,size,color,weight=400,align='left'){c.font=`${weight} ${size}px ${FONT}`;c.fillStyle=color;c.textAlign=align;c.textBaseline='alphabetic';c.fillText(s,x,y);}
+function B(c,x,y,w,h,r,fill,stroke){c.beginPath();c.roundRect(x,y,w,h,r);if(fill){c.fillStyle=fill;c.fill();}if(stroke){c.strokeStyle=stroke;c.lineWidth=1.5;c.stroke();}}
+function bg(c){c.fillStyle='#f6f7fb';c.fillRect(0,0,CW,CH);}
+function header(c,R){
+  c.fillStyle='#13233f';c.fillRect(0,0,CW,52);
+  T(c,'RACE RESULTS',22,33,17,'#fff',700);
+  ['レース','ランキング','お知らせ'].forEach((s,i)=>T(c,s,200+i*86,32,13,i===0?'#fff':'#9fb0cf',500));
+  c.beginPath();c.arc(CW-34,26,13,0,7);c.fillStyle='#ff9f43';c.fill();T(c,'D',CW-34,31,12,'#13233f',700,'center');
+  R.push({c:'Header',x:0,y:0,w:CW,h:52});
+}
+function table(c,x,y,w,cols,rows,rowH,editable){
+  B(c,x,y,w,34+rows.length*rowH,10,'#fff','#e1e6ef');
+  c.fillStyle='#eef1f7';c.beginPath();c.roundRect(x+1,y+1,w-2,33,[10,10,0,0]);c.fill();
+  cols.forEach(([lab,ox])=>T(c,lab,x+ox,y+22,11,'#6b7486',700));
+  const medal=['#f5c542','#c0c7d2','#d99a5b'];
+  rows.forEach((r,i)=>{
+    const ry=y+34+i*rowH;
+    if(i) {c.fillStyle='#eef1f7';c.fillRect(x+10,ry,w-20,1);}
+    cols.forEach(([,ox,idx],j)=>{
+      const v=r[idx];
+      if(j===0 && i<3){ c.beginPath();c.arc(x+ox+8,ry+rowH/2,11,0,7);c.fillStyle=medal[i];c.fill();T(c,v,x+ox+8,ry+rowH/2+4,11,'#13233f',700,'center'); }
+      else T(c,v,x+ox,ry+rowH/2+4,12,j===cols.length-1?'#13233f':'#3b4457',j===cols.length-1?700:400);
+    });
+    if(editable) T(c,'✎',x+w-24,ry+rowH/2+5,14,'#2f6fed',400,'center');
+  });
+}
+const SCREENS={
+  layout(c,R){
+    bg(c);header(c,R);
+    c.save();c.setLineDash([8,6]);B(c,28,74,CW-56,CH-98,12,null,'#9fb0cf');c.restore();
+    T(c,'{children}',CW/2,CH/2+18,24,'#9fb0cf',500,'center');
+    T(c,'各ページがここに入る',CW/2,CH/2+46,13,'#9fb0cf',400,'center');
+  },
+  home(c,R){
+    bg(c);header(c,R);
+    T(c,'最新のレース',28,92,22,'#13233f',700);
+    T(c,'直近のレース結果をチェック',CW-28,90,12,'#7b8496',400,'right');
+    const w=(CW-56-32)/3,h=156;
+    RACES.forEach((r,i)=>{
+      const x=28+(i%3)*(w+16), y=110+Math.floor(i/3)*(h+14);
+      B(c,x,y,w,h,10,'#fff','#e1e6ef');
+      const g=c.createLinearGradient(x,y,x+w,y+72);g.addColorStop(0,`hsl(${r.h},60%,62%)`);g.addColorStop(1,`hsl(${r.h+30},60%,48%)`);
+      c.fillStyle=g;c.beginPath();c.roundRect(x+1,y+1,w-2,72,[9,9,0,0]);c.fill();
+      T(c,r.n,x+12,y+96,13,'#13233f',700);
+      T(c,r.d+' · '+r.v,x+12,y+116,11,'#7b8496');
+      B(c,x+12,y+126,60,20,10,'#e7f8ee');T(c,'結果公開',x+42,y+140,10,'#15803d',700,'center');
+      R.push({c:'RaceCard',x,y,w,h});
+    });
+  },
+  races(c,R){
+    bg(c);header(c,R);
+    T(c,'レース一覧',28,92,22,'#13233f',700);
+    ['すべて','10K','ハーフ','トレイル'].forEach((s,i)=>{B(c,170+i*74,74,66,26,13,i===0?'#13233f':'#fff',i?'#d5dbe6':null);T(c,s,203+i*74,92,11,i===0?'#fff':'#3b4457',500,'center');});
+    RACES.slice(0,5).forEach((r,i)=>{
+      const y=110+i*58;
+      B(c,28,y,CW-56,50,10,'#fff','#e1e6ef');
+      B(c,40,y+9,32,32,8,`hsl(${r.h},60%,58%)`);
+      T(c,r.n,86,y+23,13,'#13233f',700);
+      T(c,r.d+' · '+r.v,86,y+40,11,'#7b8496');
+      T(c,'結果を見る ›',CW-44,y+30,12,'#2f6fed',500,'right');
+      R.push({c:'RaceCard',x:28,y,w:CW-56,h:50});
+    });
+    const x0=(CW-184)/2;
+    ['‹','1','2','3','›'].forEach((s,i)=>{B(c,x0+i*38,410,32,32,8,s==='1'?'#13233f':'#fff',s==='1'?null:'#d5dbe6');T(c,s,x0+i*38+16,431,12,s==='1'?'#fff':'#3b4457',600,'center');});
+    R.push({c:'Pagination',x:x0-8,y:402,w:200,h:48});
+  },
+  race(c,R){
+    bg(c);header(c,R);
+    T(c,'レース一覧 › 第12回 杉並ハーフマラソン',28,76,11,'#7b8496');
+    T(c,'第12回 杉並ハーフマラソン',28,104,22,'#13233f',700);
+    T(c,'2026/11/03 · 善福寺川緑地 · 完走 1,284名',28,126,12,'#7b8496');
+    table(c,28,140,CW-56,[['順位',18,0],['ゼッケン',80,1],['氏名',180,2],['所属',380,3],['タイム',590,4]],RUNNERS,35);
+    R.push({c:'ResultTable',x:28,y:140,w:CW-56,h:34+8*35});
+  },
+  admin(c,R){
+    bg(c);header(c,R);
+    c.fillStyle='#fff4e0';c.fillRect(0,52,CW,34);
+    T(c,'🔒 管理者としてログイン中 — admin@example.com',28,74,12,'#a15c00',600);
+    R.push({c:'AuthGuard',x:0,y:52,w:CW,h:34});
+    B(c,28,100,290,360,12,'#fff','#e1e6ef');
+    T(c,'結果を入稿',44,128,15,'#13233f',700);
+    [['大会','第12回 杉並ハーフマラソン'],['順位','9'],['氏名','小林 颯太'],['タイム','1:09:48']].forEach(([l,v],i)=>{
+      const y=144+i*62; T(c,l,44,y+12,11,'#7b8496',500);
+      B(c,44,y+20,258,32,6,'#f6f7fb','#d5dbe6'); T(c,v,54,y+41,12,'#13233f');
+    });
+    B(c,44,404,258,38,8,'#2f6fed');T(c,'保存して公開',173,428,13,'#fff',700,'center');
+    R.push({c:'EntryForm',x:28,y:100,w:290,h:360});
+    T(c,'最新の結果（編集可）',336,126,13,'#13233f',700);
+    table(c,334,138,CW-362,[['順位',14,0],['氏名',64,2],['タイム',230,4]],RUNNERS.slice(0,8),36,true);
+    R.push({c:'ResultTable',x:334,y:138,w:CW-362,h:34+8*36});
+  },
+  login(c,R){
+    bg(c);header(c,R);
+    B(c,CW/2-170,110,340,260,14,'#fff','#e1e6ef');
+    T(c,'管理者ログイン',CW/2,160,19,'#13233f',700,'center');
+    T(c,'レース結果の入稿には管理者権限が必要です',CW/2,186,11,'#7b8496',400,'center');
+    B(c,CW/2-140,210,280,36,6,'#f6f7fb','#d5dbe6');T(c,'admin@example.com',CW/2-128,233,12,'#9aa3b5');
+    B(c,CW/2-140,264,280,40,8,'#13233f');T(c,'Cognito でサインイン',CW/2,289,13,'#fff',700,'center');
+    R.push({c:'useSession',x:CW/2-140,y:264,w:280,h:40});
+    T(c,'パスワードを忘れた場合',CW/2,336,11,'#2f6fed',400,'center');
+  },
+};
+
+/* ================= three setup ================= */
+const stage=document.getElementById('stage');
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.setClearColor(0x0d0f14);
+stage.appendChild(renderer.domElement);
+const labelRenderer=new CSS2DRenderer({element:document.getElementById('labels')});
+labelRenderer.setSize(innerWidth,innerHeight);
+
+const scene=new THREE.Scene();
+scene.fog=new THREE.Fog(0x0d0f14,80,150);
+const camera=new THREE.PerspectiveCamera(38,innerWidth/innerHeight,0.1,500);
+const HOME=()=>innerWidth/innerHeight<1?new THREE.Vector3(30,32,66):new THREE.Vector3(24,22,42);
+camera.position.copy(HOME());
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true;controls.dampingFactor=.08;controls.target.set(0,0,0);
+controls.maxDistance=150;controls.minDistance=6;
+scene.add(new THREE.AmbientLight(0xffffff,.65));
+const dl=new THREE.DirectionalLight(0xffffff,1.1);dl.position.set(10,30,20);scene.add(dl);
+const maxAniso=renderer.capabilities.getMaxAnisotropy();
+
+const plates=[];
+LAYERS.forEach((L,i)=>{
+  const g=new THREE.Group();
+  const m=new THREE.Mesh(new THREE.BoxGeometry(41,.06,20),new THREE.MeshBasicMaterial({color:L.color,transparent:true,opacity:.055,depthWrite:false}));
+  g.add(m);
+  g.add(new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry),new THREE.LineBasicMaterial({color:L.color,transparent:true,opacity:.35})));
+  const lab=document.createElement('div');lab.className='pl';
+  lab.innerHTML=`<b style="color:${L.color}">L${i} ${L.name}</b>${L.sub}`;
+  const lo=new CSS2DObject(lab);lo.position.set(20.5,.2,10);lo.center.set(1,0);g.add(lo);
+  g.position.x=0;scene.add(g);plates.push(g);
+});
+
+/* ---- nodes ---- */
+const byId={};
+function makeLabel(n){
+  const el=document.createElement('div');el.className='nl';
+  const C=CACHE[n.id];
+  el.innerHTML=`<span class="k">${n.k}</span>${n.name}<span class="memo"></span>${C?`<span class="cb ${C.tone}">${C.badge}</span>`:''}`;
+  el.addEventListener('mouseenter',()=>{if(!isTouch){hoverId=n.id;applyState();}});
+  el.addEventListener('mouseleave',()=>{if(!isTouch){hoverId=null;applyState();}});
+  el.addEventListener('click',ev=>{ev.stopPropagation();select(n.id);});
+  return el;
+}
+NODES.forEach(n=>{
+  n.K=KIND[n.k]; n.out=[]; n.inn=[]; byId[n.id]=n;
+  n.isScreen=n.L===1;
+  n.el=makeLabel(n);
+  if(n.isScreen){
+    n.pivot=new THREE.Group();
+    n.frameMat=new THREE.MeshBasicMaterial({color:0x2b3240,transparent:true,side:THREE.DoubleSide});
+    const frame=new THREE.Mesh(new THREE.PlaneGeometry(SW+.22,SH+.22).translate(0,SH/2,-.01),n.frameMat);
+    n.cv=document.createElement('canvas');n.cv.width=CW;n.cv.height=CH;
+    n.base=document.createElement('canvas');n.base.width=CW;n.base.height=CH;
+    n.tex=new THREE.CanvasTexture(n.cv);n.tex.colorSpace=THREE.SRGBColorSpace;n.tex.anisotropy=maxAniso;
+    n.screenMat=new THREE.MeshBasicMaterial({map:n.tex,transparent:true});
+    const plane=new THREE.Mesh(new THREE.PlaneGeometry(SW,SH).translate(0,SH/2,0),n.screenMat);
+    plane.userData.id=n.id;
+    n.pivot.add(frame,plane);n.hit=plane;
+    const lo=new CSS2DObject(n.el);lo.position.set(0,SH+.15,0);n.pivot.add(lo);
+    scene.add(n.pivot);
+    n.regions=[];n.shot=null;
+    try{const s=localStorage.getItem(SHOT_KEY(n.id));if(s){const im=new Image();im.onload=()=>{n.shot=im;drawBase(n);renderScreen(n);};im.src=s;}}catch(e){}
+  }else{
+    const mat=new THREE.MeshLambertMaterial({color:n.K.color,transparent:true});
+    n.hit=new THREE.Mesh(new THREE.BoxGeometry(...n.K.size),mat);
+    n.hit.userData.id=n.id;n.half=n.K.size[1]/2;
+    const lo=new CSS2DObject(n.el);lo.position.set(0,n.half,0);n.hit.add(lo);
+    scene.add(n.hit);
+  }
+  if(CACHE[n.id]){
+    const r=n.isScreen?3.4:1.7;
+    n.ring=new THREE.Mesh(new THREE.RingGeometry(r,r+.22,64).rotateX(-Math.PI/2),
+      new THREE.MeshBasicMaterial({color:TONE[CACHE[n.id].tone],transparent:true,opacity:.85,depthWrite:false,side:THREE.DoubleSide}));
+    n.ring.visible=false;scene.add(n.ring);
+  }
+});
+EDGES.forEach(e=>{byId[e.from].out.push(e);byId[e.to].inn.push(e);});
+const refreshMemoBadges=()=>NODES.forEach(n=>n.el.querySelector('.memo').textContent=memos[n.id]?'📝':'');
+refreshMemoBadges();
+
+function drawBase(n){
+  const c=n.base.getContext('2d');n.regions=[];
+  SCREENS[n.id](c,n.regions);
+  if(n.shot){
+    c.fillStyle='#fff';c.fillRect(0,0,CW,CH);
+    const s=CW/n.shot.width;c.drawImage(n.shot,0,0,CW,n.shot.height*s);
+  }
+}
+function renderScreen(n){
+  const c=n.cv.getContext('2d');
+  c.drawImage(n.base,0,0);
+  const {a,down,up}=HL;
+  if(a){
+    const tagged=new Set();
+    n.regions.forEach(r=>{
+      const st=r.c===a?'sel':down.has(r.c)?'down':up.has(r.c)?'up':null;
+      if(!st||!layerVisible[byId[r.c].L]) return;
+      const col=st==='up'?'#ff8a5c':'#ff3b3b';
+      c.save();
+      c.fillStyle=st==='sel'?'rgba(255,59,59,.22)':st==='down'?'rgba(255,59,59,.10)':'rgba(255,138,92,.12)';
+      c.fillRect(r.x,r.y,r.w,r.h);
+      c.strokeStyle=col;c.lineWidth=st==='sel'?6:4;c.strokeRect(r.x+2,r.y+2,r.w-4,r.h-4);
+      if(!tagged.has(r.c)){
+        tagged.add(r.c);
+        c.font=`700 13px ${FONT}`;const tw=c.measureText(r.c).width+16;
+        c.fillStyle=col;c.fillRect(r.x+2,r.y+2,tw,22);
+        c.fillStyle='#fff';c.textAlign='left';c.textBaseline='alphabetic';c.fillText(r.c,r.x+10,r.y+18);
+      }
+      c.restore();
+    });
+  }
+  n.tex.needsUpdate=true;
+}
+const SCREEN_NODES=NODES.filter(n=>n.isScreen);
+SCREEN_NODES.forEach(n=>{drawBase(n);});
+document.fonts&&document.fonts.ready.then(()=>{SCREEN_NODES.forEach(n=>{drawBase(n);renderScreen(n);});});
+
+/* ---- edges ---- */
+const SEG=14;
+function edgeBase(e){
+  const a=byId[e.from],b=byId[e.to];
+  if(a.L!==b.L) return {c:LAYERS[Math.min(a.L,b.L)].color,o:.55};
+  return EDGE_STYLE[e.kind];
+}
+EDGES.forEach(e=>{
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.BufferAttribute(new Float32Array((SEG+1)*3),3));
+  const st=edgeBase(e);
+  e.line=new THREE.Line(g,new THREE.LineBasicMaterial({color:st.c,transparent:true,opacity:st.o,depthWrite:false}));
+  scene.add(e.line);
+});
+
+/* ================= layout ================= */
+let explode=1,explodeTarget=1;
+const layerVisible=[true,true,true,true];
+const layerY=i=>LAYERS[i].y*(0.07+0.93*explode);
+const V=()=>new THREE.Vector3();
+function anchor(n,which='center'){
+  if(!n.isScreen) return n.hit.position.clone();
+  const y=which==='top'?SH:which==='bottom'?0:SH/2;
+  return n.pivot.localToWorld(new THREE.Vector3(0,y,.03));
+}
+function anchorToward(n,other){
+  if(!n.isScreen) return anchor(n);
+  return anchor(n,other.L<n.L?'top':'bottom');
+}
+const tmpC=V();
+function layout(){
+  plates.forEach((p,i)=>p.position.y=layerY(i)-.4);
+  NODES.forEach(n=>{
+    const y=layerY(n.L);
+    if(n.isScreen){
+      n.pivot.position.set(n.x,y-.33,n.z+1.5);
+      n.pivot.rotation.x=-Math.PI/2+explode*1.05;
+    }else n.hit.position.set(n.x,y+n.half-.37,n.z);
+    if(n.ring) n.ring.position.set(n.x,y-.34,n.isScreen?n.z:n.z);
+  });
+  scene.updateMatrixWorld(true);
+  EDGES.forEach(e=>{
+    const a=byId[e.from],b=byId[e.to];
+    const pa=anchorToward(a,b),pb=anchorToward(b,a);
+    const arr=e.line.geometry.attributes.position.array,same=a.L===b.L;
+    for(let i=0;i<=SEG;i++){
+      const t=i/SEG;tmpC.lerpVectors(pa,pb,t);
+      if(same) tmpC.y+=Math.sin(Math.PI*t)*1.2;
+      arr[i*3]=tmpC.x;arr[i*3+1]=tmpC.y;arr[i*3+2]=tmpC.z;
+    }
+    e.line.geometry.attributes.position.needsUpdate=true;
+    e.line.geometry.computeBoundingSphere();
+  });
+  if(flowKey) buildFlowCurve();
+}
+
+/* ================= highlight ================= */
+let hoverId=null,selectedId=null,cacheOn=false;
+const HL={a:null,down:new Set(),up:new Set()};
+const DOWN_KINDS=new Set(['uses','deploy','http','schema']);
+const UP_KINDS=new Set(['uses','deploy','http']);
+function closure(id,dir){
+  const seen=new Set(),st=[id],n0=byId[id];
+  if(dir==='down') n0.out.filter(e=>e.kind==='flow').forEach(e=>seen.add(e.to));
+  else n0.inn.filter(e=>e.kind==='flow').forEach(e=>seen.add(e.from));
+  while(st.length){
+    const c=byId[st.pop()];
+    (dir==='down'?c.out:c.inn).forEach(e=>{
+      if(!(dir==='down'?DOWN_KINDS:UP_KINDS).has(e.kind)) return;
+      const nid=dir==='down'?e.to:e.from;
+      if(nid!==id&&!seen.has(nid)){seen.add(nid);st.push(nid);}
+    });
+  }
+  seen.delete(id);return seen;
+}
+const COL={red:new THREE.Color('#ff3b3b'),coral:new THREE.Color('#ff8a5c'),white:new THREE.Color('#ffffff'),cyan:new THREE.Color('#22d3ee')};
+function setVisual(n,st){
+  n.el.className='nl'+(st==='normal'?'':' '+st);
+  if(n.isScreen){
+    const f=n.frameMat;
+    f.color.set(st==='sel'?'#ff3b3b':st==='down'?'#ff3b3b':st==='up'?'#ff8a5c':st==='flow'?'#22d3ee':'#2b3240');
+    const op=st==='dim'?.12:st==='soft'?.35:1;
+    f.opacity=op;n.screenMat.opacity=op;
+  }else{
+    const m=n.hit.material;
+    if(st==='sel') m.color.copy(COL.red).lerp(COL.white,.25);
+    else if(st==='down') m.color.copy(COL.red);
+    else if(st==='up') m.color.copy(COL.coral);
+    else m.color.set(n.K.color);
+    m.opacity=st==='dim'?.12:st==='soft'?.3:1;
+  }
+}
+function applyState(){
+  const a=hoverId||selectedId;
+  const flowSet=flowKey?new Set(FLOWS[flowKey].map(s=>s[0])):null;
+  HL.a=a;HL.down=a?closure(a,'down'):new Set();HL.up=a?closure(a,'up'):new Set();
+  NODES.forEach(n=>{
+    const vis=layerVisible[n.L];
+    (n.isScreen?n.pivot:n.hit).visible=vis;
+    if(n.ring) n.ring.visible=cacheOn&&vis;
+    let st='normal';
+    if(a) st=n.id===a?'sel':HL.down.has(n.id)?'down':HL.up.has(n.id)?'up':'dim';
+    else if(flowSet) st=flowSet.has(n.id)?'flow':'dim';
+    else if(cacheOn) st=CACHE[n.id]?'normal':'soft';
+    setVisual(n,st);
+    if(n.ring) n.ring.material.opacity=(st==='dim'||st==='soft')?.15:.85;
+  });
+  SCREEN_NODES.forEach(renderScreen);
+  EDGES.forEach(e=>{
+    e.line.visible=layerVisible[byId[e.from].L]&&layerVisible[byId[e.to].L];
+    const st=edgeBase(e),mat=e.line.material;
+    if(a){
+      const dHit=(e.from===a||HL.down.has(e.from))&&HL.down.has(e.to)&&(DOWN_KINDS.has(e.kind)||e.from===a);
+      const uHit=(e.to===a||HL.up.has(e.to))&&HL.up.has(e.from)&&(UP_KINDS.has(e.kind)||e.to===a);
+      if(dHit){mat.color.copy(COL.red);mat.opacity=1;}
+      else if(uHit){mat.color.copy(COL.coral);mat.opacity=.9;}
+      else{mat.color.set(st.c);mat.opacity=.05;}
+    }else{
+      mat.color.set(st.c);
+      mat.opacity=flowSet?st.o*.35:cacheOn?st.o*.5:st.o;
+    }
+  });
+}
+
+/* ================= panel ================= */
+const $=id=>document.getElementById(id);
+const panel=$('panel');
+function chip(id,cls,tag){
+  const n=byId[id],c=document.createElement('span');
+  c.className='chip '+cls;c.innerHTML=`${n.name}<span class="t">${tag}</span>`;
+  c.onclick=()=>select(id,true);return c;
+}
+function select(id,fly=false){
+  selectedId=id;hoverId=null;
+  const n=byId[id];
+  $('pKind').textContent=`L${n.L} ${LAYERS[n.L].name} · ${n.K.ja}`;
+  $('pName').textContent=n.name;
+  $('pFile').textContent=n.file;
+  $('pCode').textContent=n.code;
+  $('pShot').style.display=n.isScreen?'':'none';
+  const C=CACHE[id];
+  $('pCache').style.display=C?'':'none';
+  if(C){
+    const tb=$('pCacheTbl');tb.innerHTML='';
+    C.rows.forEach(([k,v])=>{const tr=document.createElement('tr');tr.innerHTML='<td></td><td></td>';tr.children[0].textContent=k;tr.children[1].textContent=v;tb.appendChild(tr);});
+    if(C.note){const tr=document.createElement('tr');tr.innerHTML=`<td style="color:${TONE[C.tone]}">⚠</td><td></td>`;tr.children[1].textContent=C.note;tb.appendChild(tr);}
+  }
+  const U=$('pUses'),D=$('pUsed');U.innerHTML='';D.innerHTML='';
+  n.out.forEach(e=>U.appendChild(chip(e.to,'d',e.kind)));
+  n.inn.forEach(e=>D.appendChild(chip(e.from,'u',e.kind)));
+  if(!n.out.length) U.innerHTML='<span class="none">なし</span>';
+  if(!n.inn.length) D.innerHTML='<span class="none">なし</span>';
+  $('pMemo').value=memos[id]||'';
+  panel.classList.add('open');
+  if(fly) focusOn(id);
+  applyState();
+}
+function clearSel(){selectedId=null;panel.classList.remove('open');applyState();}
+$('pClose').onclick=clearSel;
+$('pMemo').addEventListener('input',e=>{
+  if(!selectedId) return;
+  if(e.target.value.trim()) memos[selectedId]=e.target.value; else delete memos[selectedId];
+  saveMemos();refreshMemoBadges();
+});
+$('pFocus').onclick=()=>selectedId&&focusOn(selectedId);
+$('pShotFile').addEventListener('change',e=>{
+  const f=e.target.files[0],n=byId[selectedId];if(!f||!n) return;
+  const url=URL.createObjectURL(f),im=new Image();
+  im.onload=()=>{
+    const s=Math.min(1,1280/im.width),tc=document.createElement('canvas');
+    tc.width=im.width*s;tc.height=im.height*s;tc.getContext('2d').drawImage(im,0,0,tc.width,tc.height);
+    const data=tc.toDataURL('image/jpeg',.82);
+    try{localStorage.setItem(SHOT_KEY(n.id),data);}catch(err){}
+    const im2=new Image();im2.onload=()=>{n.shot=im2;drawBase(n);renderScreen(n);};im2.src=data;
+    URL.revokeObjectURL(url);
+  };
+  im.src=url;e.target.value='';
+});
+$('pShotReset').onclick=()=>{
+  const n=byId[selectedId];if(!n) return;
+  n.shot=null;try{localStorage.removeItem(SHOT_KEY(n.id));}catch(e){}
+  drawBase(n);renderScreen(n);
+};
+
+let camAnim=null;
+function focusOn(id){
+  const p=anchor(byId[id]);
+  const off=camera.position.clone().sub(controls.target).setLength(byId[id].isScreen?14:24);
+  camAnim={t0:performance.now(),fromT:controls.target.clone(),toT:p,fromC:camera.position.clone(),toC:p.clone().add(off)};
+}
+$('resetBtn').onclick=()=>{camAnim={t0:performance.now(),fromT:controls.target.clone(),toT:V(),fromC:camera.position.clone(),toC:HOME()};};
+$('cacheBtn').onclick=()=>{
+  cacheOn=!cacheOn;$('cacheBtn').classList.toggle('on',cacheOn);
+  document.body.classList.toggle('cache-on',cacheOn);applyState();
+};
+
+LAYERS.forEach((L,i)=>{
+  const c=document.createElement('div');c.className='lchip';
+  c.innerHTML=`<i style="background:${L.color}"></i>L${i} ${L.name}<span>${L.sub.split(' ')[0]}</span>`;
+  c.onclick=()=>{layerVisible[i]=!layerVisible[i];c.classList.toggle('off',!layerVisible[i]);plates[i].visible=layerVisible[i];applyState();};
+  $('layers').appendChild(c);
+});
+function seg(id,cb){
+  const s=$(id);
+  s.querySelectorAll('button').forEach(b=>b.onclick=()=>{s.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));cb(b.dataset.v);});
+}
+seg('explodeSeg',v=>explodeTarget=+v);
+
+/* ================= data flow ================= */
+let flowKey='',flowCurve=null,flowLine=null,flowT0=0,lastStep=-1;
+const particles=[],pMat=new THREE.MeshBasicMaterial({color:0x22d3ee});
+for(let i=0;i<7;i++){const s=new THREE.Mesh(new THREE.SphereGeometry(i===0?.32:.2,16,12),pMat);s.visible=false;scene.add(s);particles.push(s);}
+function buildFlowCurve(){
+  const steps=FLOWS[flowKey];
+  const pts=steps.map(([id],i)=>{
+    const n=byId[id],p=anchor(n);
+    p.y+=n.isScreen?.4:n.half+.25;
+    if(i===steps.length-1&&id===steps[0][0]) p.z+=1.4;
+    return p;
+  });
+  flowCurve=new THREE.CatmullRomCurve3(pts,false,'catmullrom',.15);
+  const geo=new THREE.BufferGeometry().setFromPoints(flowCurve.getPoints(400));
+  if(flowLine){flowLine.geometry.dispose();flowLine.geometry=geo;}
+  else{flowLine=new THREE.Line(geo,new THREE.LineBasicMaterial({color:0x22d3ee,transparent:true,opacity:.7}));scene.add(flowLine);}
+  flowLine.visible=true;
+}
+seg('flowSeg',v=>{
+  flowKey=v;lastStep=-1;
+  pMat.color.set(v==='hit'?0xfbbf24:0x22d3ee);
+  if(flowLine) flowLine.material.color.set(v==='hit'?0xfbbf24:0x22d3ee);
+  if(v){buildFlowCurve();flowLine.material.color.set(v==='hit'?0xfbbf24:0x22d3ee);flowT0=performance.now();$('flowpill').style.display='block';}
+  else{if(flowLine) flowLine.visible=false;particles.forEach(p=>p.visible=false);$('flowpill').style.display='none';}
+  $('flowpill').classList.toggle('hit',v==='hit');
+  applyState();
+});
+function tickFlow(now){
+  if(!flowKey||!flowCurve) return;
+  const steps=FLOWS[flowKey],n=steps.length;
+  const per=flowKey==='hit'?1.6:1.15;
+  const dur=(n-1)*per*1000;
+  const u=((now-flowT0)%(dur+1000))/dur;
+  particles.forEach((p,i)=>{
+    const t=u-i*.018;
+    if(t<0||t>1){p.visible=false;return;}
+    p.visible=true;p.position.copy(flowCurve.getPoint(t));
+  });
+  const step=Math.min(n-1,Math.max(0,Math.round(Math.min(u,1)*(n-1))));
+  if(step!==lastStep){
+    lastStep=step;const [id,txt]=steps[step];
+    $('flowpill').innerHTML=`<em>${step+1}/${n}</em>${byId[id].name}: ${txt}`;
+  }
+}
+
+/* ================= picking ================= */
+const ray=new THREE.Raycaster(),ptr=new THREE.Vector2();
+function pick(ev){
+  const r=renderer.domElement.getBoundingClientRect();
+  ptr.set(((ev.clientX-r.left)/r.width)*2-1,-((ev.clientY-r.top)/r.height)*2+1);
+  ray.setFromCamera(ptr,camera);
+  const list=NODES.filter(n=>layerVisible[n.L]).map(n=>n.hit);
+  const h=ray.intersectObjects(list,false)[0];
+  if(!h) return null;
+  const n=byId[h.object.userData.id];
+  if(n.isScreen&&h.uv){
+    const px=h.uv.x*CW,py=(1-h.uv.y)*CH;
+    const reg=n.regions.find(q=>px>=q.x&&px<=q.x+q.w&&py>=q.y&&py<=q.y+q.h);
+    if(reg&&layerVisible[byId[reg.c].L]) return reg.c;
+  }
+  return n.id;
+}
+let downPos=null;
+renderer.domElement.addEventListener('pointerdown',e=>downPos=[e.clientX,e.clientY]);
+renderer.domElement.addEventListener('pointerup',e=>{
+  if(!downPos) return;
+  const moved=Math.hypot(e.clientX-downPos[0],e.clientY-downPos[1]);downPos=null;
+  if(moved>6) return;
+  const id=pick(e);
+  if(id) select(id); else clearSel();
+});
+renderer.domElement.addEventListener('pointermove',e=>{
+  if(e.pointerType!=='mouse'||e.buttons) return;
+  const id=pick(e);
+  if(id!==hoverId){hoverId=id;renderer.domElement.style.cursor=id?'pointer':'';applyState();}
+});
+
+/* ================= loop ================= */
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);labelRenderer.setSize(innerWidth,innerHeight);
+});
+layout();applyState();
+function loop(now){
+  requestAnimationFrame(loop);
+  if(Math.abs(explode-explodeTarget)>.001){explode+=(explodeTarget-explode)*.12;layout();}
+  if(camAnim){
+    const k=Math.min(1,(now-camAnim.t0)/700),e=1-Math.pow(1-k,3);
+    controls.target.lerpVectors(camAnim.fromT,camAnim.toT,e);
+    camera.position.lerpVectors(camAnim.fromC,camAnim.toC,e);
+    if(k>=1) camAnim=null;
+  }
+  if(cacheOn){const s=1+.05*Math.sin(now/300);NODES.forEach(n=>n.ring&&n.ring.scale.set(s,1,s));}
+  tickFlow(now);
+  controls.update();
+  renderer.render(scene,camera);
+  labelRenderer.render(scene,camera);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
