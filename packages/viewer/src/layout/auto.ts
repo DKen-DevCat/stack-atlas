@@ -32,7 +32,7 @@ export interface LayoutOptions {
   minPlateWidth?: number;
   /** 板の最小奥行き（z）。既定 20 */
   minPlateDepth?: number;
-  /** ノード間の最小間隔。既定 1.2 */
+  /** ノード間の最小間隔。既定 1.6 */
   gap?: number;
 }
 
@@ -43,6 +43,10 @@ export interface LayoutResult {
 }
 
 const SCREEN_MIN_W = 6;
+/** ラベル（HTML）の想定幅。x 方向の占有幅は max(footprint.w, LABEL_W) とする */
+export const LABEL_W = 4.5;
+/** 同じ層で段を分ける際の z 方向の理想的な段間隔 */
+const ROW_GAP = 4;
 const MAX_RELAX_ITERATIONS = 50;
 const EPS = 1e-9;
 
@@ -91,7 +95,7 @@ export function autoLayout(
 ): LayoutResult {
   const minW = opts.minPlateWidth ?? 41;
   const minD = opts.minPlateDepth ?? 20;
-  const gap = opts.gap ?? 1.2;
+  const gap = opts.gap ?? 1.6;
 
   // 正規化: id 昇順、重複 id は最初のものだけ残す
   const seen = new Set<string>();
@@ -127,9 +131,9 @@ export function autoLayout(
     }
   });
 
-  const W = (i: number) => ns[i]!.footprint.w;
+  const W = (i: number) => Math.max(ns[i]!.footprint.w, LABEL_W);
   const D = (i: number) => ns[i]!.footprint.d;
-  const isScreen = (i: number) => W(i) >= SCREEN_MIN_W;
+  const isScreen = (i: number) => ns[i]!.footprint.w >= SCREEN_MIN_W;
 
   const byLayer = new Map<number, number[]>();
   for (let i = 0; i < N; i++) {
@@ -148,7 +152,13 @@ export function autoLayout(
   /** 段（row）を z 方向に積み、z = 0 を中心にして Z に書き込む */
   const assignRowZ = (rows: Row[]): void => {
     const depths = rows.map((r) => Math.max(0, ...r.members.map(D)));
-    const total = depths.reduce((s, d) => s + d, 0) + gap * Math.max(0, rows.length - 1);
+    const sumD = depths.reduce((s, d) => s + d, 0);
+    // 段が複数あるときは板の奥行きを使って段間を広げる（ラベルが同じ基線に並ばないように）
+    const rowGap =
+      rows.length > 1
+        ? Math.max(gap, Math.min(ROW_GAP, (minD - 2 * gap - sumD) / (rows.length - 1)))
+        : gap;
+    const total = sumD + rowGap * Math.max(0, rows.length - 1);
     let z = -total / 2;
     rows.forEach((r, k) => {
       const zc = z + depths[k]! / 2;
@@ -157,7 +167,7 @@ export function autoLayout(
         Z[m] = zc;
         placed[m] = true;
       });
-      z += depths[k]! + gap;
+      z += depths[k]! + rowGap;
     });
   };
 
@@ -293,18 +303,25 @@ export function autoLayout(
           a - b,
       );
       // 段数 k: 各段の幅の合計が cap に収まる最小値（i mod k の振り分けで x の分布を保つ）
-      let k = Math.max(1, Math.ceil(widthOf(sorted) / cap));
+      // 画面以外は 6 個以上で 2 段、11 個以上で 3 段に千鳥配置する
+      const isScreenGroup = sorted.length > 0 && sorted.every(isScreen);
+      const kMin = isScreenGroup ? 1 : sorted.length > 10 ? 3 : sorted.length > 5 ? 2 : 1;
+      let k = Math.max(kMin, Math.ceil(widthOf(sorted) / cap));
       let buckets: number[][] = [];
       for (; ; k++) {
         buckets = Array.from({ length: k }, () => []);
         sorted.forEach((id, i) => buckets[i % k]!.push(id));
         if (k >= sorted.length || buckets.every((b) => widthOf(b) <= cap + EPS)) break;
       }
-      for (const b of buckets) {
+      const avgW = sorted.reduce((s, i) => s + W(i), 0) / Math.max(1, sorted.length);
+      const half = (avgW + gap) / 2;
+      for (const [bi, b] of buckets.entries()) {
         if (b.length === 0) continue;
+        // 段ごとに半ピッチずつずらして千鳥にする（全段の平均は 0 なので重心は保たれる）
+        const off = (bi - (k - 1) / 2) * half;
         const xs = resolve1D(
           b.map(W),
-          b.map((i) => target.get(i)!),
+          b.map((i) => target.get(i)! + off),
           gap,
         );
         let lo = Infinity;

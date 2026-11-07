@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { autoLayout, type LayoutEdgeInput, type LayoutNodeInput, type LayoutResult } from './auto';
+import { autoLayout, LABEL_W, type LayoutEdgeInput, type LayoutNodeInput, type LayoutResult } from './auto';
 
 const EPS = 1e-6;
 
@@ -143,6 +143,51 @@ describe('autoLayout basics', () => {
     const r = autoLayout([n('a', 0)], [], { minPlateWidth: 80, minPlateDepth: 50 });
     expect(r.plate.width).toBeGreaterThanOrEqual(80);
     expect(r.plate.depth).toBeGreaterThanOrEqual(50);
+  });
+});
+
+describe('label-aware spacing', () => {
+  it('keeps same-row non-screen centers at least LABEL_W + gap apart', () => {
+    const nodes: LayoutNodeInput[] = [];
+    for (let i = 0; i < 12; i++) nodes.push(n(`a${i}`, 0, 1.6, 1.2));
+    for (let i = 0; i < 4; i++) nodes.push(n(`b${i}`, 1, 2, 1.3));
+    const r = autoLayout(nodes, []);
+    for (const layer of [0, 1]) {
+      const ps = nodes.filter((x) => x.layer === layer).map((x) => r.positions.get(x.id)!);
+      for (let i = 0; i < ps.length; i++)
+        for (let j = i + 1; j < ps.length; j++)
+          if (Math.abs(ps[i]!.z - ps[j]!.z) < 1e-6)
+            expect(Math.abs(ps[i]!.x - ps[j]!.x)).toBeGreaterThanOrEqual(LABEL_W + 1.6 - 1e-6);
+    }
+  });
+
+  it('spreads a 9-node layer over rows or a wide plate, centered on z = 0', () => {
+    const nodes = [n('top', 0), ...Array.from({ length: 9 }, (_, i) => n(`i${i}`, 1, 2.6, 1.8))];
+    const edges = nodes.slice(1).map((x) => ({ from: 'top', to: x.id }));
+    const r = autoLayout(nodes, edges);
+    expectSane(nodes, r);
+    const zs = new Set(nodes.slice(1).map((x) => r.positions.get(x.id)!.z));
+    expect(zs.size >= 2 || r.plate.width >= 9 * (LABEL_W + 1.6)).toBe(true);
+    const zl = [...zs];
+    expect(Math.min(...zl) + Math.max(...zl)).toBeCloseTo(0, 6);
+    expect(r.plate.depth).toBeLessThanOrEqual(20 + EPS);
+  });
+
+  it('keeps screens at least 1.0 apart and in two rows of three for six screens', () => {
+    const nodes = [n('top', 0), ...Array.from({ length: 6 }, (_, i) => n(`s${i}`, 1, 6.4, 4.2))];
+    const r = autoLayout(
+      nodes,
+      nodes.slice(1).map((x) => ({ from: 'top', to: x.id })),
+    );
+    expectSane(nodes, r);
+    const byZ = new Map<number, number[]>();
+    for (const x of nodes.slice(1)) {
+      const p = r.positions.get(x.id)!;
+      byZ.set(p.z, [...(byZ.get(p.z) ?? []), p.x].sort((a, b) => a - b));
+    }
+    expect([...byZ.values()].map((v) => v.length)).toEqual([3, 3]);
+    for (const xs of byZ.values())
+      for (let i = 1; i < xs.length; i++) expect(xs[i]! - xs[i - 1]! - 6.4).toBeGreaterThanOrEqual(1);
   });
 });
 
