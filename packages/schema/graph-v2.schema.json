@@ -1,0 +1,387 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/stack-atlas/graph-v2.schema.json",
+  "title": "Stack Atlas graph v2",
+  "description": "箱（node）・口（port）・項目（item）・線（wire）のモデル。契約は docs/16-graph-v2-contract.md。",
+  "type": "object",
+  "required": ["version", "nodes", "wires"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 2 },
+    "project": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "repo": { "type": "string", "description": "リポジトリURLやパス" },
+        "commit": { "type": "string", "description": "抽出時のコミットSHA" },
+        "generatedAt": { "type": "string", "format": "date-time" },
+        "sources": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "types": {
+      "type": "array",
+      "description": "typeRef の宛先。同じ型の写しが複数の言語にあるときは契約側を正にして 1 つ（D37）",
+      "items": { "$ref": "#/$defs/namedType" }
+    },
+    "nodes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/node" }
+    },
+    "wires": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/wire" }
+    },
+    "views": {
+      "type": "array",
+      "description": "名前付きの始点（flows.yaml の置き換え）",
+      "items": { "$ref": "#/$defs/view" }
+    }
+  },
+  "$defs": {
+    "nodeId": {
+      "type": "string",
+      "pattern": "^[a-z]+:[^#]+$",
+      "description": "<kind接頭辞>:<識別子>。識別子に # は使えない（/ と空白は可）。例 fn:internal/api.handleToday, endpoint:GET /today"
+    },
+    "portId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "口の id。in / out / req / res / key / write / read / err など"
+    },
+    "itemId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_$-]+$",
+      "description": "項目の id。. は使えない（参照を . で切るため）。表示名は name に"
+    },
+    "itemRef": {
+      "type": "string",
+      "pattern": "^[a-z]+:[^#]+#[a-z][a-z0-9_]*/[A-Za-z0-9_$-]+(\\.[A-Za-z0-9_$-]+)*$",
+      "description": "<nodeId>#<portId>/<itemId>(.<itemId>)*。最初の # で箱、次の / で口、残りを . で項目"
+    },
+    "localRef": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*/[A-Za-z0-9_$-]+(\\.[A-Za-z0-9_$-]+)*$",
+      "description": "箱の中の参照 <portId>/<itemId>(.<itemId>)*（links で使う）"
+    },
+    "typeId": {
+      "type": "string",
+      "pattern": "^(type|table):.+$",
+      "description": "type:<名前> か table:<名前>"
+    },
+    "variantId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "when": {
+      "type": "object",
+      "description": "この状態のときだけ存在する。複数キーは AND。キーは <variantId> か <nodeId>#<variantId>",
+      "propertyNames": { "pattern": "^([a-z]+:[^#]+#)?[a-z][a-z0-9_]*$" },
+      "additionalProperties": { "type": "boolean" }
+    },
+    "confidence": {
+      "enum": ["exact", "crude", "unknown"],
+      "description": "exact=型 API で確定 / crude=state・ローカル変数経由の推定 / unknown"
+    },
+    "point": {
+      "type": "object",
+      "required": ["x", "y"],
+      "additionalProperties": false,
+      "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
+    },
+    "namedType": {
+      "type": "object",
+      "required": ["id", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/typeId" },
+        "name": { "type": "string" },
+        "file": { "type": "string", "description": "リポジトリルートからの相対パス" },
+        "line": { "type": "integer", "minimum": 1 },
+        "source": {
+          "type": "string",
+          "description": "出どころ（openapi / typescript / go / sql など）"
+        },
+        "meta": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "copies（他言語の写しの場所）や usedBy など"
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": ["id", "kind", "name", "runtime", "ports"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/nodeId" },
+        "kind": {
+          "enum": [
+            "screen",
+            "component",
+            "hook",
+            "helper",
+            "fn",
+            "endpoint",
+            "table",
+            "cache",
+            "trigger",
+            "actor",
+            "external",
+            "infra",
+            "queue"
+          ],
+          "description": "形と色だけ。語彙は固定（docs/16 §4）"
+        },
+        "name": { "type": "string" },
+        "runtime": {
+          "enum": ["user", "time", "browser", "edge", "build", "server", "data", "external"],
+          "description": "どこで動くか（固定の 8 値。D39）"
+        },
+        "file": { "type": "string", "description": "リポジトリルートからの相対パス" },
+        "line": { "type": "integer", "minimum": 1 },
+        "code": { "type": "string", "description": "パネルに出すコード抜粋" },
+        "host": {
+          "$ref": "#/$defs/nodeId",
+          "description": "この箱を動かしているインフラの箱（kind infra）の id。配線図では枠として描く（D42）"
+        },
+        "group": {
+          "type": "string",
+          "description": "折りたたみの単位。省略時は file のディレクトリ"
+        },
+        "ports": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/port" }
+        },
+        "links": {
+          "type": "array",
+          "description": "箱の中の対応。省略時は既定（全 in → 全 out。table は key → read、endpoint は in→req / res→out の恒等）",
+          "items": { "$ref": "#/$defs/link" }
+        },
+        "variants": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/variant" }
+        },
+        "cache": { "$ref": "#/$defs/cache" },
+        "screen": { "$ref": "#/$defs/screen" },
+        "position": {
+          "$ref": "#/$defs/point",
+          "description": "配線図の位置（build 時に埋める任意フィールド。無ければビューアが簡易レイアウト）"
+        },
+        "meta": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "抽出器固有の追加情報（route、sharedOf など）"
+        }
+      }
+    },
+    "port": {
+      "type": "object",
+      "required": ["id", "dir", "items"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/portId" },
+        "dir": { "enum": ["in", "out"] },
+        "name": { "type": "string", "description": "表示名（省略時は id）" },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/item" }
+        }
+      }
+    },
+    "item": {
+      "type": "object",
+      "required": ["id", "name", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/itemId" },
+        "name": { "type": "string", "description": "表示名（言語どおり。query.date など）" },
+        "type": { "type": "string", "description": "表示用の、言語どおりの型の文字列" },
+        "wireType": {
+          "enum": [
+            "string",
+            "integer",
+            "number",
+            "boolean",
+            "datetime",
+            "bytes",
+            "object",
+            "array",
+            "unknown"
+          ],
+          "description": "線の上の形（OpenAPI の語彙）。合流点の照合に使う"
+        },
+        "nullable": { "type": "boolean", "description": "値が null になりうる" },
+        "optional": { "type": "boolean", "description": "項目自体が無いことがある" },
+        "typeRef": {
+          "$ref": "#/$defs/typeId",
+          "description": "所属する名前付き型（types[].id）。テーブルのカラムは table:<名前>"
+        },
+        "children": {
+          "type": "array",
+          "description": "入れ子。配列の要素はその項目の子として書く（[] の段は作らない）",
+          "items": { "$ref": "#/$defs/item" }
+        },
+        "when": { "$ref": "#/$defs/when" },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "meta": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "link": {
+      "type": "object",
+      "required": ["from", "to"],
+      "additionalProperties": false,
+      "properties": {
+        "from": { "$ref": "#/$defs/localRef", "description": "dir in の口の項目" },
+        "to": { "$ref": "#/$defs/localRef", "description": "dir out の口の項目" },
+        "when": { "$ref": "#/$defs/when" },
+        "confidence": { "$ref": "#/$defs/confidence" }
+      }
+    },
+    "variant": {
+      "type": "object",
+      "required": ["id", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/variantId" },
+        "name": { "type": "string" },
+        "default": { "type": "boolean", "description": "省略時 false" }
+      }
+    },
+    "wire": {
+      "type": "object",
+      "required": ["from", "to", "via"],
+      "additionalProperties": false,
+      "properties": {
+        "from": { "$ref": "#/$defs/itemRef", "description": "dir out の口の項目" },
+        "to": { "$ref": "#/$defs/itemRef", "description": "dir in の口の項目" },
+        "via": {
+          "enum": ["props", "call", "return", "http", "sql", "event", "render", "deliver"],
+          "description": "線の見た目と I/O 境界の判定に使う"
+        },
+        "reply": { "type": "boolean", "description": "往復の戻り側" },
+        "when": { "$ref": "#/$defs/when" },
+        "broken": {
+          "type": "array",
+          "description": "合流点で両側が食い違っている所。選択と無関係に常に赤で描く",
+          "items": { "$ref": "#/$defs/broken" }
+        },
+        "label": { "type": "string" },
+        "route": {
+          "type": "array",
+          "description": "配線図の経路（build 時に埋める任意フィールド）",
+          "items": { "$ref": "#/$defs/point" }
+        },
+        "meta": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "broken": {
+      "type": "object",
+      "required": ["path", "level", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "from の項目からの相対パス（a.b.c）。from の項目そのものなら空文字"
+        },
+        "level": {
+          "enum": ["error", "warn"],
+          "description": "error=名前が相手に無い・wireType が互換でない / warn=nullable → 必須"
+        },
+        "reason": { "type": "string" }
+      }
+    },
+    "view": {
+      "type": "object",
+      "required": ["id", "name", "start"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "start": {
+          "description": "箱 id、項目の参照、または線（{from, to}）",
+          "anyOf": [
+            { "$ref": "#/$defs/nodeId" },
+            { "$ref": "#/$defs/itemRef" },
+            {
+              "type": "object",
+              "required": ["from", "to"],
+              "additionalProperties": false,
+              "properties": {
+                "from": { "$ref": "#/$defs/itemRef" },
+                "to": { "$ref": "#/$defs/itemRef" }
+              }
+            }
+          ]
+        },
+        "variants": {
+          "type": "object",
+          "description": "分岐の組み合わせ。キーは <nodeId>#<variantId>（修飾必須）",
+          "propertyNames": { "pattern": "^[a-z]+:[^#]+#[a-z][a-z0-9_]*$" },
+          "additionalProperties": { "type": "boolean" }
+        }
+      }
+    },
+    "cache": {
+      "type": "object",
+      "required": ["tone", "badge"],
+      "additionalProperties": false,
+      "properties": {
+        "tone": {
+          "enum": ["ok", "warn", "off", "info"],
+          "description": "ok=効いている / warn=要注意 / off=なし / info=補足"
+        },
+        "badge": { "type": "string", "description": "ラベル横に出す短い文字列" },
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["key", "value"],
+            "additionalProperties": false,
+            "properties": { "key": { "type": "string" }, "value": { "type": "string" } }
+          }
+        },
+        "note": { "type": "string", "description": "注意点。パネルに⚠付きで出る" }
+      }
+    },
+    "screen": {
+      "type": "object",
+      "required": ["width", "height"],
+      "additionalProperties": false,
+      "properties": {
+        "html": {
+          "type": "string",
+          "description": "graph.json からの相対パス。自己完結の HTML（script 無し。docs/14 §3.3）"
+        },
+        "source": {
+          "enum": ["next-export", "next-build", "dir", "wireframe", "screenshot"],
+          "description": "html の出どころ"
+        },
+        "screenshot": {
+          "type": "string",
+          "description": "graph.json からの相対パス（PNG/JPEG）。html と両方あれば html を優先"
+        },
+        "width": { "type": "integer", "description": "regions 座標系の幅（ビューポート）" },
+        "height": { "type": "integer" },
+        "regions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["ref", "x", "y", "w", "h"],
+            "additionalProperties": false,
+            "properties": {
+              "ref": { "$ref": "#/$defs/nodeId", "description": "この領域を描画しているノード" },
+              "x": { "type": "number" },
+              "y": { "type": "number" },
+              "w": { "type": "number" },
+              "h": { "type": "number" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

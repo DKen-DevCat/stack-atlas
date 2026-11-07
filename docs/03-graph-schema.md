@@ -141,3 +141,18 @@ kind → 表示定義。ビューアは既定の kind 表（`packages/viewer/src
 
 - 破壊的な変更をしたら `version` を上げる。ビューアは未知のバージョンなら警告を出す
 - 未知の `kind` やフィールドは無視して描画を続ける（前方互換）
+
+## v2（箱・口・項目・線）
+
+Phase 8 で、箱の単位の `nodes` / `edges` に代えて **箱（node）→ 口（port）→ 項目（item）** と、項目から項目への **線（wire）** を持つ v2 を追加した。
+契約の正本は `docs/16-graph-v2-contract.md`（ID と参照 §3、箱 §4、口と項目と合成項目 §5、線と links と broken §6、分岐 §7、型と views §8、検証 §9、v1 → v2 の変換 §10、決定 D36〜D44）。たどる規則・球の規則は `docs/15-design-dataflow-model.md` §3.4〜§3.5。
+
+| もの | 場所 |
+|---|---|
+| JSON Schema（正） | `packages/schema/graph-v2.schema.json`（`version: 2`。`additionalProperties: false`） |
+| 型（手書き。スキーマとのずれは `v2.test.ts` で検出） | `packages/schema/src/v2.ts`（`GraphV2` / `NodeV2` / `PortV2` / `ItemV2` / `WireV2` / `LinkV2` / `VariantV2` / `ViewV2` / `NamedType`、`parseItemRef` / `parseWhenKey` / `wireTypeCompatible`） |
+| 検証 | `validateGraphV2(json)` → `{ ok, graph, errors, warnings }`（docs/16 §9）。`validateAnyGraph` が `version` で v1 / v2 を振り分け、`pnpm validate` / `stack-atlas validate` はこれを使う |
+| たどる・選ぶ・球の時刻・切れている線（純 TS） | `packages/wiring`（`@stack-atlas/wiring`。schema にだけ依存）: `indexGraph` / `traverse` / `select` / `schedule` / `detectBroken` |
+| 手で組んだ例 | `examples/fixture-poly.today.v2.json`（fixture-poly の `/`（画面）→ `GET /today` → `transactions` の経路と、契約の食い違いを出す `POST /transactions`。箱 20・線 32。`pnpm validate` で エラー 0・警告 1） |
+
+v1 は読めるまま残す（`validateGraph`、`graph.schema.json`、この文書の上の節）。v1 → v2 の変換（`upgradeGraph`）とパイプラインの v2 化は 8-1（docs/16 §10）。

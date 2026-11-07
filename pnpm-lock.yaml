@@ -298,6 +298,12 @@ importers:
         specifier: ^8.3.6
         version: 8.3.6(@types/node@22.20.5)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)
 
+  packages/wiring:
+    dependencies:
+      '@stack-atlas/schema':
+        specifier: workspace:*
+        version: link:../schema
+
 packages:
 
   '@cacheable/memory@2.2.0':

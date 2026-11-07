@@ -34,7 +34,7 @@ function getSchemaValidator() {
   return compiled;
 }
 
-function formatAjvError(e: ErrorObject): ValidationIssue {
+export function formatAjvError(e: ErrorObject): ValidationIssue {
   const path = e.instancePath || '/';
   let message: string;
   switch (e.keyword) {

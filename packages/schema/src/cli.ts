@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // stack-atlas-validate <file...> — graph.json をスキーマ＋参照整合性で検証する
 import { readFileSync } from 'node:fs';
-import { validateGraph } from './validate.js';
+import { validateAnyGraph } from './validate-v2.js';
 
 function main(argv: string[]): number {
   const files = argv.filter((a) => a !== '--');
@@ -19,11 +19,11 @@ function main(argv: string[]): number {
       failed = true;
       continue;
     }
-    const { ok, errors } = validateGraph(json);
-    const nErr = errors.filter((e) => e.level === 'error').length;
-    const nWarn = errors.length - nErr;
+    const { ok, issues } = validateAnyGraph(json);
+    const nErr = issues.filter((e) => e.level === 'error').length;
+    const nWarn = issues.length - nErr;
     console.log(`${ok ? '✓' : '✗'} ${file}: エラー ${nErr} 件、警告 ${nWarn} 件`);
-    for (const e of errors) {
+    for (const e of issues) {
       const tag = e.level === 'error' ? 'エラー' : '警告';
       console.log(`  [${tag}] ${e.path}: ${e.message}`);
     }
