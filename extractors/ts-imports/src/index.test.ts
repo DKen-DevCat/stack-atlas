@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import type { RepoContext, StackAtlasConfig } from '@stack-atlas/core';
 import { extractor, libName } from './index.js';
-import { globBase, globToRegExp } from './glob.js';
+import { globBase, globToRegExp } from '@stack-atlas/core';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../examples/fixture-repo');
 const silent = { debug() {}, info() {}, warn() {}, error() {} };

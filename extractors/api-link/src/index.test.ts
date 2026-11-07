@@ -4,7 +4,15 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import type { PartialGraph, RepoContext, StackAtlasConfig } from '@stack-atlas/core';
-import { extractor, nameMatchesRoute, parseClientCalls, pathMatches, toPath } from './index.js';
+import {
+  extractor,
+  nameMatchesRoute,
+  parseClientCalls,
+  pathMatches,
+  pickMostSpecific,
+  routeSpecificity,
+  toPath,
+} from './index.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../examples/fixture-repo');
 const warnings: string[] = [];
@@ -64,6 +72,27 @@ describe('helpers', () => {
     expect(pathMatches('/races/{id}', '/races/42')).toBe(true);
     expect(pathMatches('/races', '/races/{id}')).toBe(false);
     expect(pathMatches('/{proxy+}', '/a/b')).toBe(true);
+    // greedy は 1 セグメント以上（API Gateway と同じ）。以前は 0 セグメントにも当たっていた
+    expect(pathMatches('/races/{proxy+}', '/races/1/results')).toBe(true);
+    expect(pathMatches('/races/{proxy+}', '/races')).toBe(false);
+    expect(pathMatches('/{proxy+}', '/')).toBe(false);
+  });
+  it('pickMostSpecific: リテラル > パラメータ > greedy > $default。以前は全部に http エッジを張っていた', () => {
+    const r = (routeKey: string) => {
+      const [method = 'ANY', path = routeKey] =
+        routeKey === '$default' ? ['ANY', '/{proxy+}'] : routeKey.split(' ');
+      return { routeKey, method, path, logicalId: routeKey, stack: 'web' };
+    };
+    const all = [r('$default'), r('GET /{proxy+}'), r('GET /races/{id}'), r('ANY /races/{id}')];
+    const match = all.filter((x) => pathMatches(x.path, '/races/42'));
+    expect(pickMostSpecific(match).map((x) => x.routeKey)).toEqual(['GET /races/{id}']);
+    expect(pickMostSpecific([r('$default'), r('GET /{proxy+}')]).map((x) => x.routeKey)).toEqual([
+      'GET /{proxy+}',
+    ]);
+    expect(pickMostSpecific([r('$default')]).map((x) => x.routeKey)).toEqual(['$default']);
+    // 同点は全部残す
+    expect(pickMostSpecific([r('GET /a/{x}'), r('GET /{y}/b')])).toHaveLength(2);
+    expect(routeSpecificity(r('GET /races/{id}'))).toEqual([1, 1, 1, 1]);
   });
   it('nameMatchesRoute', () => {
     expect(nameMatchesRoute('getRaces', 'GET', '/races')).toBe(true);

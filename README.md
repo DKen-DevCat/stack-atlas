@@ -47,7 +47,7 @@ pnpm dev                    # → http://localhost:5173/?graph=samples/race-site
 |---|---|
 | `build <repo> [-o <outDir>] [--with-viewer] [--no-screenshots] [-v]` | 解析して `graph.json` / `issues.json` / `memos.json`（と `shots/`、ビューア）を `outDir` に出す。検証エラーがあれば終了コード 1 |
 | `validate <graph.json...>` | スキーマと参照整合性の検証（`pnpm validate <file>` でも可） |
-| `serve <outDir> [--port 4173] [--host 127.0.0.1] [--repo <repo>]` | `outDir` を配信。`--repo` を付けるとビューアのメモ保存が `<repo>/.stack-atlas/memos.json` に書き戻される |
+| `serve <outDir> [--port 4173] [--host 127.0.0.1] [--repo <repo>] [--allowed-host <name>]...` | `outDir` を配信。`--repo` を付けるとビューアのメモ保存が `<repo>/.stack-atlas/memos.json` に書き戻される。Host ヘッダがループバック・`--host`・`--allowed-host` 以外なら 403 |
 | `diff <prev.json> <next.json>` | 2 つの graph.json の追加・削除・変更を表示 |
 | `init-flows <repo> [--out <file>] [--force]` | いまのグラフから `flows.yaml` の雛形（MISS / HIT / 無効化）を書く |
 
@@ -79,7 +79,7 @@ pnpm dev                    # → http://localhost:5173/?graph=samples/race-site
 ## テスト
 
 ```sh
-pnpm test                                   # 全パッケージの Vitest（235 件）
+pnpm test                                   # 全パッケージの Vitest（253 件）
 pnpm lint && pnpm typecheck                 # ESLint と tsc
 pnpm --filter @stack-atlas/viewer e2e       # Playwright のスモークテスト（18 件、3 件はスキップ。Chromium が必要）
 DOCS_SCREENSHOTS=1 pnpm --filter @stack-atlas/viewer e2e docs-screenshots   # docs/images/ を撮り直す

@@ -16,10 +16,10 @@ import { basename, dirname, extname, relative, sep } from 'node:path';
 import { Node, Project, SyntaxKind, type ExportedDeclarations, type SourceFile } from 'ts-morph';
 import type { Edge } from '@stack-atlas/schema';
 import type { Extractor, PartialGraph, PartialNode, RepoContext } from '@stack-atlas/core';
-import { findAppDir, listRouteFiles } from './routes.js';
-import { globToRegExp, toArray } from './glob.js';
+import { findAppDir, listRouteFiles } from '@stack-atlas/core';
+import { globToRegExp, toArray } from '@stack-atlas/core';
 
-export { segmentToUrl } from './routes.js';
+export { segmentToUrl } from '@stack-atlas/core';
 
 export const NAME = 'ts-imports';
 

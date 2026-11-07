@@ -42,7 +42,8 @@ export {
 } from './memos.js';
 export { diffGraphs, isEmptyDiff, type GraphDiff, type NodeChange } from './diff.js';
 export { gitCommit, gitRemote } from './git.js';
-export { deepMerge, globToRegExp, type DeepMergeOptions } from './util.js';
+export { deepMerge, globToRegExp, globBase, toArray, type DeepMergeOptions } from './util.js';
+export * from './next-routes.js';
 export {
   buildGraph,
   type BuildGraphOptions,

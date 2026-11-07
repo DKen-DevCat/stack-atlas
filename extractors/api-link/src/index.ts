@@ -18,11 +18,17 @@ import { basename, extname, join, relative, sep } from 'node:path';
 import type { Cache, Edge } from '@stack-atlas/schema';
 import type { Extractor, PartialGraph, PartialNode, RepoContext } from '@stack-atlas/core';
 import { parseClientCalls, type ApiCall } from './client.js';
-import { loadGateway, methodMatches, pathMatches, type GatewayRoute } from './gateway.js';
-import { globBase, globToRegExp, toArray } from './glob.js';
+import {
+  loadGateway,
+  methodMatches,
+  pathMatches,
+  pickMostSpecific,
+  type GatewayRoute,
+} from './gateway.js';
+import { globBase, globToRegExp, toArray } from '@stack-atlas/core';
 
 export { parseClientCalls, toPath } from './client.js';
-export { pathMatches } from './gateway.js';
+export { pathMatches, pickMostSpecific, routeSpecificity } from './gateway.js';
 
 export const NAME = 'api-link';
 
@@ -282,8 +288,9 @@ export const extractor: Extractor = {
 
       const unmatched: string[] = [];
       for (const c of unique) {
-        const routes = gw.routes.filter(
-          (r) => methodMatches(r.method, c.method) && pathMatches(r.path, c.path),
+        // API Gateway と同じく、合う route が複数あれば最も具体的なものだけ（$default は最後の手段）
+        const routes = pickMostSpecific(
+          gw.routes.filter((r) => methodMatches(r.method, c.method) && pathMatches(r.path, c.path)),
         );
         const targets = handlers.filter((h) => h.routes.some((r) => routes.includes(r)));
         if (targets.length === 0) {

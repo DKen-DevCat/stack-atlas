@@ -6,9 +6,9 @@
 import { readFileSync } from 'node:fs';
 import type { Cache, CacheRule, Edge } from '@stack-atlas/schema';
 import type { Extractor, PartialGraph, PartialNode } from '@stack-atlas/core';
-import { findAppDir, listRouteFiles } from './routes.js';
+import { findAppDir, listRouteFiles } from '@stack-atlas/core';
 
-export { segmentToUrl, findAppDir, listRouteFiles } from './routes.js';
+export { segmentToUrl, findAppDir, listRouteFiles, routeNodeId } from '@stack-atlas/core';
 
 export const NAME = 'nextjs-app';
 

@@ -3,6 +3,7 @@
  * `data-component` 属性の付いた要素の矩形（screen.regions）を取る。
  * 方法は docs/04-extractors.md §6、設定は docs/09-design-phase2-5.md §3.3、使い方は docs/10-screenshots-guide.md。
  */
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import type { Browser, LaunchOptions } from 'playwright';
@@ -70,6 +71,22 @@ export function slugify(pattern: string): string {
     .replace(/-{2,}/g, '-')
     .replace(/^-+|-+$/g, '');
   return slug || 'index';
+}
+
+/**
+ * slugify は別のルートを同じ名前にすることがある（`/races/[id]` と `/races/id`、`/a-b` と `/a/b`）。
+ * 2 本目以降はパターンのハッシュを足して、スクショが上書きされないようにする
+ */
+export function uniqueSlug(pattern: string, used: Map<string, string>): string {
+  const base = slugify(pattern);
+  const owner = used.get(base);
+  if (owner === undefined || owner === pattern) {
+    used.set(base, pattern);
+    return base;
+  }
+  const slug = `${base}-${createHash('sha1').update(pattern).digest('hex').slice(0, 6)}`;
+  used.set(slug, pattern);
+  return slug;
 }
 
 /**
@@ -193,6 +210,7 @@ export const extractor: Extractor = {
         ...(useStorage ? { storageState } : {}),
       });
       const unresolved = new Set<string>();
+      const slugs = new Map<string, string>();
       for (const t of targets) {
         const page = await context.newPage();
         const href = joinUrl(baseUrl, t.url);
@@ -201,7 +219,7 @@ export const extractor: Extractor = {
           if (res && !res.ok()) {
             ctx.log.warn(`screenshots: ${href} が HTTP ${res.status()} を返した（そのまま撮る）`);
           }
-          const slug = slugify(t.pattern);
+          const slug = uniqueSlug(t.pattern, slugs);
           await page.screenshot({ path: join(shotsDir, `${slug}.png`), fullPage: false });
           const raw = await page.$$eval('[data-component]', (els) =>
             els.map((el) => {

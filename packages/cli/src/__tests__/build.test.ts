@@ -1,7 +1,7 @@
 import type { Extractor } from '@stack-atlas/core';
 import { createMemoryLogger } from '@stack-atlas/core';
 import { validateGraph } from '@stack-atlas/schema';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -15,6 +15,11 @@ function repo(): string {
   writeFileSync(join(root, '.stack-atlas', 'memos.json'), '{"lib:x":"memo","gone:y":"orphan"}');
   return root;
 }
+
+const quiet = <T>(fn: () => Promise<T>) => {
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  return fn().finally(() => log.mockRestore());
+};
 
 const stub: Extractor = {
   name: 'stub',
@@ -52,6 +57,19 @@ describe('runBuild', () => {
     expect(summary).toContain('stub: ノード 1、エッジ 0、フロー 0');
     expect(summary).toContain('結果: ノード 1、エッジ 0、フロー 0、層 4');
     expect(summary).toContain('孤立メモ（graph に無いノード ID）: gone:y');
+  });
+
+  it('リポジトリの memos.json が無くなったら、前回の build の out/memos.json も消す', async () => {
+    // 以前は残っていたので、serve --repo で開くと消したメモが共有メモとして見え、次の保存で書き戻されていた
+    const root = repo();
+    const out = join(root, 'out');
+    const run = () =>
+      runBuild({ repo: root, outDir: out, extractors: [stub], log: createMemoryLogger() });
+    await quiet(run);
+    expect(existsSync(join(out, 'memos.json'))).toBe(true);
+    rmSync(join(root, '.stack-atlas', 'memos.json'));
+    await quiet(run);
+    expect(existsSync(join(out, 'memos.json'))).toBe(false);
   });
 
   it('既定の出力先は <repo>/.stack-atlas/out、検証エラーなら終了コード 1', async () => {

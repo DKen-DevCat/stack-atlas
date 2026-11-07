@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  loadSharedMemos,
   LocalMemoStore,
   memoKey,
   mergeMemos,
@@ -106,6 +107,28 @@ describe('SharedMemoStore', () => {
     expect(s2.unsavedIds()).toEqual(['b', 'c']);
   });
 
+  it('共有メモが空のとき（ファイルをドロップして開いた・memos.json を読めなかった）は削除の印を消さない', () => {
+    // 以前は構築時の prune で消していたので、serve で削除 → ドロップで開く → serve で開く、で削除したメモが戻っていた
+    const st = fakeStorage();
+    const s = new SharedMemoStore('p', { a: 'A', b: 'B' }, st);
+    s.set('b', '');
+    expect(s.unsavedIds()).toEqual(['b']);
+
+    const dropped = new SharedMemoStore('p', {}, st);
+    expect(dropped.all()).toEqual({});
+    expect(dropped.unsavedIds()).toEqual([]); // 共有を知らないので「未保存」には出さない
+    expect(JSON.parse(st.m.get('stack-atlas-memos-deleted:p')!)).toEqual(['b']);
+
+    const again = new SharedMemoStore('p', { a: 'A', b: 'B' }, st);
+    expect(again.all()).toEqual({ a: 'A' });
+    expect(again.unsavedIds()).toEqual(['b']);
+
+    // 共有メモを実際に読めて、そこに無ければ印は消える
+    const gone = new SharedMemoStore('p', { a: 'A' }, st);
+    expect(gone.unsavedIds()).toEqual([]);
+    expect(st.m.has('stack-atlas-memos-deleted:p')).toBe(false);
+  });
+
   it('従来の LocalMemoStore のメモはローカルの上書きとして読める', () => {
     const st = fakeStorage();
     new LocalMemoStore('p', st).set('a', 'old');
@@ -148,5 +171,53 @@ describe('SharedMemoStore', () => {
     s.set('gone', '');
     expect(orphanIds(s.all(), ids)).toEqual([]);
     expect(s.unsavedIds()).toEqual(['comp:Old', 'gone', 'type:Race']);
+  });
+});
+
+describe('loadSharedMemos', () => {
+  const okJson = (v: unknown) =>
+    new Response(JSON.stringify(v), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('API（serve）が読めたら API だけを正とし、隣の memos.json とは混ぜない', async () => {
+    // 以前は { ...memos.json, ...api } だったので、古い build の memos.json に残ったメモが
+    // リポジトリから消したあとも表示され、次の「サーバーに保存」で書き戻されていた
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) =>
+        url.endsWith('/api/memos') ? okJson({ a: 'api' }) : okJson({ a: 'file', stale: '古い' }),
+      ),
+    );
+    const r = await loadSharedMemos('http://localhost:4173/graph.json', 'http://localhost:4173/');
+    expect(r).toEqual({
+      memos: { a: 'api' },
+      api: true,
+      apiUrl: 'http://localhost:4173/api/memos',
+    });
+  });
+
+  it('API が無ければ memos.json を使う。別オリジンの graph では API を見ない', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        calls.push(url);
+        return url.endsWith('memos.json')
+          ? okJson({ a: 'file' })
+          : new Response('', { status: 404 });
+      }),
+    );
+    expect(
+      await loadSharedMemos('http://localhost:4173/graph.json', 'http://localhost:4173/'),
+    ).toEqual({ memos: { a: 'file' }, api: false });
+    calls.length = 0;
+    expect(
+      await loadSharedMemos('https://cdn.example/out/graph.json', 'http://localhost:4173/'),
+    ).toEqual({ memos: { a: 'file' }, api: false });
+    expect(calls).toEqual(['https://cdn.example/out/memos.json']);
   });
 });

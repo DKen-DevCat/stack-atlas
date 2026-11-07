@@ -112,6 +112,27 @@ describe('init-flows', () => {
     expect(readFileSync(out, 'utf8')).toContain('経路が見つからない');
   });
 
+  it('flows.yml（build が読むほうの名前）があるときも --force 無しでは flows.yaml を書かない', async () => {
+    // 以前は flows.yaml の有無しか見ず、手書きの flows.yml の隣に雛形を書いて、次の build から雛形が読まれていた
+    const root = tmpRepo();
+    writeFileSync(join(root, 'flows.yml'), '# 手書き\n');
+    const stub: Extractor = {
+      name: 'stub',
+      detect: async () => true,
+      extract: async () => ({ nodes: [{ id: 'lib:a' }], edges: [] }),
+    };
+    const log = createMemoryLogger();
+    expect(await runInitFlows({ repo: root, log, extractors: [stub] })).toBe(1);
+    expect(existsSync(join(root, 'flows.yaml'))).toBe(false);
+    expect(log.of('error').some((m) => m.includes('flows.yml'))).toBe(true);
+    // --out を明示したときは、その場所だけを見る
+    const other = join(root, 'other.yaml');
+    expect(
+      await quiet(() => runInitFlows({ repo: root, log, extractors: [stub], out: other })),
+    ).toBe(0);
+    expect(existsSync(other)).toBe(true);
+  });
+
   it('ノードが無ければ空の配列とコメントの例を書く', async () => {
     const root = tmpRepo();
     const empty: Extractor = {

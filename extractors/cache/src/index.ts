@@ -48,7 +48,12 @@ function readText(abs: string): string | undefined {
 }
 
 /** next.config を探すディレクトリの候補（root からの相対、posix） */
-export function nextAppDirCandidates(ctx: RepoContext, upstream: Readonly<PartialGraph>): string[] {
+export function nextAppDirCandidates(
+  ctx: RepoContext,
+  upstream: Readonly<PartialGraph>,
+  /** この Lambda から deploy エッジでつながる route だけを見る（モノレポで Next アプリが複数あるとき） */
+  hostId?: string,
+): string[] {
   const dirs: string[] = [];
   const add = (d: string) => {
     const n = posix.normalize(d || '.').replace(/\/+$/, '') || '.';
@@ -60,8 +65,15 @@ export function nextAppDirCandidates(ctx: RepoContext, upstream: Readonly<Partia
     if (posix.basename(parent) === 'src') add(posix.dirname(parent));
   };
   if (ctx.config.next?.appDir) fromAppDir(ctx.config.next.appDir.replace(/\\/g, '/'));
+  const deployed =
+    hostId === undefined
+      ? undefined
+      : new Set(
+          upstream.edges.filter((e) => e.kind === 'deploy' && e.from === hostId).map((e) => e.to),
+        );
   for (const n of upstream.nodes) {
     if (!n.file || !(n.id.startsWith('route:') || n.id.startsWith('layout:'))) continue;
+    if (deployed && deployed.size > 0 && !deployed.has(n.id)) continue;
     const f = n.file.replace(/\\/g, '/');
     const m = /^(.*?)(?:^|\/)app\//.exec(f);
     if (m) fromAppDir(`${m[1] ? m[1] : '.'}/app`);
@@ -102,7 +114,15 @@ export const extractor: Extractor = {
     };
     const fileText = (rel: string) => readText(ctx.resolve(rel));
 
-    let nextConfig: { rel?: string; looked: boolean } = { looked: false };
+    // next.config は Lambda ごとに探す（apps/web と apps/admin が別の Lambda に載っていれば別の設定）。
+    // 候補ディレクトリが同じなら結果を使い回す
+    const nextConfigByDirs = new Map<string, string | undefined>();
+    const findNextConfigFor = (hostId: string) => {
+      const dirs = nextAppDirCandidates(ctx, upstream, hostId);
+      const key = dirs.join('\0');
+      if (!nextConfigByDirs.has(key)) nextConfigByDirs.set(key, findNextConfig(ctx.root, dirs));
+      return nextConfigByDirs.get(key);
+    };
 
     for (const n of upstream.nodes) {
       if (n.cache) continue;
@@ -113,19 +133,15 @@ export const extractor: Extractor = {
           const calls = findFetchHookCalls(n.file, text, getTsMeta(n)?.exportName);
           emit(n.id, hookCache(calls));
         } else if (n.id.startsWith('infra:') && getDeployApp(n) === 'next') {
-          if (!nextConfig.looked)
-            nextConfig = {
-              looked: true,
-              rel: findNextConfig(ctx.root, nextAppDirCandidates(ctx, upstream)),
-            };
-          if (!nextConfig.rel) {
+          const rel = findNextConfigFor(n.id);
+          if (!rel) {
             ctx.log.debug(
               `cache: ${n.id} の next.config が見つかりません（core のルールに任せる）`,
             );
             continue;
           }
-          const text = fileText(nextConfig.rel) ?? '';
-          emit(n.id, lambdaNextCache(parseNextConfig(nextConfig.rel, text), nextConfig.rel));
+          const text = fileText(rel) ?? '';
+          emit(n.id, lambdaNextCache(parseNextConfig(rel, text), rel));
         } else if ((n.id.startsWith('route:') || n.id.startsWith('layout:')) && n.file) {
           const text = fileText(n.file);
           if (text === undefined) continue;

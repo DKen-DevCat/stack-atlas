@@ -14,9 +14,10 @@ export const USAGE = `使い方: stack-atlas <コマンド> [オプション]
       --with-viewer でビューアも同梱する。検証エラーがあれば終了コード 1
   validate <graph.json...>
       graph.json をスキーマと参照整合性で検証する
-  serve <outDir> [--port 4173] [--host 127.0.0.1] [--repo <repo>]
+  serve <outDir> [--port 4173] [--host 127.0.0.1] [--repo <repo>] [--allowed-host <name>]...
       outDir を配信する（index.html が無ければワークスペースのビューアを使う）。
-      --repo を付けると、ビューアからのメモ保存（POST /api/memos）を <repo>/.stack-atlas/memos.json に書き戻す
+      --repo を付けると、ビューアからのメモ保存（POST /api/memos）を <repo>/.stack-atlas/memos.json に書き戻す。
+      Host ヘッダが localhost / 127.0.0.1 / --host / --allowed-host 以外なら 403 にする
   diff <prev.json> <next.json>
       2 つの graph.json の差分（追加・削除・変更）を表示する
   init-flows <repo> [--out <file>] [--force]
@@ -71,11 +72,12 @@ export async function main(argv: string[]): Promise<number> {
           port: { type: 'string', short: 'p' },
           host: { type: 'string' },
           repo: { type: 'string' },
+          'allowed-host': { type: 'string', multiple: true },
         });
         const port = values.port === undefined ? 4173 : Number(values.port);
         if (positionals.length !== 1 || !Number.isInteger(port) || port < 0 || port > 65535) {
           console.error(
-            '使い方: stack-atlas serve <outDir> [--port 4173] [--host 127.0.0.1] [--repo <repo>]',
+            '使い方: stack-atlas serve <outDir> [--port 4173] [--host 127.0.0.1] [--repo <repo>] [--allowed-host <name>]...',
           );
           return 2;
         }
@@ -84,6 +86,7 @@ export async function main(argv: string[]): Promise<number> {
           port,
           host: values.host as string | undefined,
           repo: values.repo as string | undefined,
+          allowedHosts: values['allowed-host'] as string[] | undefined,
           log: createConsoleLogger(),
         });
       }

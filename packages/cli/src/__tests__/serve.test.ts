@@ -1,9 +1,16 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { request } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { contentType, createAtlasServer, resolveStaticPath } from '../commands/serve.js';
+import {
+  contentType,
+  createAtlasServer,
+  hostnameOf,
+  isAllowedHost,
+  resolveStaticPath,
+} from '../commands/serve.js';
 
 describe('resolveStaticPath', () => {
   const root = '/srv/out';
@@ -47,7 +54,9 @@ describe('createAtlasServer', () => {
   const servers: Array<{ close(): void }> = [];
   afterEach(() => servers.splice(0).forEach((s) => s.close()));
 
-  async function start(opts: { withIndex?: boolean; repo?: boolean } = {}) {
+  async function start(
+    opts: { withIndex?: boolean; repo?: boolean; allowedHosts?: string[] } = {},
+  ) {
     const base = mkdtempSync(join(tmpdir(), 'stack-atlas-serve-'));
     const out = join(base, 'out');
     const viewer = join(base, 'viewer');
@@ -63,6 +72,7 @@ describe('createAtlasServer', () => {
       outDir: out,
       viewerDist: viewer,
       repo: opts.repo ? repo : undefined,
+      allowedHosts: opts.allowedHosts,
     });
     servers.push(server);
     await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
@@ -87,6 +97,54 @@ describe('createAtlasServer', () => {
   it('outDir に index.html があればそちらを使う', async () => {
     const { url } = await start({ withIndex: true });
     expect(await (await fetch(`${url}/index.html`)).text()).toBe('<p>bundled</p>');
+  });
+
+  it('Host ヘッダがループバックでも許可リストでもなければ 403（DNS リバインディング対策）', async () => {
+    const { url, repo } = await start({ repo: true, allowedHosts: ['atlas.internal'] });
+    // fetch() は Host を書き換えさせない（forbidden header）ので node:http で送る
+    const raw = (host: string, path: string, method = 'GET', body?: string) =>
+      new Promise<number>((ok, ng) => {
+        const req = request(
+          `${url}${path}`,
+          {
+            method,
+            headers: {
+              Host: host,
+              ...(body ? { 'Content-Type': 'application/json' } : {}),
+            },
+          },
+          (res) => {
+            res.resume();
+            res.on('end', () => ok(res.statusCode ?? 0));
+          },
+        );
+        req.on('error', ng);
+        req.end(body);
+      });
+    expect(await raw('rebind.attacker.example:4173', '/graph.json')).toBe(403);
+    expect(await raw('rebind.attacker.example:4173', '/')).toBe(403);
+    expect(await raw('localhost:4173', '/graph.json')).toBe(200);
+    expect(await raw('127.0.0.1', '/graph.json')).toBe(200);
+    expect(await raw('ATLAS.internal:4173', '/graph.json')).toBe(200);
+    expect(await raw('[::1]:4173', '/graph.json')).toBe(200);
+    // 書き込みも同じ。拒否されたらファイルは変わらない
+    expect(await raw('rebind.attacker.example:4173', '/api/memos', 'POST', '{"a":"b"}')).toBe(403);
+    expect(existsSync(join(repo, '.stack-atlas', 'memos.json'))).toBe(false);
+    expect(await raw('localhost:4173', '/api/memos', 'POST', '{"a":"b"}')).toBe(200);
+    expect(existsSync(join(repo, '.stack-atlas', 'memos.json'))).toBe(true);
+  });
+
+  it('hostnameOf / isAllowedHost', () => {
+    expect(hostnameOf('example.com:4173')).toBe('example.com');
+    expect(hostnameOf('Example.com')).toBe('example.com');
+    expect(hostnameOf('[::1]:4173')).toBe('[::1]');
+    expect(hostnameOf(undefined)).toBe('');
+    expect(isAllowedHost(undefined, [])).toBe(true); // HTTP/1.0（Host なし）
+    expect(isAllowedHost('', [])).toBe(true);
+    expect(isAllowedHost('localhost:1', [])).toBe(true);
+    expect(isAllowedHost('evil.example', [])).toBe(false);
+    expect(isAllowedHost('evil.example', ['evil.example'])).toBe(true);
+    expect(isAllowedHost(':4173', [])).toBe(false);
   });
 
   it('メモ API: --repo なしの POST は 405', async () => {

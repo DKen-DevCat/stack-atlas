@@ -92,16 +92,29 @@ export function cdnSeconds(value: string): number | undefined {
   return Number(t[1]) * (UNIT_SECONDS[(t[2] ?? 's').toLowerCase()] ?? 1);
 }
 
+/**
+ * rule のキーをパスパターンにする。CloudFront の path_pattern は `api/*` のように先頭の `/` を
+ * 省いて書くことが多い（cdktf 抽出器はそのまま key に写す）ので、無ければ `/` を足す。
+ * 既定 behavior や空文字など、パターンにならないものは undefined
+ */
+export function ruleKeyToPattern(key: string): string | undefined {
+  const k = key.trim();
+  if (k === '' || (isDefaultKey(k) && k !== '/')) return undefined;
+  if (k.startsWith('/') || k.startsWith('*')) return k;
+  if (/\s/.test(k)) return undefined;
+  return `/${k}`;
+}
+
 /** path に当てはまる rule を選ぶ（最長一致 → 既定キー） */
 export function pickRule(rules: CacheRule[], path: string): CacheRule | undefined {
-  let best: CacheRule | undefined;
+  let best: { rule: CacheRule; len: number } | undefined;
   for (const r of rules) {
-    const key = r.key.trim();
-    if (isDefaultKey(key) && key !== '/') continue;
-    if (!key.startsWith('/') && !key.startsWith('*')) continue;
-    if (matchPathPattern(key, path) && (!best || key.length > best.key.trim().length)) best = r;
+    const pattern = ruleKeyToPattern(r.key);
+    if (pattern === undefined) continue;
+    if (matchPathPattern(pattern, path) && (!best || pattern.length > best.len))
+      best = { rule: r, len: pattern.length };
   }
-  return best ?? rules.find((r) => isDefaultKey(r.key));
+  return best?.rule ?? rules.find((r) => isDefaultKey(r.key));
 }
 
 export const twoTierStaleness: Rule = {

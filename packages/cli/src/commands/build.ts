@@ -17,7 +17,7 @@ import {
   type Extractor,
   type Logger,
 } from '@stack-atlas/core';
-import { cpSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { loadExtractors } from '../extractors.js';
 import { VIEWER_DIST } from '../paths.js';
@@ -117,6 +117,9 @@ export async function runBuild(opts: BuildOptions): Promise<number> {
     const memos = loadMemos({ root: repo, log });
     writeFileSync(join(outDir, 'memos.json'), serializeMemos(memos));
     orphans = orphanMemos(memos, res.graph);
+  } else {
+    // リポジトリの memos.json が無くなったら、前回の build の memos.json も消す（古いメモが残らないように）
+    rmSync(join(outDir, 'memos.json'), { force: true });
   }
 
   console.log(formatBuildSummary(res, outDir, orphans));

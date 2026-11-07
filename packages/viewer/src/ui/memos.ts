@@ -234,12 +234,19 @@ export class SharedMemoStore implements MemoStore {
     this.prune();
   }
 
-  /** 共有メモと同じになった上書き・意味のない削除の印を消す */
+  /**
+   * 共有メモと同じになった上書き・意味のない削除の印を消す。
+   * 共有メモが空のとき（ファイルをドロップして開いた、memos.json を読めなかった）は
+   * 「共有を知らない」だけなので、削除の印は残す。消すと次に serve で開いたとき削除したメモが戻ってくる
+   */
   private prune(): void {
     for (const [id, t] of Object.entries(this.local.all())) {
       if (this.shared[id] === t) this.local.set(id, '');
     }
-    for (const id of [...this.deleted]) if (this.shared[id] === undefined) this.deleted.delete(id);
+    if (Object.keys(this.shared).length > 0) {
+      for (const id of [...this.deleted])
+        if (this.shared[id] === undefined) this.deleted.delete(id);
+    }
     this.persistDeleted();
     this.recompute();
   }
@@ -289,7 +296,9 @@ async function fetchJson(url: string): Promise<unknown> {
 /**
  * 共有メモを集める。
  * - graph.json と同じディレクトリの memos.json（無ければ無視）
- * - graph をページと同じオリジンから読んだときは `GET /api/memos`（serve。失敗は無視）。読めたら API を正とする
+ * - graph をページと同じオリジンから読んだときは `GET /api/memos`（serve。失敗は無視）。
+ *   読めたら API だけを正とする（memos.json と混ぜない。古い build の memos.json に残ったメモが
+ *   リポジトリから消したあとも表示され、次の保存で書き戻されてしまうため）
  */
 export async function loadSharedMemos(
   graphUrl: string | undefined,
@@ -307,7 +316,7 @@ export async function loadSharedMemos(
     if (new URL(graphUrl).origin === page.origin) {
       const apiUrl = new URL('/api/memos', page.origin).href;
       const api = parseMemos(await fetchJson(apiUrl));
-      if (api) return { memos: { ...fileMemos, ...api }, api: true, apiUrl };
+      if (api) return { memos: api, api: true, apiUrl };
     }
   } catch {
     /* API なし */

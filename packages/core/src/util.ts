@@ -77,24 +77,56 @@ export function deepMerge<T>(target: T, source: unknown, opts: DeepMergeOptions,
   return clone(opts.prefer === 'source' ? source : target) as T;
 }
 
-/** 極小の glob → RegExp（`**` は / をまたぐ、`*` と `?` はまたがない） */
+/**
+ * 小さな glob → RegExp（`**` は / をまたぐ、`*` と `?` はまたがない、`{a,b}` は選択）。
+ * パスは / 区切りの相対パスで照合する。core の deploy と api-link / ts-imports 抽出器で共用する。
+ */
 export function globToRegExp(glob: string): RegExp {
   let re = '';
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i]!;
     if (c === '*') {
       if (glob[i + 1] === '*') {
-        i++;
-        if (glob[i + 1] === '/') {
-          i++;
+        // `**/` は 0 個以上のディレクトリ
+        if (glob[i + 2] === '/') {
           re += '(?:.*/)?';
-        } else re += '.*';
+          i += 2;
+        } else {
+          re += '.*';
+          i += 1;
+        }
       } else re += '[^/]*';
     } else if (c === '?') re += '[^/]';
-    else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    else if (c === '{') {
+      const end = glob.indexOf('}', i);
+      if (end < 0) re += '\\{';
+      else {
+        re += `(?:${glob
+          .slice(i + 1, end)
+          .split(',')
+          .map((s) => s.replace(/[.+^$()|[\]\\]/g, '\\$&'))
+          .join('|')})`;
+        i = end;
+      }
+    } else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
   }
   return new RegExp(`^${re}$`);
 }
+
+/** glob の静的な先頭ディレクトリ（`apps/api/src/handlers/**\/*.ts` → `apps/api/src/handlers`） */
+export function globBase(glob: string): string {
+  const parts = glob.split('/');
+  const out: string[] = [];
+  for (const p of parts) {
+    if (/[*?{[]/.test(p)) break;
+    out.push(p);
+  }
+  if (out.length === parts.length) out.pop();
+  return out.join('/');
+}
+
+export const toArray = (v: string | string[] | undefined): string[] =>
+  v === undefined ? [] : Array.isArray(v) ? v : [v];
 
 export function toPosix(p: string): string {
   return p.replace(/\\/g, '/').replace(/^\.\//, '');

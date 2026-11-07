@@ -152,7 +152,7 @@ screenshots:
 ## 6. 実装結果
 
 Phase 2〜5 はフィクスチャ（`examples/fixture-repo/`）に対して完了した。`stack-atlas build examples/fixture-repo` は 33 ノード・55 エッジ・3 フロー、検証エラー 0 件。
-テストは全体で 235 件（core 50、cli 21、cdktf 9、nextjs-app 8、ts-imports 7、api-link 12、cache 14、screenshots 17）。設計からずれた点:
+テストは全体で 253 件（core 58、cli 25、cdktf 9、nextjs-app 8、ts-imports 7、api-link 13、cache 15、screenshots 18）。設計からずれた点:
 
 - **`applyDeployConfig`**: `config.deploy`（Lambda とアプリ・ハンドラの対応）は抽出器ごとに解釈せず、core の `applyDeployConfig`（`packages/core/src/deploy.ts`）がマージ後にまとめて `deploy` エッジと `meta.deployApp` を付ける。cdktf と nextjs-app も同じキーを読む。
 - **キャッシュ情報の出どころ**: `cache` 抽出器だけが作るのではなく、CloudFront・HTTP API・Lambda@Edge は cdktf、route の ISR・dynamic は nextjs-app、api client の `fetch` オプションは api-link が作る。`cache` 抽出器は残りを埋める（hook の SWR / React Query、Lambda 上の ISR、server component の fetch）。`cache` のあるノードには触らない。

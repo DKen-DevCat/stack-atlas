@@ -1,6 +1,7 @@
 /**
- * `stack-atlas serve <outDir> [--port 4173] [--host 127.0.0.1] [--repo <repo>]`
+ * `stack-atlas serve <outDir> [--port 4173] [--host 127.0.0.1] [--repo <repo>] [--allowed-host <name>]...`
  *
+ * - Host ヘッダがループバック・`--host`・`--allowed-host` のどれでもなければ 403（DNS リバインディング対策）
  * - outDir を静的配信する。outDir に index.html が無ければ、ワークスペースのビューア（packages/viewer/dist）を
  *   後ろに重ねて配信する（graph.json などは outDir が優先）
  * - `/` は `/index.html?graph=./graph.json` へリダイレクト
@@ -73,6 +74,36 @@ export interface ServeOptions {
   repo?: string;
   viewerDist?: string;
   log?: Logger;
+  /**
+   * 受け付ける Host ヘッダのホスト名。ループバック（localhost / 127.0.0.1 / ::1）はいつも許可する。
+   * `--host` で待ち受けアドレスを変えたときはそれも許可する。社内の名前で配信するなら `--allowed-host` で足す
+   */
+  allowedHosts?: string[];
+}
+
+export const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '::1', '[::1]'];
+
+/** Host ヘッダ（`example.com:4173`、`[::1]:4173`）からホスト名だけを取る。小文字にする */
+export function hostnameOf(hostHeader: string | undefined): string {
+  const h = (hostHeader ?? '').trim().toLowerCase();
+  if (h.startsWith('[')) {
+    const end = h.indexOf(']');
+    return end < 0 ? h : h.slice(0, end + 1);
+  }
+  const i = h.lastIndexOf(':');
+  return i < 0 ? h : h.slice(0, i);
+}
+
+/**
+ * Host ヘッダが許可されたホスト名か。
+ * DNS リバインディング（攻撃者のドメインを 127.0.0.1 に解決し直し、同一オリジンとして graph.json を読んだり
+ * メモを書き換えたりする）を防ぐため、知らない Host は 403 にする。Host が無い（HTTP/1.0）ものは通す
+ */
+export function isAllowedHost(hostHeader: string | undefined, allowed: readonly string[]): boolean {
+  if (hostHeader === undefined || hostHeader === '') return true;
+  const name = hostnameOf(hostHeader);
+  if (name === '') return false;
+  return [...LOOPBACK_HOSTS, ...allowed].some((a) => a.toLowerCase() === name);
 }
 
 const MAX_BODY = 5 * 1024 * 1024;
@@ -112,6 +143,7 @@ export function createAtlasServer(opts: ServeOptions): Server {
   const viewerDist = opts.viewerDist ?? VIEWER_DIST;
   const roots = existsSync(join(outDir, 'index.html')) ? [outDir] : [outDir, viewerDist];
   const repo = opts.repo ? resolve(opts.repo) : undefined;
+  const allowedHosts = opts.allowedHosts ?? [];
 
   const memosPath = () =>
     repo ? join(repo, '.stack-atlas', 'memos.json') : join(outDir, 'memos.json');
@@ -150,6 +182,12 @@ export function createAtlasServer(opts: ServeOptions): Server {
   return createServer((req, res) => {
     const url = req.url ?? '/';
     const pathname = url.split(/[?#]/)[0] ?? '/';
+    if (!isAllowedHost(req.headers.host, allowedHosts)) {
+      log.warn(
+        `許可していない Host ヘッダ（${req.headers.host}）を拒否しました。--allowed-host で許可できます`,
+      );
+      return send(res, 403, 'Forbidden: Host');
+    }
     if (pathname === '/api/memos') {
       handleMemos(req, res).catch((e: Error) => sendJson(res, 500, { error: e.message }));
       return;
@@ -197,9 +235,12 @@ export function runServe(opts: ServeOptions & { port?: number; host?: string }):
     );
     return Promise.resolve(2);
   }
-  const server = createAtlasServer({ ...opts, viewerDist, log });
   const host = opts.host ?? '127.0.0.1';
   const port = opts.port ?? 4173;
+  // --host で待ち受けアドレスを変えたら、そのアドレスを Host に書いたリクエストは通す（0.0.0.0 / :: は除く）
+  const allowedHosts = [...(opts.allowedHosts ?? [])];
+  if (!['0.0.0.0', '::', '[::]'].includes(host)) allowedHosts.push(host);
+  const server = createAtlasServer({ ...opts, viewerDist, log, allowedHosts });
   return new Promise((done) => {
     server.on('error', (e) => {
       log.error(`サーバを起動できません: ${e.message}`);

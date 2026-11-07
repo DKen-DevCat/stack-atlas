@@ -22,7 +22,7 @@ Phase 0〜5 は **フィクスチャリポジトリ（`examples/fixture-repo/`�
 
 ### テスト（2026-11-07 実測）
 
-- `pnpm test`: 235 件通過（schema 15 / core 50 / viewer 82 / cdktf 9 / nextjs-app 8 / api-link 12 / cache 14 / ts-imports 7 / screenshots 17 / cli 21）
+- `pnpm test`: 253 件（schema 15 / core 58 / viewer 85 / cdktf 9 / nextjs-app 8 / api-link 13 / cache 15 / ts-imports 7 / screenshots 18 / cli 25。PR #1 のレビュー対応で 18 件追加）
 - `pnpm --filter @stack-atlas/viewer e2e`: 18 件通過、3 件スキップ（約 30 秒。Chromium が必要）
 
 ### 動かし方

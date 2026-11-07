@@ -8,6 +8,7 @@ import {
   noStoreBehindCdn,
   runRules,
 } from '../rules/index.js';
+import { pickRule, ruleKeyToPattern } from '../rules/two-tier-staleness.js';
 
 const cdktf = (type: string, logicalId: string) => ({
   cdktf: { type, logicalId, path: `web/${logicalId}`, stack: 'web' },
@@ -169,6 +170,32 @@ describe('no-store-behind-cdn', () => {
       note: 'force-dynamic だが CDN 側 (/admin/*) はキャッシュ有効。Cache-Control を確認',
     });
     expect(node(g, 'route:/me').cache).toBeUndefined();
+  });
+
+  it('path_pattern が先頭の / 無し（admin/*）でも当たる。以前は既定 behavior に落ちて誤って warn していた', () => {
+    const g = graph([
+      { key: '既定（*）', value: 'TTL default=86400s' },
+      { key: 'admin/*', value: 'CachingDisabled（素通し） → nextOrigin' },
+    ]);
+    noStoreBehindCdn.apply(g, console);
+    expect(node(g, 'route:/admin/entry').cache).toEqual({ tone: 'off', badge: 'dynamic' });
+    expect(node(g, 'route:/me').cache?.tone).toBe('warn');
+  });
+
+  it('ruleKeyToPattern / pickRule', () => {
+    expect(ruleKeyToPattern('admin/*')).toBe('/admin/*');
+    expect(ruleKeyToPattern('/admin/*')).toBe('/admin/*');
+    expect(ruleKeyToPattern('*.png')).toBe('*.png');
+    expect(ruleKeyToPattern('既定（*）')).toBeUndefined();
+    expect(ruleKeyToPattern('')).toBeUndefined();
+    const rules = [
+      { key: '既定（*）', value: 'default' },
+      { key: '_next/static/*', value: 'static' },
+      { key: '_next/*', value: 'next' },
+    ];
+    expect(pickRule(rules, '/_next/static/a.js')?.value).toBe('static');
+    expect(pickRule(rules, '/_next/data/x')?.value).toBe('next');
+    expect(pickRule(rules, '/about')?.value).toBe('default');
   });
 
   it('キャッシュ無効の判定', () => {

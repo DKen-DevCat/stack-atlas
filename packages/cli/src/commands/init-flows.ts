@@ -12,6 +12,7 @@ import {
   AtlasConfigError,
   buildGraph,
   createConsoleLogger,
+  FLOWS_FILES,
   getApiMeta,
   getCdktfMeta,
   getDeployApp,
@@ -82,7 +83,10 @@ function findApiHop(ix: GraphIndex, route: GraphNode, write: boolean): ApiHop | 
     const cur = queue.shift()!;
     for (const { edge, node: handler } of ix.out(cur.id, 'http')) {
       if (handler.kind !== 'handler') continue;
-      const method = getApiMeta(handler)?.method ?? (edge.label ?? '').split(' ')[0] ?? '';
+      // エッジのラベル（`POST /results` など、この呼び出しの route_key）を優先する。
+      // meta.api は handler の最初の route なので、複数メソッドを受ける handler では当てにならない
+      const fromLabel = (edge.label ?? '').split(' ')[0] ?? '';
+      const method = /^[A-Z]+$/.test(fromLabel) ? fromLabel : (getApiMeta(handler)?.method ?? '');
       const isGet = /^(GET|HEAD)$/i.test(method);
       if (write === isGet) continue;
       const hop: ApiHop = { client: cur, handler, label: edge.label };
@@ -320,8 +324,15 @@ export async function runInitFlows(opts: InitFlowsOptions): Promise<number> {
     return 2;
   }
   const out = resolve(opts.out ?? join(repo, 'flows.yaml'));
-  if (existsSync(out) && !opts.force) {
-    log.error(`${out} はすでにあります（上書きするなら --force）`);
+  // --out が無いときは、build が読む flows.yaml / flows.yml のどちらかがあれば止める
+  // （flows.yml があるのに flows.yaml を書くと、次の build から雛形のほうが読まれてしまう）
+  const existing = opts.out
+    ? existsSync(out)
+      ? out
+      : undefined
+    : FLOWS_FILES.map((f) => join(repo, f)).find((p) => existsSync(p));
+  if (existing && !opts.force) {
+    log.error(`${existing} はすでにあります（上書きするなら --force）`);
     return 1;
   }
   let graph: Graph;

@@ -5,6 +5,7 @@
 import { createServer, type Server } from 'node:http';
 import { existsSync, readFileSync, rmSync, statSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -14,9 +15,8 @@ import { extractor } from './index.js';
 const here = dirname(fileURLToPath(import.meta.url));
 const fixtureRoot = resolve(here, '../../../examples/fixture-repo');
 const siteDir = join(fixtureRoot, 'site');
-const outDir =
-  process.env.STACK_ATLAS_SHOTS_TEST_DIR ??
-  '/tmp/claude-0/-home-user-project-map/c522d34b-9117-5222-89b3-5da81cc4f6e1/scratchpad/shots-test';
+// 以前はクラウドのセッション固有の /tmp パスが直書きされていて、他の環境では書けなかった
+const outDir = process.env.STACK_ATLAS_SHOTS_TEST_DIR ?? join(tmpdir(), 'stack-atlas-shots-test');
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',

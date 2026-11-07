@@ -8,6 +8,7 @@ import {
   resolveRegionRef,
   routeToUrls,
   slugify,
+  uniqueSlug,
 } from './index.js';
 
 describe('routeToUrls', () => {
@@ -52,6 +53,21 @@ describe('slugify', () => {
     expect(slugify('/admin/entry')).toBe('admin-entry');
     expect(slugify('/docs/[...slug]')).toBe('docs-slug');
     expect(slugify('/docs/[[...slug]]')).toBe('docs-slug');
+  });
+});
+
+describe('uniqueSlug', () => {
+  it('同じ名前になるルートには 2 本目からハッシュを足す（以前はスクショが上書きされていた）', () => {
+    const used = new Map<string, string>();
+    expect(uniqueSlug('/races/[id]', used)).toBe('races-id');
+    // 同じパターンをもう一度聞いても同じ名前
+    expect(uniqueSlug('/races/[id]', used)).toBe('races-id');
+    const second = uniqueSlug('/races/id', used);
+    expect(second).toMatch(/^races-id-[0-9a-f]{6}$/);
+    expect(uniqueSlug('/a-b', used)).toBe('a-b');
+    expect(uniqueSlug('/a/b', used)).toMatch(/^a-b-[0-9a-f]{6}$/);
+    // 決定的
+    expect(uniqueSlug('/races/id', new Map([['races-id', '/races/[id]']]))).toBe(second);
   });
 });
 

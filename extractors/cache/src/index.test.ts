@@ -161,6 +161,27 @@ describe('cache 抽出器（フィクスチャ）', () => {
     });
     expect(src).toEqual(['web/src', 'web', '.']);
   });
+
+  it('hostId を渡すと、その Lambda に deploy された route の app/ だけを候補にする（Next アプリが複数のモノレポ）', () => {
+    const up: PartialGraph = {
+      nodes: [
+        { id: 'infra:web', meta: { deployApp: 'next' } },
+        { id: 'infra:admin', meta: { deployApp: 'next' } },
+        { id: 'route:/', file: 'apps/web/app/page.tsx' },
+        { id: 'route:/admin', file: 'apps/admin/app/page.tsx' },
+      ],
+      edges: [
+        { from: 'infra:web', to: 'route:/', kind: 'deploy' },
+        { from: 'infra:admin', to: 'route:/admin', kind: 'deploy' },
+      ],
+    };
+    // config.next.appDir（フィクスチャは apps/web/app）は Lambda に関係なく先頭に入るので、ここでは外す
+    const ctx = ctxAt(fixture, {});
+    expect(nextAppDirCandidates(ctx, up, 'infra:web')).toEqual(['apps/web', '.']);
+    expect(nextAppDirCandidates(ctx, up, 'infra:admin')).toEqual(['apps/admin', '.']);
+    // deploy エッジが無い Lambda は全部の route を見る（従来どおり）
+    expect(nextAppDirCandidates(ctx, up, 'infra:other')).toEqual(['apps/web', 'apps/admin', '.']);
+  });
 });
 
 describe('next.config', () => {

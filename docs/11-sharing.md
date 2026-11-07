@@ -98,11 +98,12 @@ index.html?graph=https://atlas.example.com/atlas/graph.json&prev=https://atlas.e
 **社内ホストで serve**
 
 ```bash
-stack-atlas serve out --host 0.0.0.0 --port 4173 --repo /srv/my-app
+stack-atlas serve out --host 0.0.0.0 --port 4173 --repo /srv/my-app --allowed-host atlas.internal
 ```
 
 - `/` は `index.html?graph=./graph.json` にリダイレクトされる。
 - `--repo` を付けると「サーバーに保存」が使える。誰でも書き込めるので、社内ネットワーク内か、前段に認証を置く。
+- ブラウザがアドレスバーに入れる名前（`atlas.internal` など）は `--allowed-host` で許可する。許可していない Host ヘッダは 403 になる（下記「セキュリティ」）。
 
 ## 詳細
 
@@ -147,3 +148,4 @@ stack-atlas serve out --host 0.0.0.0 --port 4173 --repo /srv/my-app
 - ソースコードは CI のランナー（またはローカル）の中だけで解析する。外部 SaaS に送らない。
 - 配信物は静的ファイル（HTML・JS・graph.json・memos.json・PNG）だけ。graph.json にはコード抜粋（`code`）とファイルパスが入るので、**社内限定の場所に置く**。
 - `serve --repo` の書き込みは `Content-Type: application/json` の POST だけを受け付ける（他サイトからの単純なフォーム送信で書き換えられないように）。認証は持たないので、公開ネットワークには出さない。
+- `serve` は Host ヘッダがループバック（`localhost` / `127.0.0.1` / `::1`）・`--host`・`--allowed-host` のどれでもなければ 403 を返す。DNS リバインディング（攻撃者のドメインを 127.0.0.1 に解決し直し、そのページから同一オリジンとして graph.json を読んだりメモを書き換えたりする手口。Vite の CVE-2025-24010 と同型）への対策。
