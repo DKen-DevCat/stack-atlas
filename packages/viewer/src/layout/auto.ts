@@ -7,7 +7,9 @@
  * - 上の層から順に、子を親群の x の重心に置き、層内は footprint が重ならないよう押し広げる
  * - 全ノードが板（plate）の中に収まる。板は minPlateWidth × minPlateDepth を下回らない
  *
- * ★ このファイルは現在スタブ（単純なグリッド配置）。別タスクで本実装に置き換える。
+ * 実装メモ:
+ * - 順序の揺らぎを避けるため、入力を id 昇順に正規化してから処理する（入力順・辺の順に依存しない）。
+ * - 画面ノードは footprint.w が SCREEN_MIN_W 以上のものとして判定する（kind を持たないため）。
  */
 
 export interface LayoutNodeInput {
@@ -40,36 +42,340 @@ export interface LayoutResult {
   plate: { width: number; depth: number };
 }
 
+const SCREEN_MIN_W = 6;
+const MAX_RELAX_ITERATIONS = 50;
+const EPS = 1e-9;
+
+interface Row {
+  /** ノードのインデックス（正規化後） */
+  members: number[];
+  /** members と同じ並びの x */
+  xs: number[];
+}
+
+function cmpStr(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * 1 次元の押し広げ。t でソート済みの列を、隣との最小距離を保ちつつ
+ * 元の位置からのずれの 2 乗和が最小になるように配置する（PAV 法）。
+ * 各塊は元の目標位置の平均まわりに中央寄せされる。
+ */
+function resolve1D(ws: readonly number[], ts: readonly number[], gap: number): number[] {
+  const n = ws.length;
+  const cum = new Array<number>(n);
+  for (let i = 0; i < n; i++) {
+    cum[i] = i === 0 ? 0 : cum[i - 1]! + (ws[i - 1]! + ws[i]!) / 2 + gap;
+  }
+  const stack: { a: number; b: number; sum: number; s: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    const v = ts[i]! - cum[i]!;
+    let cur = { a: i, b: i, sum: v, s: v };
+    while (stack.length > 0 && stack[stack.length - 1]!.s > cur.s + EPS) {
+      const prev = stack.pop()!;
+      const sum = prev.sum + cur.sum;
+      cur = { a: prev.a, b: cur.b, sum, s: sum / (cur.b - prev.a + 1) };
+    }
+    stack.push(cur);
+  }
+  const xs = new Array<number>(n);
+  for (const c of stack) for (let i = c.a; i <= c.b; i++) xs[i] = cum[i]! + c.s;
+  return xs;
+}
+
 export function autoLayout(
   nodes: readonly LayoutNodeInput[],
-  _edges: readonly LayoutEdgeInput[],
+  edges: readonly LayoutEdgeInput[],
   opts: LayoutOptions = {},
 ): LayoutResult {
   const minW = opts.minPlateWidth ?? 41;
   const minD = opts.minPlateDepth ?? 20;
   const gap = opts.gap ?? 1.2;
-  const positions = new Map<string, { x: number; z: number }>();
-  const byLayer = new Map<number, LayoutNodeInput[]>();
-  for (const n of nodes) {
-    if (n.fixed) positions.set(n.id, { ...n.fixed });
-    else (byLayer.get(n.layer) ?? byLayer.set(n.layer, []).get(n.layer)!).push(n);
+
+  // 正規化: id 昇順、重複 id は最初のものだけ残す
+  const seen = new Set<string>();
+  const ns: LayoutNodeInput[] = [];
+  for (const n of [...nodes].sort((a, b) => cmpStr(a.id, b.id))) {
+    if (seen.has(n.id)) continue;
+    seen.add(n.id);
+    ns.push(n);
   }
-  let maxW = minW;
-  for (const list of byLayer.values()) {
-    let x = -minW / 2 + gap;
-    let z = -minD / 2 + gap;
-    let rowD = 0;
-    for (const n of list) {
-      if (x + n.footprint.w > minW / 2 && x > -minW / 2 + gap) {
-        x = -minW / 2 + gap;
-        z += rowD + gap;
-        rowD = 0;
-      }
-      positions.set(n.id, { x: x + n.footprint.w / 2, z: z + n.footprint.d / 2 });
-      x += n.footprint.w + gap;
-      rowD = Math.max(rowD, n.footprint.d);
-      maxW = Math.max(maxW, x + minW / 2);
+  const N = ns.length;
+  const indexOf = new Map<string, number>();
+  ns.forEach((n, i) => indexOf.set(n.id, i));
+
+  const adjSets: Set<number>[] = ns.map(() => new Set<number>());
+  for (const e of edges) {
+    const a = indexOf.get(e.from);
+    const b = indexOf.get(e.to);
+    if (a === undefined || b === undefined || a === b) continue;
+    adjSets[a]!.add(b);
+    adjSets[b]!.add(a);
+  }
+  const adj = adjSets.map((s) => [...s].sort((a, b) => a - b));
+
+  const X = new Array<number>(N).fill(0);
+  const Z = new Array<number>(N).fill(0);
+  const placed = new Array<boolean>(N).fill(false);
+  const isFixed = ns.map((n) => n.fixed !== undefined);
+  ns.forEach((n, i) => {
+    if (n.fixed) {
+      X[i] = n.fixed.x;
+      Z[i] = n.fixed.z;
+      placed[i] = true;
     }
+  });
+
+  const W = (i: number) => ns[i]!.footprint.w;
+  const D = (i: number) => ns[i]!.footprint.d;
+  const isScreen = (i: number) => W(i) >= SCREEN_MIN_W;
+
+  const byLayer = new Map<number, number[]>();
+  for (let i = 0; i < N; i++) {
+    const l = ns[i]!.layer;
+    const list = byLayer.get(l);
+    if (list) list.push(i);
+    else byLayer.set(l, [i]);
   }
-  return { positions, plate: { width: maxW, depth: minD } };
+  const layerOrder = [...byLayer.keys()].sort((a, b) => a - b);
+
+  let maxItemW = 0;
+  for (let i = 0; i < N; i++) if (!isFixed[i]) maxItemW = Math.max(maxItemW, W(i));
+  /** 1 段に収めたい幅 */
+  const cap = Math.max(minW - 2 * gap, maxItemW);
+
+  /** 段（row）を z 方向に積み、z = 0 を中心にして Z に書き込む */
+  const assignRowZ = (rows: Row[]): void => {
+    const depths = rows.map((r) => Math.max(0, ...r.members.map(D)));
+    const total = depths.reduce((s, d) => s + d, 0) + gap * Math.max(0, rows.length - 1);
+    let z = -total / 2;
+    rows.forEach((r, k) => {
+      const zc = z + depths[k]! / 2;
+      r.members.forEach((m, j) => {
+        X[m] = r.xs[j]!;
+        Z[m] = zc;
+        placed[m] = true;
+      });
+      z += depths[k]! + gap;
+    });
+  };
+
+  // ---- 最上段 ----
+  const layoutTop = (free: number[]): Row[] => {
+    // 全体グラフでの連結成分
+    const parent = ns.map((_, i) => i);
+    const find = (a: number): number => {
+      while (parent[a] !== a) {
+        parent[a] = parent[parent[a]!]!;
+        a = parent[a]!;
+      }
+      return a;
+    };
+    for (let a = 0; a < N; a++) {
+      for (const b of adj[a]!) {
+        const ra = find(a);
+        const rb = find(b);
+        if (ra !== rb) parent[Math.max(ra, rb)] = Math.min(ra, rb);
+      }
+    }
+    const comps = new Map<number, number[]>();
+    for (const i of free) {
+      const r = find(i);
+      const c = comps.get(r);
+      if (c) c.push(i);
+      else comps.set(r, [i]);
+    }
+    const compList = [...comps.values()].sort((a, b) => b.length - a.length || a[0]! - b[0]!);
+    const inTop = new Set(free);
+
+    // 成分ごとの並び（BFS 順を、ハブが中央に来るよう左右交互に並べ替える）
+    const ordered: number[][] = compList.map((members) => {
+      const remaining = new Set(members);
+      const byDeg = [...members].sort((a, b) => adj[b]!.length - adj[a]!.length || a - b);
+      const bfs: number[] = [];
+      for (const start of byDeg) {
+        if (!remaining.has(start)) continue;
+        remaining.delete(start);
+        const queue = [start];
+        for (let h = 0; h < queue.length; h++) {
+          const u = queue[h]!;
+          bfs.push(u);
+          for (const v of adj[u]!) {
+            if (inTop.has(v) && remaining.has(v)) {
+              remaining.delete(v);
+              queue.push(v);
+            }
+          }
+        }
+      }
+      const left: number[] = [];
+      const right: number[] = [];
+      bfs.forEach((id, k) => {
+        if (k === 0) right.push(id);
+        else if (k % 2 === 1) right.push(id);
+        else left.push(id);
+      });
+      return [...left.reverse(), ...right];
+    });
+
+    // 板幅を超えたら次の段へ折り返す
+    const rowsOf: { id: number; sp: number }[][] = [[]];
+    let cur = 0;
+    ordered.forEach((comp, ci) => {
+      comp.forEach((id, k) => {
+        const sp = ci > 0 && k === 0 ? 2 * gap : k > 0 ? gap : 0;
+        const row = rowsOf[rowsOf.length - 1]!;
+        const add = row.length === 0 ? 0 : sp;
+        if (row.length > 0 && cur + add + W(id) > cap) {
+          rowsOf.push([{ id, sp: 0 }]);
+          cur = W(id);
+        } else {
+          row.push({ id, sp: add });
+          cur += add + W(id);
+        }
+      });
+    });
+    return rowsOf
+      .filter((r) => r.length > 0)
+      .map((r) => {
+        const total = r.reduce((s, it) => s + it.sp + W(it.id), 0);
+        let x = -total / 2;
+        const xs = r.map((it) => {
+          x += it.sp;
+          const c = x + W(it.id) / 2;
+          x += W(it.id);
+          return c;
+        });
+        return { members: r.map((it) => it.id), xs };
+      });
+  };
+
+  // ---- 下の層 ----
+  const layoutLower = (free: number[], layer: number): Row[] => {
+    const target = new Map<number, number>();
+    const orphan: number[] = [];
+    let maxT = -Infinity;
+    for (const i of free) {
+      let sum = 0;
+      let cnt = 0;
+      for (const p of adj[i]!) {
+        if (ns[p]!.layer < layer && placed[p]) {
+          sum += X[p]!;
+          cnt++;
+        }
+      }
+      if (cnt === 0) orphan.push(i);
+      else {
+        const half = cap / 2 - W(i) / 2;
+        const t = Math.max(-half, Math.min(half, sum / cnt));
+        target.set(i, t);
+        maxT = Math.max(maxT, t);
+      }
+    }
+    for (const i of orphan) target.set(i, maxT === -Infinity ? 0 : maxT);
+    const isOrphan = new Set(orphan);
+
+    const widthOf = (xs: number[]) => xs.reduce((s, i) => s + W(i), 0) + gap * Math.max(0, xs.length - 1);
+    const screens = free.filter(isScreen);
+    const others = free.filter((i) => !isScreen(i));
+    const needSplit = widthOf(free) > cap;
+    const groups = needSplit && screens.length > 0 && others.length > 0 ? [screens, others] : [free];
+
+    const rows: Row[] = [];
+    for (const g of groups) {
+      const sorted = [...g].sort(
+        (a, b) =>
+          target.get(a)! - target.get(b)! ||
+          Number(isOrphan.has(a)) - Number(isOrphan.has(b)) ||
+          a - b,
+      );
+      // 段数 k: 各段の幅の合計が cap に収まる最小値（i mod k の振り分けで x の分布を保つ）
+      let k = Math.max(1, Math.ceil(widthOf(sorted) / cap));
+      let buckets: number[][] = [];
+      for (; ; k++) {
+        buckets = Array.from({ length: k }, () => []);
+        sorted.forEach((id, i) => buckets[i % k]!.push(id));
+        if (k >= sorted.length || buckets.every((b) => widthOf(b) <= cap + EPS)) break;
+      }
+      for (const b of buckets) {
+        if (b.length === 0) continue;
+        const xs = resolve1D(b.map(W), b.map((i) => target.get(i)!), gap);
+        let lo = Infinity;
+        let hi = -Infinity;
+        b.forEach((id, j) => {
+          lo = Math.min(lo, xs[j]! - W(id) / 2);
+          hi = Math.max(hi, xs[j]! + W(id) / 2);
+        });
+        if (hi - lo <= cap + EPS) {
+          const shift = lo < -cap / 2 ? -cap / 2 - lo : hi > cap / 2 ? cap / 2 - hi : 0;
+          for (let j = 0; j < xs.length; j++) xs[j] = xs[j]! + shift;
+        }
+        rows.push({ members: b, xs });
+      }
+    }
+    return rows;
+  };
+
+  // ---- 固定ノードとの衝突解消 ----
+  const relax = (ids: number[]): void => {
+    const m = gap / 2;
+    for (let iter = 0; iter < MAX_RELAX_ITERATIONS; iter++) {
+      const order = [...ids].sort((a, b) => X[a]! - W(a) / 2 - (X[b]! - W(b) / 2) || a - b);
+      let moved = false;
+      for (let ai = 0; ai < order.length; ai++) {
+        const a = order[ai]!;
+        for (let bi = ai + 1; bi < order.length; bi++) {
+          const b = order[bi]!;
+          if (X[b]! - W(b) / 2 >= X[a]! + W(a) / 2 + m) break;
+          if (isFixed[a] && isFixed[b]) continue;
+          const dx = X[b]! - X[a]!;
+          const dz = Z[b]! - Z[a]!;
+          const px = (W(a) + W(b)) / 2 + m - Math.abs(dx);
+          const pz = (D(a) + D(b)) / 2 + m - Math.abs(dz);
+          if (px <= 0 || pz <= 0) continue;
+          moved = true;
+          const useX = px <= pz;
+          const amt = (useX ? px : pz) + 1e-6;
+          const sign = (useX ? dx : dz) >= 0 ? 1 : -1;
+          const fa = isFixed[a] ? 0 : isFixed[b] ? 1 : 0.5;
+          const fb = isFixed[b] ? 0 : isFixed[a] ? 1 : 0.5;
+          if (useX) {
+            X[a] = X[a]! - sign * amt * fa;
+            X[b] = X[b]! + sign * amt * fb;
+          } else {
+            Z[a] = Z[a]! - sign * amt * fa;
+            Z[b] = Z[b]! + sign * amt * fb;
+          }
+        }
+      }
+      if (!moved) break;
+    }
+  };
+
+  layerOrder.forEach((layer, li) => {
+    const all = byLayer.get(layer)!;
+    const free = all.filter((i) => !isFixed[i]);
+    if (free.length === 0) return;
+    const rows = li === 0 ? layoutTop(free) : layoutLower(free, layer);
+    assignRowZ(rows);
+    if (free.length < all.length) relax(all);
+  });
+
+  // ---- 板サイズ（原点中心・全層共通）----
+  let needX = 0;
+  let needZ = 0;
+  for (let i = 0; i < N; i++) {
+    needX = Math.max(needX, Math.abs(X[i]!) + W(i) / 2);
+    needZ = Math.max(needZ, Math.abs(Z[i]!) + D(i) / 2);
+  }
+  const positions = new Map<string, { x: number; z: number }>();
+  for (let i = 0; i < N; i++) positions.set(ns[i]!.id, { x: X[i]!, z: Z[i]! });
+  return {
+    positions,
+    plate: {
+      width: Math.max(minW, 2 * needX + 2 * gap),
+      depth: Math.max(minD, 2 * needZ + 2 * gap),
+    },
+  };
 }
