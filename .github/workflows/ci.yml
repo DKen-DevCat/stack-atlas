@@ -20,15 +20,18 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      # Chromium は viewer の e2e と screenshots 抽出器のテストで使う（両方 Playwright 1.63）
+      - name: Install Playwright Chromium
+        run: pnpm --filter @stack-atlas/viewer exec playwright install --with-deps chromium
+
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
       - run: pnpm validate examples/race-site.graph.json
 
-      # ビューアのスモークテスト（Playwright + Chromium、ヘッドレス。WebGL は SwiftShader）
-      - name: Install Playwright Chromium
-        run: pnpm --filter @stack-atlas/viewer exec playwright install --with-deps chromium
+      # ビューアのスモークテスト（ヘッドレス。WebGL は SwiftShader）
       - name: Viewer e2e
         run: pnpm --filter @stack-atlas/viewer e2e
       - name: Upload e2e screenshots
