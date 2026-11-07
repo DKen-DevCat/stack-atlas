@@ -48,9 +48,30 @@
     "flows": {
       "type": "array",
       "items": { "$ref": "#/$defs/flow" }
+    },
+    "kinds": {
+      "type": "object",
+      "description": "ノード kind の表示定義（任意）。ビューアの既定の kind 表に上書き・追加される",
+      "additionalProperties": { "$ref": "#/$defs/kindDefinition" }
     }
   },
   "$defs": {
+    "kindDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "description": "表示名（日本語）" },
+        "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "size": {
+          "type": "array",
+          "description": "ボックスの大きさ [x, y, z]",
+          "items": { "type": "number", "exclusiveMinimum": 0 },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "layer": { "type": "string", "description": "この kind の既定の層（layers[].id）。抽出時に使う" }
+      }
+    },
     "nodeId": {
       "type": "string",
       "pattern": "^[a-z]+:.+$",
@@ -67,7 +88,7 @@
           "type": "string",
           "description": "表示形状と色を決める。未知の kind はビューアが汎用ボックスで描く",
           "anyOf": [
-            { "enum": ["actor", "infra", "layout", "page", "component", "hook", "lib", "type", "schema", "handler"] },
+            { "enum": ["actor", "infra", "layout", "page", "component", "hook", "lib", "type", "schema", "handler", "endpoint", "queue", "db", "cron", "service"] },
             { "type": "string" }
           ]
         },

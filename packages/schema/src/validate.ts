@@ -84,7 +84,8 @@ function checkReferences(g: Graph): ValidationIssue[] {
   });
 
   const nodeIds = new Set<string>();
-  const knownNodeKinds = new Set<string>(KNOWN_NODE_KINDS);
+  // graph.kinds で表示定義を持つ kind は既知として扱う
+  const knownNodeKinds = new Set<string>([...KNOWN_NODE_KINDS, ...Object.keys(g.kinds ?? {})]);
   g.nodes.forEach((n, i) => {
     if (nodeIds.has(n.id)) error(`/nodes/${i}/id`, `ノード ID "${n.id}" が重複しています`);
     nodeIds.add(n.id);

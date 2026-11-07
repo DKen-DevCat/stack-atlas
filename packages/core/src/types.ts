@@ -20,6 +20,8 @@ export interface PartialGraph {
   nodes: PartialNode[];
   edges: Edge[];
   flows?: Flow[];
+  /** 追加 kind の表示定義（graph.json の kinds に出る。config.kinds が優先） */
+  kinds?: Record<string, KindDefinition>;
 }
 
 export interface Logger {
@@ -34,7 +36,7 @@ export interface StackAtlasConfig {
   project?: { name?: string; description?: string; repo?: string };
   /** 省略時は既定の 4 層（infra / routes / components / types） */
   layers?: Layer[];
-  /** kind → layer.id の割り当て。既定: infra,actor→infra / page,layout→routes / component,hook,lib→components / type,handler,schema,endpoint→types */
+  /** kind → layer.id の割り当て。既定: infra,actor,queue,db,cron,service→infra / page,layout→routes / component,hook,lib→components / type,handler,schema,endpoint→types */
   layerOf?: Record<string, string>;
   /**
    * 複数リポジトリ（docs/12 §3.2）。名前 → config のディレクトリからの相対パス。
@@ -198,6 +200,10 @@ export const DEFAULT_LAYER_OF: Record<string, string> = {
   handler: 'types',
   schema: 'types',
   endpoint: 'types',
+  queue: 'infra',
+  db: 'infra',
+  cron: 'infra',
+  service: 'infra',
 };
 
 /**

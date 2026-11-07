@@ -6,11 +6,20 @@
  * |---|---|---|
  * | `meta.extractors` | すべて | `string[]`（そのノードを出した抽出器名。マージで和集合、出現順） |
  * | `meta.cdktf` | infra | `{ type, logicalId, path, stack }`（例 `{ type: 'aws_lambda_function', logicalId: 'next', path: 'web/next', stack: 'web' }`） |
- * | `meta.deployApp` | Next を載せている Lambda の infra ノード | `'next'` |
+ * | `meta.deployApp` | Next を載せている infra ノード（Lambda でも S3 でも。config.deploy の `app: next` で core が付ける） | `'next'` |
+ * | `meta.go` | Go のパッケージノード | `{ pkg }`（module 相対パス。例 `{ pkg: 'cmd/api' }`。config.deploy の `go` の照合に使う） |
  * | `meta.next` | route / layout | `{ revalidate?: number \| false; dynamic?: string; segment: string }` |
  * | `meta.ts` | コード由来のノード（comp / hook / lib / type / handler / schema） | `{ exportName, symbolKind }` |
  * | `meta.api` | handler | `{ method, path }`（例 `{ method: 'GET', path: '/races/{id}' }`） |
  * | `meta.apiCalls` | api client の lib ノード | `Array<{ method, path }>` |
+ *
+ * 複数 repo（docs/12 §3.2）: `file` は `<repo>/<path>`。抽出器は repo 相対パスを返せばパイプラインが修飾する。
+ * upstream の `file` を自分の repo のパスと比べるときは `fileInRepo(ctx, node.file)`（repo.ts）を使う。
+ *
+ * 分類（config.classify, classify.ts）:
+ * - 抽出器はノードを作るときに `classifyKind(ctx, repoRelativeFile, defaultKind)` で kind を決める（ID の接頭辞も合わせる）
+ * - パイプラインはマージ後に `applyClassify()` で kind / layer を上書きする（ID は変えない）
+ * - glob の照合は `matchGlob(path, glob)`（repo 相対パス。`**` `*` `?` `{a,b}`）
  *
  * 読み取りは下の `get*Meta()` を使う（形が違えば undefined を返すので、抽出器の出力が多少ずれても落ちない）。
  */

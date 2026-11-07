@@ -15,6 +15,11 @@ export const KIND_OF_PREFIX: Record<string, string> = {
   type: 'type',
   handler: 'handler',
   schema: 'schema',
+  endpoint: 'endpoint',
+  queue: 'queue',
+  db: 'db',
+  cron: 'cron',
+  service: 'service',
 };
 
 /** `comp:Header` → `Header`。接頭辞が無ければ ID そのまま */

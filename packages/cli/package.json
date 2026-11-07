@@ -30,8 +30,14 @@
     "@stack-atlas/extractor-api-link": "workspace:*",
     "@stack-atlas/extractor-cache": "workspace:*",
     "@stack-atlas/extractor-cdktf": "workspace:*",
+    "@stack-atlas/extractor-cloudformation": "workspace:*",
+    "@stack-atlas/extractor-files": "workspace:*",
+    "@stack-atlas/extractor-go": "workspace:*",
     "@stack-atlas/extractor-nextjs-app": "workspace:*",
+    "@stack-atlas/extractor-openapi": "workspace:*",
     "@stack-atlas/extractor-screenshots": "workspace:*",
+    "@stack-atlas/extractor-sql": "workspace:*",
+    "@stack-atlas/extractor-terraform": "workspace:*",
     "@stack-atlas/extractor-ts-imports": "workspace:*",
     "@stack-atlas/schema": "workspace:*"
   }

@@ -5,9 +5,10 @@
  * - エッジ: (from, to, kind) で重複排除。label は最初に label を持っていたものを使う
  * - 層: 同じ id は最初の定義を使う。順番は出現順
  * - フロー: 同じ id は最初の定義を使う
+ * - kinds: kind ごとにフィールド単位でマージ（先に出た値を残す）
  */
 import type { Edge, Flow, Layer } from '@stack-atlas/schema';
-import type { PartialGraph, PartialNode } from './types.js';
+import type { KindDefinition, PartialGraph, PartialNode } from './types.js';
 import { clone, deepMerge } from './util.js';
 
 export const edgeKey = (e: Pick<Edge, 'from' | 'to' | 'kind'>) =>
@@ -24,6 +25,7 @@ export function mergePartialGraphs(parts: PartialGraph[]): PartialGraph {
   const flows = new Map<string, Flow>();
   let hasLayers = false;
   let hasFlows = false;
+  let kinds: Record<string, KindDefinition> | undefined;
 
   for (const part of parts) {
     if (part.layers) hasLayers = true;
@@ -43,10 +45,16 @@ export function mergePartialGraphs(parts: PartialGraph[]): PartialGraph {
 
     if (part.flows) hasFlows = true;
     for (const f of part.flows ?? []) if (!flows.has(f.id)) flows.set(f.id, clone(f));
+
+    for (const [k, def] of Object.entries(part.kinds ?? {})) {
+      kinds ??= {};
+      kinds[k] = { ...clone(def), ...(kinds[k] ?? {}) };
+    }
   }
 
   const out: PartialGraph = { nodes: [...nodes.values()], edges: [...edges.values()] };
   if (hasLayers) out.layers = [...layers.values()];
   if (hasFlows) out.flows = [...flows.values()];
+  if (kinds) out.kinds = kinds;
   return out;
 }

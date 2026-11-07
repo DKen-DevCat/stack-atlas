@@ -1,7 +1,7 @@
 /**
  * 層の割り当て（docs/09 §3.2）。
  * - 層の一覧 = `config.layers ?? DEFAULT_LAYERS`。抽出器が出した層のうち、そこに無い id は末尾に足す
- * - layer が無いノードは `layerOf[kind]`（`{...DEFAULT_LAYER_OF, ...config.layerOf}`）
+ * - layer が無いノードは `layerOf[kind]`（`{...DEFAULT_LAYER_OF, ...kinds[k].layer, ...config.layerOf}`）
  * - kind が layerOf に無ければ警告を出して最後の層に置く
  * - layers に無い層 id を指しているノードはエラー
  */
@@ -31,10 +31,19 @@ export function resolveLayers(graph: PartialGraph, config: StackAtlasConfig): La
   return base;
 }
 
+/** kind → layer.id（既定 → config.kinds[k].layer → config.layerOf の順に上書き） */
+export function resolveLayerOf(config: StackAtlasConfig): Record<string, string> {
+  const fromKinds: Record<string, string> = {};
+  for (const [k, def] of Object.entries(config.kinds ?? {})) {
+    if (def && typeof def.layer === 'string') fromKinds[k] = def.layer;
+  }
+  return { ...DEFAULT_LAYER_OF, ...fromKinds, ...(config.layerOf ?? {}) };
+}
+
 export function assignLayers(graph: PartialGraph, config: StackAtlasConfig): AssignLayersResult {
   const layers = resolveLayers(graph, config);
   const layerIds = new Set(layers.map((l) => l.id));
-  const layerOf: Record<string, string> = { ...DEFAULT_LAYER_OF, ...(config.layerOf ?? {}) };
+  const layerOf = resolveLayerOf(config);
   const last = layers[layers.length - 1]!;
   const issues: ValidationIssue[] = [];
 

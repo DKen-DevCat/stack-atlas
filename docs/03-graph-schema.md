@@ -2,7 +2,7 @@
 
 ## 結論
 
-抽出器とビューアの間の唯一の契約。**layers・nodes・edges・flows** の 4 つで構成する。
+抽出器とビューアの間の唯一の契約。**layers・nodes・edges・flows** の 4 つで構成する（任意で kind の表示定義 **kinds**）。
 正式な定義は `packages/schema/graph.schema.json`（JSON Schema draft 2020-12）。TypeScript の型は `packages/schema/src/types.ts`（手書き。スキーマとのずれはテストで検出）。検証は `pnpm validate <graph.json>`。サンプルは `examples/race-site.graph.json`。
 
 ## 全体の形
@@ -14,7 +14,8 @@
   "layers": [ { "id": "infra", "name": "インフラ", "source": "infra/ · CDKtf", "color": "#ff9f43" }, ... ],
   "nodes":  [ { "id": "infra:lambdaNext", "layer": "infra", "kind": "infra", "name": "Lambda: Next.js", ... } ],
   "edges":  [ { "from": "infra:lambdaNext", "to": "route:/races/[id]", "kind": "deploy" } ],
-  "flows":  [ { "id": "miss", "name": "閲覧 MISS", "steps": [ { "node": "actor:user", "text": "..." } ] } ]
+  "flows":  [ { "id": "miss", "name": "閲覧 MISS", "steps": [ { "node": "actor:user", "text": "..." } ] } ],
+  "kinds":  { "endpoint": { "name": "API エンドポイント", "color": "#38bdf8", "layer": "types" } }   // 任意
 }
 ```
 
@@ -29,9 +30,9 @@
 |---|---|---|
 | `id` | ✓ | `<kind接頭辞>:<識別子>`。抽出器どうしの合流点なので、決まった規約で作る |
 | `layer` | ✓ | `layers[].id` |
-| `kind` | ✓ | 形と色を決める。既知: `actor` `infra` `layout` `page` `component` `hook` `lib` `type` `schema` `handler`。未知の kind は汎用ボックス |
+| `kind` | ✓ | 形と色を決める。既知: `actor` `infra` `layout` `page` `component` `hook` `lib` `type` `schema` `handler` `endpoint` `queue` `db` `cron` `service`。`kinds` で定義した kind も既知扱い。それ以外は汎用ボックス（検証は警告） |
 | `name` | ✓ | 表示名 |
-| `file`, `line` | | リポジトリルートからの相対パスと行番号。将来「エディタで開く」に使う |
+| `file`, `line` | | リポジトリルートからの相対パスと行番号。複数リポジトリ（config の `repos`）では `<repo名>/<repo 相対パス>`（`project.sources` に repo 名が並ぶ）。将来「エディタで開く」に使う |
 | `code` | | パネルに出すコード抜粋 |
 | `position` | | `{x, z}`。層の平面上の手動配置。省略時は自動レイアウト |
 | `cache` | | キャッシュ情報（下記） |
@@ -52,6 +53,10 @@
 | `type:` | 型・スキーマ定義 | `type:RaceResult` |
 | `handler:` | API ハンドラ | `handler:getRaces` |
 | `schema:` | DB スキーマ | `schema:RaceItem` |
+| `endpoint:` | API の操作（OpenAPI など） | `endpoint:GET /today` |
+
+Go のパッケージは `<kind>:<module 相対パス>`（例 `handler:cmd/api`、`lib:internal/store`）、`files` で作るノードは `<kind>:<repo 相対パス>`。
+ID は repo をまたいで共有する（複数 repo でも `file` と違って repo 名は付けない。衝突するときだけ `lib:<repo>/<path>`）。
 
 名前が衝突する場合（同名コンポーネントが別ディレクトリにある等）は、識別子にファイルパスを使う: `comp:apps/web/components/Table.tsx#Table`。
 
@@ -99,6 +104,27 @@
 - `steps` の順に粒子が流れる。同じノードを複数回通ってよい（往復の表現）
 - 最初と最後が同じノードの場合、戻りの線は少しずらして描く
 - `tone: "cache-hit"` は黄色で描く
+
+## kinds（任意）
+
+kind → 表示定義。ビューアは既定の kind 表（`packages/viewer/src/graph/kinds.ts`）にマージする（同じ kind は上書き、無ければ追加）。
+抽出器と設定（`stack-atlas.config.yaml` の `kinds`）が出し、設定が優先する。v1 に追加した任意フィールド（version は 1 のまま）。
+
+```json
+"kinds": {
+  "endpoint": { "name": "API エンドポイント", "color": "#38bdf8", "size": [2.2, 0.3, 1.4], "layer": "types" },
+  "job":      { "name": "ジョブ", "color": "#fb7185" }
+}
+```
+
+| フィールド | 説明 |
+|---|---|
+| `name` | パネルに出す表示名（日本語） |
+| `color` | `#rrggbb` |
+| `size` | ボックスの大きさ `[x, y, z]`（正の数 3 つ） |
+| `layer` | この kind の既定の層（`layers[].id`）。抽出時に `layer` の無いノードの割り当てに使う（`config.layerOf` が優先）。ビューアは使わない |
+
+- `kinds` に定義した kind のノードは、検証で「未知の kind」の警告を出さない
 
 ## メモ（graph.json の外）
 

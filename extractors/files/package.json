@@ -1,0 +1,30 @@
+{
+  "name": "@stack-atlas/extractor-files",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Stack Atlas の files 抽出器（config.files の glob に合うファイルをそのままノードにする。パーサの無い言語・独自構成用）",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "@stack-atlas/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@stack-atlas/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@stack-atlas/schema": "workspace:*"
+  }
+}

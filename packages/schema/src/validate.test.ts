@@ -121,4 +121,30 @@ describe('validateGraph', () => {
     expect(warnings).toHaveLength(3);
     expect(warnings.map((w) => w.path)).toContain('/nodes/1/kind');
   });
+
+  it('kinds（表示定義）を受け付け、そこで宣言した kind は未知の警告を出さない', () => {
+    const r = validateGraph(
+      broken((g) => {
+        g.nodes[1]!.kind = 'widget';
+        g.nodes[2]!.kind = 'endpoint';
+        g.kinds = {
+          widget: { name: 'ウィジェット', color: '#123abc', size: [1, 0.5, 1], layer: 'types' },
+        };
+      }),
+    );
+    expect(r.errors).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('kinds の色・大きさ・未定義フィールドはスキーマで検査する', () => {
+    const bad = (k: unknown) =>
+      broken((g) => {
+        (g as { kinds: unknown }).kinds = { widget: k };
+      });
+    expect(validateGraph(bad({ color: 'red' })).ok).toBe(false);
+    expect(validateGraph(bad({ size: [1, 2] })).ok).toBe(false);
+    expect(validateGraph(bad({ size: [1, 0, 1] })).ok).toBe(false);
+    expect(validateGraph(bad({ shape: 'box' })).ok).toBe(false);
+    expect(validateGraph(bad({})).ok).toBe(true);
+  });
 });

@@ -6,7 +6,7 @@
  * 壊れないよう、たどれないものは取り除いてから組み立てる（docs/08 D7）。
  */
 import type { Edge, Flow, Graph, GraphNode, Layer, Region, Screen } from '@stack-atlas/schema';
-import { kindMeta, SCREEN_KINDS, type KindMeta } from './kinds';
+import { createKindRegistry, SCREEN_KINDS, type KindMeta } from './kinds';
 
 /** 画面テクスチャの基準サイズ（プレースホルダ用の screen もこの大きさ） */
 export const SCREEN_BASE_WIDTH = 768;
@@ -51,6 +51,8 @@ export function buildModel(graph: Graph): GraphModel {
     if (!layerIndex.has(l.id)) layerIndex.set(l.id, i);
   });
 
+  // graph.kinds（任意）で既定の kind 表を上書き・追加する
+  const kindOf = createKindRegistry(graph.kinds);
   const byId = new Map<string, ModelNode>();
   const nodes: ModelNode[] = [];
   for (const n of graph.nodes) {
@@ -61,7 +63,7 @@ export function buildModel(graph: Graph): GraphModel {
       id: n.id,
       node: n,
       layerIndex: li,
-      kind: kindMeta(n.kind),
+      kind: kindOf(n.kind),
       isScreen,
       regions: [],
       out: [],

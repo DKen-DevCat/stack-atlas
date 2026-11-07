@@ -1,6 +1,9 @@
 /**
  * `stack-atlas build <repo> [-o <outDir>] [--with-viewer] [--no-screenshots]`
  *
+ * <repo> は stack-atlas.config.yaml のあるディレクトリ。config に `repos` があれば、そこに並べた repo をまとめて解析する
+ * （docs/12 §3.2）。overrides / flows / memos は <repo> から読む。
+ *
  * out/ に graph.json・issues.json・memos.json（.stack-atlas/memos.json があれば）を書く。
  * --with-viewer ならビューアの dist/ も同梱し、out/ をそのまま静的ホスティングできる形にする。
  */
@@ -49,7 +52,22 @@ export function formatBuildSummary(
   const lines = ['', '── Stack Atlas build ──'];
   lines.push('抽出器:');
   if (!reports.length) lines.push('  （なし）');
+  const multi = Object.keys(res.repos ?? {}).length > 1;
   for (const r of reports) {
+    const perRepo = Object.entries(r.repos ?? {}).filter(
+      ([, rr]) => rr.status === 'ok' || rr.status === 'failed',
+    );
+    if (multi && perRepo.length) {
+      // 複数 repo: 動いた（か失敗した）repo ごとに 1 行
+      for (const [repo, rr] of perRepo) {
+        lines.push(
+          rr.status === 'ok'
+            ? `  ${r.name} (${repo}): ノード ${rr.nodes}、エッジ ${rr.edges}${rr.flows ? `、フロー ${rr.flows}` : ''}`
+            : `  ${r.name} (${repo}): ${STATUS_LABEL.failed}${rr.error ? `（${rr.error}）` : ''}`,
+        );
+      }
+      continue;
+    }
     lines.push(
       r.status === 'ok'
         ? `  ${r.name}: ノード ${r.nodes}、エッジ ${r.edges}、フロー ${r.flows}`
@@ -96,6 +114,11 @@ export async function runBuild(opts: BuildOptions): Promise<number> {
       outDir: config.screenshots?.outDir ?? outDir,
     };
     log.info(`解析中: ${repo}`);
+    const repoEntries = Object.entries(config.repos ?? {});
+    if (repoEntries.length) {
+      log.info(`repo（${repoEntries.length}）:`);
+      for (const [name, p] of repoEntries) log.info(`  - ${name}: ${resolve(repo, p)}`);
+    }
     const extractors =
       opts.extractors ??
       (await loadExtractors(log, { skip: opts.screenshots === false ? ['screenshots'] : [] }));

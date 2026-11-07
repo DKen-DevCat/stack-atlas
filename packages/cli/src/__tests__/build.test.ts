@@ -122,6 +122,46 @@ describe('runBuild', () => {
   });
 });
 
+describe('runBuild（複数 repo）', () => {
+  it('repo を表示し、要約は抽出器 (repo) ごとに出す', async () => {
+    const ws = mkdtempSync(join(tmpdir(), 'stack-atlas-poly-'));
+    for (const d of ['atlas', 'web', 'platform']) mkdirSync(join(ws, d));
+    writeFileSync(
+      join(ws, 'atlas', 'stack-atlas.config.yaml'),
+      'repos: { web: ../web, platform: ../platform }\n',
+    );
+    const ex: Extractor = {
+      name: 'cdktf',
+      detect: async (ctx) => ctx.repoName === 'platform',
+      extract: async () => ({
+        nodes: [{ id: 'infra:a', file: 'infra/a.tf' }, { id: 'infra:b' }],
+        edges: [{ from: 'infra:a', to: 'infra:b', kind: 'flow' }],
+      }),
+    };
+    const mlog = createMemoryLogger();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const out = join(ws, 'out');
+    const code = await runBuild({
+      repo: join(ws, 'atlas'),
+      outDir: out,
+      extractors: [ex, stub],
+      log: mlog,
+    });
+    const summary = log.mock.calls.map((c) => String(c[0])).join('\n');
+    log.mockRestore();
+    expect(code).toBe(0);
+    expect(mlog.of('info')).toContain(`  - platform: ${join(ws, 'platform')}`);
+    expect(summary).toContain('  cdktf (platform): ノード 2、エッジ 1\n');
+    expect(summary).toContain('  stub (web): ノード 1、エッジ 0');
+    expect(summary).toContain('  stub (platform): ノード 1、エッジ 0');
+    const graph = JSON.parse(readFileSync(join(out, 'graph.json'), 'utf8'));
+    expect(graph.project.sources).toEqual(['web', 'platform']);
+    expect(graph.nodes.find((n: { id: string }) => n.id === 'infra:a').file).toBe(
+      'platform/infra/a.tf',
+    );
+  });
+});
+
 describe('loadExtractors', () => {
   it('見つからないパッケージはスキップし、named / default export を受け付ける', async () => {
     const log = createMemoryLogger();
@@ -145,6 +185,7 @@ describe('loadExtractors', () => {
       ]),
     );
     expect(log.of('warn')).toHaveLength(1);
-    expect(EXTRACTOR_PACKAGES).toHaveLength(6);
+    expect(EXTRACTOR_PACKAGES).toHaveLength(12);
+    expect(EXTRACTOR_PACKAGES[0]).toBe('@stack-atlas/extractor-files');
   });
 });

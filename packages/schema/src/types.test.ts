@@ -43,9 +43,15 @@ describe('types.ts と graph.schema.json の一致', () => {
 
   it('トップレベルのフィールドが想定どおり', () => {
     expect(Object.keys(schema.properties).sort()).toEqual(
-      ['$schema', 'version', 'project', 'layers', 'nodes', 'edges', 'flows'].sort(),
+      ['$schema', 'version', 'project', 'layers', 'nodes', 'edges', 'flows', 'kinds'].sort(),
     );
     expect(schema.required.sort()).toEqual(['edges', 'layers', 'nodes', 'version']);
+  });
+
+  it('kinds の定義のフィールドが想定どおり', () => {
+    expect(Object.keys(schema.$defs.kindDefinition!.properties).sort()).toEqual(
+      ['name', 'color', 'size', 'layer'].sort(),
+    );
   });
 
   it('ノード・エッジのフィールドが想定どおり', () => {

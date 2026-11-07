@@ -76,6 +76,23 @@ export function loadConfig(repoRoot: string, log: Logger = silentLogger): StackA
   return checkConfig(raw, log, file);
 }
 
+/** loadConfigFile の結果 */
+export interface LoadedConfig {
+  config: StackAtlasConfig;
+  /** config のあるディレクトリ（絶対パス）。repos の相対パスや overrides / flows / memos の基準 */
+  configDir: string;
+  /** 読んだ設定ファイル（無ければ undefined） */
+  file?: string;
+}
+
+/** loadConfig と同じだが、configDir（と読んだファイル）も返す */
+export function loadConfigFile(dir: string, log: Logger = silentLogger): LoadedConfig {
+  const configDir = resolve(dir);
+  const file = findConfigFile(configDir);
+  const config = loadConfig(configDir, log);
+  return file ? { config, configDir, file } : { config, configDir };
+}
+
 /** 生の設定オブジェクトをゆるく検証する。おかしなキーは警告して取り除く */
 export function checkConfig(
   raw: Record<string, unknown>,
@@ -106,6 +123,55 @@ export function checkConfig(
       if (!ok) log.warn(`${file}: layers[${i}] には id と name（文字列）が必要です（無視します）`);
       return ok;
     });
+  }
+  if (cfg.repos) {
+    for (const [k, v] of Object.entries(cfg.repos)) {
+      if (typeof v !== 'string' || !v) {
+        log.warn(`${file}: repos.${k} はパス（文字列）で書いてください（無視します）`);
+        delete cfg.repos[k];
+      }
+    }
+  }
+  for (const key of ['classify', 'files'] as const) {
+    const list = cfg[key] as unknown[] | undefined;
+    if (!list) continue;
+    const kept = list.filter((r, i) => {
+      const ok =
+        isPlainObject(r) &&
+        typeof r.glob === 'string' &&
+        (key === 'classify' || typeof r.kind === 'string');
+      if (!ok)
+        log.warn(
+          `${file}: ${key}[${i}] には glob${key === 'files' ? ' と kind' : ''}（文字列）が必要です（無視します）`,
+        );
+      return ok;
+    });
+    (cfg as Record<string, unknown>)[key] = kept;
+  }
+  if (cfg.kinds) {
+    for (const [k, def] of Object.entries(cfg.kinds)) {
+      if (!isPlainObject(def)) {
+        log.warn(`${file}: kinds.${k} はオブジェクトで書いてください（無視します）`);
+        delete cfg.kinds[k];
+        continue;
+      }
+      if (def.color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(String(def.color))) {
+        log.warn(`${file}: kinds.${k}.color は #rrggbb で書いてください（無視します）`);
+        delete def.color;
+      }
+      const size = def.size as unknown;
+      if (
+        size !== undefined &&
+        !(
+          Array.isArray(size) &&
+          size.length === 3 &&
+          size.every((x) => typeof x === 'number' && x > 0)
+        )
+      ) {
+        log.warn(`${file}: kinds.${k}.size は正の数 3 つの配列で書いてください（無視します）`);
+        delete def.size;
+      }
+    }
   }
   if (cfg.extractors) {
     for (const [k, v] of Object.entries(cfg.extractors)) {

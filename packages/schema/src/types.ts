@@ -15,6 +15,11 @@ export const KNOWN_NODE_KINDS = [
   'type',
   'schema',
   'handler',
+  'endpoint',
+  'queue',
+  'db',
+  'cron',
+  'service',
 ] as const;
 
 /** 既知のエッジ kind。schema の edge.kind の enum と一致させる */
@@ -129,6 +134,18 @@ export interface Flow {
   steps: FlowStep[];
 }
 
+/** graph.kinds の 1 要素（kind の表示定義） */
+export interface KindDefinition {
+  /** 表示名（日本語） */
+  name?: string;
+  /** `#rrggbb` */
+  color?: string;
+  /** ボックスの大きさ [x, y, z] */
+  size?: [number, number, number];
+  /** この kind の既定の層（layers[].id） */
+  layer?: string;
+}
+
 export interface Graph {
   $schema?: string;
   version: 1;
@@ -137,4 +154,6 @@ export interface Graph {
   nodes: GraphNode[];
   edges: Edge[];
   flows?: Flow[];
+  /** kind → 表示定義（任意。ビューアの既定に上書き・追加） */
+  kinds?: Record<string, KindDefinition>;
 }
