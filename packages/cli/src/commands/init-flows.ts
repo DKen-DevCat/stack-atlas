@@ -119,8 +119,7 @@ function findApiHop(
       const isGet = /^(GET|HEAD)$/i.test(method);
       if (write === isGet) continue;
       const hop: ApiHop = { client: cur, handler, endpoint, label: edge.label };
-      const hostOf = (id: string) =>
-        ix.in(id, 'deploy').find((x) => x.node.kind === 'infra')?.node;
+      const hostOf = (id: string) => ix.in(id, 'deploy').find((x) => x.node.kind === 'infra')?.node;
       hop.host = (endpoint && hostOf(endpoint.id)) ?? hostOf(handler.id);
       if (hop.host) {
         hop.gateway = ix
@@ -139,7 +138,8 @@ function findApiHop(
           seen2.add(node.id);
           if (node.id.startsWith('schema:') && ix.in(node.id, 'schema').length) {
             hop.table = node;
-            hop.store = ix.in(node.id, 'schema').find((x) => x.node.kind === 'infra')?.node ?? hop.store;
+            hop.store =
+              ix.in(node.id, 'schema').find((x) => x.node.kind === 'infra')?.node ?? hop.store;
             break;
           }
           if (d < 3) q.push([node, d + 1]);
@@ -254,7 +254,10 @@ export function generateFlows(graph: Graph, config: StackAtlasConfig = {}): Gene
           ...start(`${missPath} をリクエスト`),
           [cdn.id, 'MISS → オリジン（Lambda）へ'],
           [lambda.id, 'Next.js を起動（コールドスタートの可能性）'],
-          [missRoute.id, revalidate ? 'ISR キャッシュなし → ページを再生成' : 'ページを生成（SSR）'],
+          [
+            missRoute.id,
+            revalidate ? 'ISR キャッシュなし → ページを再生成' : 'ページを生成（SSR）',
+          ],
           ...(readHop ? apiSteps(readHop, false, routePath(missRoute)) : []),
           [
             missRoute.id,
@@ -266,7 +269,9 @@ export function generateFlows(graph: Graph, config: StackAtlasConfig = {}): Gene
     const hit: Step[] = [
       ...(actor ? start(`${missPath} をリクエスト`) : [[cdn.id, `${missPath} を受信`] as Step]),
       [cdn.id, 'HIT → エッジで即返却'],
-      ...end(isStatic ? '表示（オリジンへのアクセスゼロ）' : '表示（Lambda 起動ゼロ・DB アクセスゼロ）'),
+      ...end(
+        isStatic ? '表示（オリジンへのアクセスゼロ）' : '表示（Lambda 起動ゼロ・DB アクセスゼロ）',
+      ),
     ];
 
     // 無効化の起点: 書き込み API に届く route（force-dynamic / admin を優先）
