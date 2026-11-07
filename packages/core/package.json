@@ -1,0 +1,26 @@
+{
+  "name": "@stack-atlas/core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Stack Atlas の抽出器インターフェース、マージ、補正、フロー、ルールエンジン、ビルドパイプライン",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "@stack-atlas/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@stack-atlas/schema": "workspace:*",
+    "yaml": "^2.8.0"
+  }
+}
