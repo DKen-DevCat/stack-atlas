@@ -5,7 +5,13 @@ import globals from 'globals';
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**', 'prototype/**'],
+    ignores: [
+      '**/dist/**',
+      '**/coverage/**',
+      '**/node_modules/**',
+      'prototype/**',
+      'examples/fixture-repo/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

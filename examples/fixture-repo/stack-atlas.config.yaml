@@ -1,0 +1,28 @@
+# Stack Atlas 設定（docs/09 §3.3）。パスはこのファイルのあるディレクトリが基準。
+project: { name: race-results }
+
+layers: # 省略可。ここでは race-site サンプルと同じ 4 層を明示
+  - { id: infra, name: インフラ, source: "infra/ · CDKtf", color: "#ff9f43" }
+  - { id: routes, name: 画面・ルート, source: "apps/web/app · Next.js", color: "#4f8cff" }
+  - { id: components, name: コンポーネント・hooks, source: "apps/web/components", color: "#a78bfa" }
+  - { id: types, name: 型・APIハンドラ, source: "packages/types · apps/api", color: "#4ade80" }
+
+cdktf: { out: infra/cdktf.out, sourceDir: infra }
+next: { appDir: apps/web/app, tsconfig: apps/web/tsconfig.json }
+ts:
+  tsconfig:
+    - apps/web/tsconfig.json
+    - apps/api/tsconfig.json
+    - packages/types/tsconfig.json
+
+deploy: # Lambda とアプリの対応（規約で推定できないときの明示）
+  infra:next: { app: next } # この Lambda に Next の全ルート・レイアウトが載る
+  infra:api: { handlers: "apps/api/src/handlers/**/*.ts" }
+
+api: { client: apps/web/lib/apiClient.ts }
+
+screenshots:
+  baseUrl: http://localhost:4173 # site/ を静的サーバで配信する（例: npx serve site -l 4173）
+  viewport: { width: 1280, height: 800 }
+  routes: { "/races/[id]": ["42"] }
+  storageState: .stack-atlas/auth.json # 認証が必要なルート用（フィクスチャでは使わない）

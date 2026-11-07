@@ -1,0 +1,14 @@
+{
+  "version": "0.20.9",
+  "stacks": {
+    "web": {
+      "name": "web",
+      "constructPath": "web",
+      "workingDirectory": "stacks/web",
+      "synthesizedStackPath": "stacks/web/cdk.tf.json",
+      "annotations": [],
+      "dependencies": []
+    }
+  },
+  "//": "手書き（cdktf synth の出力を模したもの）"
+}

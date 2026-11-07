@@ -1,0 +1,10 @@
+{
+  "language": "typescript",
+  "app": "npx tsx main.ts",
+  "projectId": "00000000-0000-4000-8000-race-results",
+  "sendCrashReports": "false",
+  "terraformProviders": [],
+  "terraformModules": [],
+  "codeMakerOutput": ".gen",
+  "context": {}
+}

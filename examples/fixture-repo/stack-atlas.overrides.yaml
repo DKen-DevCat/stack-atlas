@@ -1,0 +1,21 @@
+# 静的解析で取れない結線の補正（docs/09 §3.2）
+
+nodes:
+  # 利用者はコードに現れないので手で足す
+  - id: actor:user
+    layer: infra
+    kind: actor
+    name: Browser
+    code: "GET https://races.example.com/races/42"
+
+edges:
+  - { from: actor:user, to: infra:cdn, kind: flow }
+  # 入稿時のキャッシュ破棄: invalidateCdn() は環境変数の URL 経由の fetch なので
+  # api-link / cdktf では結線を辿れない
+  - { from: route:/admin/entry, to: infra:cdn, kind: http }
+
+deploy:
+  # Lambda → ハンドラの明示（config.deploy の glob で取れなかった場合の保険）
+  infra:api: [handler:getRaces, handler:postResult]
+  # /login は Next の外（Cognito Hosted UI）へ飛ぶが、画面自体は Next Lambda 上にある
+  infra:next: [route:/login]
