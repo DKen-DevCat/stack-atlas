@@ -9,6 +9,8 @@
 Phase 0〜5 は **フィクスチャ（`examples/fixture-repo/`）に対して完了**。Q2 を確認したところ実リポジトリは前提（CDKtf ＋ Next on Lambda ＋ TS、単一 repo）と違ったので、**Phase 7「どんな構成にもはめる」**（`docs/12-design-generalization.md`）で複数 repo・Terraform HCL・CDK/SAM・Go・OpenAPI・SQL・`files` / `classify` / `kinds` に一般化し、**Phase 6 の実リポジトリへの適用はグラフ生成まで完了**した（149 ノード / 330 エッジ / エラー 0 / 警告 0）。
 残りは、ビューアの大規模 graph 対応（**進行中**）、実アプリのスクショ・flows、配信先（Q5）、設定の置き場。使い方は `docs/13-apply-to-your-repo.md`。以降の §1〜§7 は引き継ぎ時点の記録（履歴）として残している。
 
+**2026-11-08 追記（Phase 8）**: 実リポジトリの地図を見たユーザーの要望で、モデルを「箱・口・項目・線」に作り直すことになった（`docs/15-design-dataflow-model.md`、D27〜D35、承認済み）。配布（ハーネス）とビルド成果物の画面は `docs/14-design-harness.md`。モック `prototype/dataflow-mock.html`（6 版）で規則を検証した。次は `docs/06` の Phase 8（8-1 契約 → 8-2 抽出 → 8-3 配線図 → 8-4 ハーネス → 8-5 実リポジトリ → 8-6 地図）。
+
 ### フェーズごとに作ったもの
 
 | Phase | 成果物 |

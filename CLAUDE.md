@@ -23,6 +23,7 @@
 6. `docs/09-design-phase2-5.md` — Phase 2〜5 の設計・決定事項 D9〜D13、設定ファイル（§3.3）
 7. `docs/12-design-generalization.md` — Phase 6・7 の設計（複数 repo、Terraform / Go / OpenAPI / SQL、`classify` / `files` / `kinds`）、決定事項 D14〜D19、末尾に実装結果
 8. `docs/13-apply-to-your-repo.md` — 実リポジトリへの適用ガイド（設定キー一覧、ID の規約、制限）
+8'. **`docs/15-design-dataflow-model.md`** — Phase 8 の設計（箱・口・項目・線のモデル、たどる規則、表示の規則、分岐、型 API による抽出、D27〜D35）。`docs/14-design-harness.md` はハーネス配布・ビルド成果物の画面（層の節は docs/15 に置き換え）。モックは `prototype/dataflow-mock.html`
 9. `docs/10-screenshots-guide.md`（`data-component` と screenshots の設定）、`docs/11-sharing.md`（メモ・差分・配信）、`docs/ci-example.yml`
 10. 必要に応じて `docs/05-viewer-spec.md`（UI 仕様）、`docs/04-extractors.md`（抽出方法）、各 `extractors/*/README.md`
 
