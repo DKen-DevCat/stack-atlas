@@ -1,7 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { autoLayout, LABEL_W, type LayoutEdgeInput, type LayoutNodeInput, type LayoutResult } from './auto';
+import {
+  autoLayout,
+  LABEL_W,
+  type LayoutEdgeInput,
+  type LayoutNodeInput,
+  type LayoutResult,
+} from './auto';
 
 const EPS = 1e-6;
 
@@ -183,11 +189,15 @@ describe('label-aware spacing', () => {
     const byZ = new Map<number, number[]>();
     for (const x of nodes.slice(1)) {
       const p = r.positions.get(x.id)!;
-      byZ.set(p.z, [...(byZ.get(p.z) ?? []), p.x].sort((a, b) => a - b));
+      byZ.set(
+        p.z,
+        [...(byZ.get(p.z) ?? []), p.x].sort((a, b) => a - b),
+      );
     }
     expect([...byZ.values()].map((v) => v.length)).toEqual([3, 3]);
     for (const xs of byZ.values())
-      for (let i = 1; i < xs.length; i++) expect(xs[i]! - xs[i - 1]! - 6.4).toBeGreaterThanOrEqual(1);
+      for (let i = 1; i < xs.length; i++)
+        expect(xs[i]! - xs[i - 1]! - 6.4).toBeGreaterThanOrEqual(1);
   });
 });
 
