@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@stack-atlas/core": "workspace:*",
+    "@stack-atlas/extractor-nextjs-app": "workspace:*",
     "ts-morph": "^28.0.0"
   },
   "devDependencies": {

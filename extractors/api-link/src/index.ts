@@ -1,50 +1,48 @@
 /**
- * api-link 抽出器: api client の呼び出し ⇔ URL パス ⇔ API Gateway の route_key ⇔ integration ⇔ Lambda ⇔ ハンドラ。
- * 方法は docs/04-extractors.md §4。
+ * api-link 抽出器: フロント → API の結線（docs/04 §4、一般化は docs/12 §3.6）。
  *
- * - api client（config.api.client）の fetch / get / post / request の第 1 引数 → meta.apiCalls、fetch cache → cache
+ * - client（`api.client` ＋ `api.clients` の glob）の fetch / ラッパー / `api.callers` 呼び出し → 呼び出し元ノードの meta.apiCalls
+ * - 照合（上から順）: API Gateway の route_key（cdk.tf.json を読み直す or `meta.infra.apiRoutes`）
+ *   → `endpoint:`（OpenAPI）→ `meta.apiRoutes` を持つノード（Go / Next の route handler）→ handler の `@route` コメント
  * - config.deploy[<lambda>].handlers の glob → handler ノードへの deploy エッジ
- * - route ↔ ハンドラの対応（上から優先）:
+ * - API Gateway の route ↔ ハンドラの対応（上から優先）:
  *     1. ハンドラファイル内の `// @route GET /races/{id}` コメント
  *     2. ハンドラの親ディレクトリにあるルーティング表（`"GET /races": getRaces` のようなプロパティ）
  *     3. 名前の規約: 動詞の接頭辞（get/list/fetch→GET, post/create/add→POST, put/update→PUT, patch→PATCH,
  *        delete/remove→DELETE）＋ 残りの名前（単数形にして）がパスの静的セグメントのどれかと一致
  *     4. Lambda に載っているハンドラが 1 つだけなら全 route をそれに
- * - client 呼び出しと route_key が合えば lib → handler に `http` エッジ（label は route_key）
+ * - エッジ: 呼び出し元 → endpoint、endpoint → handler（http）。endpoint が無ければ呼び出し元 → handler（label は route_key）
+ * - `api.targets`（無ければ API Gateway、Function URL の Lambda が 1 つなら推定）→ endpoint に deploy
  * - Lambda が参照している DynamoDB テーブルが 1 つなら、そのハンドラが使う schema:* へ table → schema の `schema` エッジ
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, extname, join, relative, sep } from 'node:path';
-import type { Cache, Edge } from '@stack-atlas/schema';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { basename, extname, join, relative } from 'node:path';
+import type { Edge } from '@stack-atlas/schema';
 import type { Extractor, PartialGraph, PartialNode, RepoContext } from '@stack-atlas/core';
-import { parseClientCalls, type ApiCall } from './client.js';
-import {
-  loadGateway,
-  methodMatches,
+import { clientFiles, linkClients, linkTargets, sameFile } from './link.js';
+import { infraType, routeComments, toPosix, walk } from './util.js';
+import { gatewayRoutesFromMeta, loadGateway, type GatewayRoute } from './gateway.js';
+import { globBase, globToRegExp, sectionFor, toArray } from '@stack-atlas/core';
+
+export {
+  detectWrappers,
+  parseClientCalls,
+  parseClientFiles,
+  passesParam,
+  toPath,
+  type ApiCall,
+} from './client.js';
+export {
+  apiPathMatches,
+  gatewayRoutesFromMeta,
+  normalizeRoutePath,
   pathMatches,
   pickMostSpecific,
-  type GatewayRoute,
+  routeSpecificity,
 } from './gateway.js';
-import { globBase, globToRegExp, toArray } from '@stack-atlas/core';
-
-export { parseClientCalls, toPath } from './client.js';
-export { pathMatches, pickMostSpecific, routeSpecificity } from './gateway.js';
+export { clientFiles, collectRoutes, sameFile } from './link.js';
 
 export const NAME = 'api-link';
-
-const toPosix = (p: string) => p.split(sep).join('/');
-
-/** ts-imports の libName と同じ規則（apiClient.ts → apiClient） */
-function libName(relPath: string): string {
-  let base = basename(relPath, extname(relPath));
-  if (base === 'index') {
-    const skip = new Set(['src', 'lib', 'app', 'dist', 'source']);
-    const dirs = relPath.split('/').slice(0, -1).reverse();
-    base = dirs.find((d) => d && !skip.has(d)) ?? 'index';
-  }
-  const parts = base.split(/[-_.\s]+/).filter(Boolean);
-  return parts.map((p, i) => (i === 0 ? p : p[0]!.toUpperCase() + p.slice(1))).join('') || base;
-}
 
 const VERBS: Array<[RegExp, string[]]> = [
   [/^(get|list|fetch|find|read|load|query|search)/, ['GET', 'HEAD']],
@@ -80,24 +78,6 @@ export function nameMatchesRoute(handlerName: string, method: string, path: stri
   return false;
 }
 
-function walk(dir: string, out: string[] = []): string[] {
-  let entries: string[];
-  try {
-    entries = readdirSync(dir);
-  } catch {
-    return out;
-  }
-  for (const name of entries.sort()) {
-    if (name === 'node_modules' || name.startsWith('.')) continue;
-    const p = join(dir, name);
-    if (statSync(p).isDirectory()) walk(p, out);
-    else out.push(p);
-  }
-  return out;
-}
-
-const ROUTE_KEY = /^(ANY|GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) \/\S*$|^\$default$/;
-
 /** `"GET /races": getRaces` のようなルーティング表を探す（文字列キー → 識別子） */
 function routingTables(files: string[]): Array<{ routeKey: string; name: string }> {
   const out: Array<{ routeKey: string; name: string }> = [];
@@ -109,26 +89,6 @@ function routingTables(files: string[]): Array<{ routeKey: string; name: string 
     for (const m of src.matchAll(re)) out.push({ routeKey: m[1]!, name: m[2]! });
   }
   return out;
-}
-
-function routeComments(src: string): string[] {
-  return [...src.matchAll(/@route\s+([A-Z]+ \/\S*|\$default)/g)]
-    .map((m) => m[1]!)
-    .filter((k) => ROUTE_KEY.test(k));
-}
-
-function fetchCache(calls: ApiCall[]): Cache | undefined {
-  const rules = calls
-    .filter((c) => c.revalidate !== undefined || c.tags || c.cache)
-    .map((c) => {
-      const parts: string[] = [];
-      if (c.cache) parts.push(c.cache);
-      if (c.revalidate !== undefined)
-        parts.push(c.revalidate === false ? 'revalidate false' : `revalidate ${c.revalidate}s`);
-      if (c.tags && c.tags.length > 0) parts.push(`tags ${c.tags.join(', ')}`);
-      return { key: `${c.method} ${c.path}`, value: parts.join(' / ') };
-    });
-  return rules.length > 0 ? { tone: 'info', badge: 'fetch cache', rules } : undefined;
 }
 
 interface HandlerInfo {
@@ -143,8 +103,10 @@ interface HandlerInfo {
 export const extractor: Extractor = {
   name: NAME,
   async detect(ctx) {
-    const client = ctx.config.api?.client;
-    if (client && existsSync(ctx.resolve(client))) return true;
+    const api = ctx.config.api;
+    if (api?.repo && !sectionFor(ctx, api)) return false;
+    if (clientFiles(ctx, api).length > 0) return true;
+    if ((api?.targets?.length ?? 0) > 0) return true;
     const hasHandlers = Object.values(ctx.config.deploy ?? {}).some((d) => d.handlers);
     const out = ctx.resolve(ctx.config.cdktf?.out ?? 'infra/cdktf.out', 'stacks');
     if (!hasHandlers || !existsSync(out)) return false;
@@ -173,6 +135,7 @@ export const extractor: Extractor = {
       edges.set(k, label ? { from, to, kind, label } : { from, to, kind });
     };
     const up = new Map(upstream.nodes.map((n) => [n.id, n]));
+    const api = sectionFor(ctx, ctx.config.api);
 
     // --- API Gateway
     const gw = loadGateway(ctx, {
@@ -184,6 +147,13 @@ export const extractor: Extractor = {
         })?.id;
       },
     });
+    // tf-graph の meta.infra.apiRoutes（cdk.tf.json を読み直したものと重複すれば除く）
+    const known = new Set(gw.routes.map((r) => `${r.apiId ?? ''} ${r.routeKey}`));
+    for (const r of gatewayRoutesFromMeta(upstream.nodes)) {
+      if (!known.has(`${r.apiId ?? ''} ${r.routeKey}`)) gw.routes.push(r);
+    }
+    for (const n of upstream.nodes)
+      if (infraType(n) === 'aws_lambda_function') gw.lambdas.add(n.id);
 
     // --- Lambda → ハンドラ
     const handlers: HandlerInfo[] = [];
@@ -209,7 +179,9 @@ export const extractor: Extractor = {
       const mine: HandlerInfo[] = [];
       for (const abs of [...files].sort()) {
         const rel = toPosix(relative(ctx.root, abs));
-        const fromUp = upstream.nodes.filter((n) => n.kind === 'handler' && n.file === rel);
+        const fromUp = upstream.nodes.filter(
+          (n) => n.kind === 'handler' && sameFile(ctx, n.file, rel),
+        );
         const list =
           fromUp.length > 0 ? fromUp : [{ id: `handler:${basename(rel, extname(rel))}`, meta: {} }];
         for (const n of list) {
@@ -259,56 +231,11 @@ export const extractor: Extractor = {
       handlers.push(...mine);
     }
 
-    // --- api client
-    const clientRel = ctx.config.api?.client;
-    if (clientRel && existsSync(ctx.resolve(clientRel))) {
-      const rel = toPosix(clientRel);
-      const clientId =
-        upstream.nodes.find((n) => n.file === rel && n.kind === 'lib')?.id ?? `lib:${libName(rel)}`;
-      const { calls, unreadable } = parseClientCalls(ctx.resolve(clientRel));
-      for (const u of unreadable) ctx.log.debug(`api-link: パスを読めない呼び出し ${u}`);
-      const seen = new Set<string>();
-      const unique = calls.filter((c) => {
-        const k = `${c.method} ${c.path}`;
-        if (seen.has(k)) return false;
-        seen.add(k);
-        return true;
-      });
-      const node: PartialNode = {
-        id: clientId,
-        meta: {
-          extractors: [NAME],
-          apiCalls: unique.map((c) => ({ method: c.method, path: c.path })),
-        },
-      };
-      if (!up.has(clientId)) Object.assign(node, { kind: 'lib', name: libName(rel), file: rel });
-      const cache = fetchCache(unique);
-      if (cache) node.cache = cache;
-      nodes.push(node);
+    // --- api client（clients glob ＋ ラッパー検出）→ endpoint / route handler
+    linkClients(ctx, api, upstream, gw.routes, handlers, nodes, addEdge);
 
-      const unmatched: string[] = [];
-      for (const c of unique) {
-        // API Gateway と同じく、合う route が複数あれば最も具体的なものだけ（$default は最後の手段）
-        const routes = pickMostSpecific(
-          gw.routes.filter((r) => methodMatches(r.method, c.method) && pathMatches(r.path, c.path)),
-        );
-        const targets = handlers.filter((h) => h.routes.some((r) => routes.includes(r)));
-        if (targets.length === 0) {
-          unmatched.push(
-            `${c.method} ${c.path}${routes.length > 0 ? '（route はあるがハンドラ不明）' : ''}`,
-          );
-          continue;
-        }
-        for (const h of targets) {
-          for (const r of h.routes.filter((x) => routes.includes(x)))
-            addEdge(clientId, h.id, 'http', r.routeKey);
-        }
-      }
-      if (unmatched.length > 0)
-        ctx.log.warn(
-          `api-link: API Gateway の route と結べない呼び出し: ${unmatched.join(' / ')}（overrides.yaml で補う）`,
-        );
-    }
+    // --- target（Lambda / API Gateway）→ endpoint
+    linkTargets(ctx, api, upstream, gw.routes, addEdge);
 
     // --- DynamoDB テーブル → schema
     const tableOf = (lambdaId: string) => [
@@ -316,11 +243,7 @@ export const extractor: Extractor = {
         upstream.edges
           .filter((e) => e.kind === 'flow' && e.from === lambdaId)
           .map((e) => e.to)
-          .filter(
-            (to) =>
-              (up.get(to)?.meta?.['cdktf'] as { type?: string } | undefined)?.type ===
-              'aws_dynamodb_table',
-          ),
+          .filter((to) => infraType(up.get(to) ?? {}) === 'aws_dynamodb_table'),
       ),
     ];
     for (const lambdaId of new Set(handlers.map((h) => h.lambdaId))) {

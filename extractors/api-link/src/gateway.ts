@@ -147,3 +147,46 @@ export function pickMostSpecific<T extends Pick<GatewayRoute, 'routeKey' | 'path
   }
   return routes.filter((r) => cmp(routeSpecificity(r), best!) === 0);
 }
+
+/** `meta.infra.apiRoutes: [{ routeKey, lambdaId }]`（tf-graph が API Gateway ノードに付ける）を route にする */
+export function gatewayRoutesFromMeta(
+  nodes: ReadonlyArray<{ id: string; meta?: Record<string, unknown> }>,
+): GatewayRoute[] {
+  const out: GatewayRoute[] = [];
+  for (const n of nodes) {
+    const infra = n.meta?.['infra'];
+    const list = isObj(infra) && Array.isArray(infra['apiRoutes']) ? infra['apiRoutes'] : [];
+    for (const r of list) {
+      if (!isObj(r) || typeof r['routeKey'] !== 'string') continue;
+      const routeKey = r['routeKey'];
+      const [method = 'ANY', path = routeKey] =
+        routeKey === '$default' ? ['ANY', '/{proxy+}'] : routeKey.split(' ');
+      const g: GatewayRoute = {
+        routeKey,
+        method,
+        path,
+        logicalId: routeKey,
+        stack: '',
+        apiId: n.id,
+      };
+      if (typeof r['lambdaId'] === 'string') g.lambdaId = r['lambdaId'];
+      out.push(g);
+    }
+  }
+  return out;
+}
+
+/** 末尾の / をそろえ、Go の `{rest...}` / Express の `:id` / `*` を API Gateway 形式にする */
+export function normalizeRoutePath(p: string): string {
+  let s = p
+    .replace(/\{([^}]*?)\.\.\.\}/g, '{$1+}')
+    .replace(/\/:(\w+)/g, '/{$1}')
+    .replace(/\/\*$/, '/{proxy+}');
+  if (s.length > 1) s = s.replace(/\/+$/, '');
+  return s || '/';
+}
+
+/** endpoint / meta.apiRoutes 用: 末尾スラッシュの違いと Go / Express 形式のパラメータを許す */
+export function apiPathMatches(routePath: string, clientPath: string): boolean {
+  return pathMatches(normalizeRoutePath(routePath), normalizeRoutePath(clientPath));
+}

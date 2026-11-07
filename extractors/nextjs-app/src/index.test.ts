@@ -140,3 +140,108 @@ describe('nextjs-app extractor', async () => {
     });
   });
 });
+
+const fixtures = resolve(dirname(fileURLToPath(import.meta.url)), '../test/fixtures');
+function ctxAt(
+  dir: string,
+  config: StackAtlasConfig = {},
+  warn?: (m: string) => void,
+): RepoContext {
+  const r = resolve(fixtures, dir);
+  return {
+    root: r,
+    config,
+    repoName: dir,
+    repos: { [dir]: r },
+    configDir: r,
+    log: { ...silent, warn: warn ?? (() => {}) },
+    resolve: (...s) => resolve(r, ...s),
+  };
+}
+
+describe('static export + route handlers', async () => {
+  const warnings: string[] = [];
+  const up: PartialGraph = {
+    nodes: [
+      { id: 'infra:cdn', kind: 'infra', meta: { infra: { type: 'aws_cloudfront_distribution' } } },
+      { id: 'infra:site', kind: 'infra', meta: { infra: { type: 'aws_s3_bucket' } } },
+      { id: 'infra:logs', kind: 'infra', meta: { infra: { type: 'aws_s3_bucket' } } },
+    ],
+    edges: [{ from: 'infra:cdn', to: 'infra:site', kind: 'flow' }],
+  };
+  const g = await extractor.extract(
+    ctxAt('export-app', {}, (m) => warnings.push(m)),
+    up,
+  );
+  const byId = new Map(g.nodes.map((n) => [n.id, n]));
+
+  it('output: export → static export cache unless the segment has its own', () => {
+    expect(byId.get('route:/')?.cache).toEqual({
+      tone: 'ok',
+      badge: 'static export',
+      rules: [{ key: 'output', value: 'export（ビルド時に静的生成）' }],
+    });
+    expect(byId.get('route:/')?.meta?.['next']).toMatchObject({ output: 'export' });
+    expect(byId.get('layout:/')?.cache?.badge).toBe('static export');
+    expect(byId.get('route:/items/[id]')?.cache?.badge).toBe('static');
+  });
+
+  it('route.ts → handler with meta.apiRoutes from exported methods', () => {
+    const h = byId.get('handler:/api/health')!;
+    expect(h).toMatchObject({ kind: 'handler', file: 'src/app/api/health/route.ts' });
+    expect(h.meta?.['apiRoutes']).toEqual([
+      { method: 'GET', path: '/api/health' },
+      { method: 'POST', path: '/api/health' },
+    ]);
+    expect(h.cache).toBeUndefined();
+  });
+
+  it('guesses the S3 origin of CloudFront as the host (warn)', () => {
+    expect(
+      g.edges
+        .filter((e) => e.kind === 'deploy')
+        .map((e) => `${e.from}>${e.to}`)
+        .sort(),
+    ).toEqual(['infra:site>layout:/', 'infra:site>route:/', 'infra:site>route:/items/[id]']);
+    expect(warnings.some((w) => w.startsWith('推定: infra:site'))).toBe(true);
+  });
+
+  it('config.deploy app: next on any node type wins over the guess', async () => {
+    const g2 = await extractor.extract(
+      ctxAt('export-app', { deploy: { 'infra:logs': { app: 'next' } } }),
+      up,
+    );
+    expect(new Set(g2.edges.map((e) => e.from))).toEqual(new Set(['infra:logs']));
+  });
+
+  it('next.repo scopes the extractor', async () => {
+    expect(await extractor.detect(ctxAt('export-app', { next: { repo: 'other' } }))).toBe(false);
+    expect(await extractor.detect(ctxAt('export-app', { next: { repo: 'export-app' } }))).toBe(
+      true,
+    );
+  });
+});
+
+describe('Pages Router', async () => {
+  const g = await extractor.extract(ctxAt('pages-app'), { nodes: [], edges: [] });
+  const byId = new Map(g.nodes.map((n) => [n.id, n]));
+  it('route / layout / handler ids', async () => {
+    expect(await extractor.detect(ctxAt('pages-app'))).toBe(true);
+    expect([...byId.keys()].sort()).toEqual([
+      'handler:/api/users/[id]',
+      'layout:/',
+      'route:/',
+      'route:/races',
+      'route:/races/[id]',
+    ]);
+    expect(byId.get('layout:/')?.file).toBe('pages/_app.tsx');
+    expect(byId.get('route:/races/[id]')).toMatchObject({
+      kind: 'page',
+      file: 'pages/races/[id].tsx',
+    });
+    expect(byId.get('handler:/api/users/[id]')?.meta?.['apiRoutes']).toEqual([
+      { method: 'ANY', path: '/api/users/{id}' },
+    ]);
+    expect(byId.get('route:/')?.cache).toBeUndefined();
+  });
+});

@@ -15,9 +15,15 @@ import { existsSync } from 'node:fs';
 import { basename, dirname, extname, relative, sep } from 'node:path';
 import { Node, Project, SyntaxKind, type ExportedDeclarations, type SourceFile } from 'ts-morph';
 import type { Edge } from '@stack-atlas/schema';
-import type { Extractor, PartialGraph, PartialNode, RepoContext } from '@stack-atlas/core';
-import { findAppDir, listRouteFiles } from '@stack-atlas/core';
-import { globToRegExp, toArray } from '@stack-atlas/core';
+import type {
+  ClassifyRule,
+  Extractor,
+  PartialGraph,
+  PartialNode,
+  RepoContext,
+} from '@stack-atlas/core';
+import { findClassifyRule, globToRegExp, sectionFor, toArray } from '@stack-atlas/core';
+import { findNextDirs, listNextFiles } from '@stack-atlas/extractor-nextjs-app';
 
 export { segmentToUrl } from '@stack-atlas/core';
 
@@ -35,6 +41,18 @@ const KIND_OF: Record<Category, string> = {
   schema: 'schema',
 };
 
+/** kind → ID の接頭辞（classify で kind を変えたとき） */
+const KIND_PREFIX: Record<string, string> = { component: 'comp', page: 'route' };
+
+/** classify のルール（repo 相対パスに最初に合ったもの。core の findClassifyRule） */
+export function matchClassify(
+  rules: ClassifyRule[] | undefined,
+  repoName: string,
+  rel: string,
+): ClassifyRule | undefined {
+  return findClassifyRule(rules, rel, repoName);
+}
+
 const SOURCE_EXT = /\.(tsx?|jsx?|mts|cts)$/;
 const LIB_SKIP_DIRS = new Set(['src', 'lib', 'app', 'dist', 'source']);
 
@@ -49,11 +67,12 @@ export function libName(relPath: string): string {
   return parts.map((p, i) => (i === 0 ? p : p[0]!.toUpperCase() + p.slice(1))).join('') || base;
 }
 
-/** ts.tsconfig → next.tsconfig → ./tsconfig.json */
+/** ts.tsconfig → next.tsconfig → ./tsconfig.json（repo 指定のあるセクションはその repo だけ） */
 export function tsconfigPaths(ctx: RepoContext): string[] {
-  const list = [...(ctx.config.ts?.tsconfig ?? [])];
-  if (ctx.config.next?.tsconfig && !list.includes(ctx.config.next.tsconfig))
-    list.push(ctx.config.next.tsconfig);
+  const ts = sectionFor(ctx, ctx.config.ts);
+  const next = sectionFor(ctx, ctx.config.next);
+  const list = [...(ts?.tsconfig ?? [])];
+  if (next?.tsconfig && !list.includes(next.tsconfig)) list.push(next.tsconfig);
   if (list.length === 0) list.push('tsconfig.json');
   return list.filter((p) => existsSync(ctx.resolve(p)));
 }
@@ -65,11 +84,16 @@ interface DeclInfo {
   decl: Node;
   category: Category;
   symbolKind: SymbolKind;
+  /** config.classify で指定した kind（あれば category より優先） */
+  kind?: string;
+  layer?: string;
 }
 
 interface NodeAcc {
   id: string;
   category: Category;
+  kind: string;
+  layer: string | undefined;
   name: string;
   file: string;
   line: number;
@@ -202,9 +226,10 @@ const declKey = (d: Node) => `${d.getSourceFile().getFilePath()}#${d.getStart()}
 export const extractor: Extractor = {
   name: NAME,
   async detect(ctx) {
+    if (ctx.config.ts?.repo && !sectionFor(ctx, ctx.config.ts)) return false;
     return tsconfigPaths(ctx).length > 0;
   },
-  async extract(ctx): Promise<PartialGraph> {
+  async extract(ctx, upstream): Promise<PartialGraph> {
     const root = toPosix(ctx.root);
     const inRepo = (abs: string) => {
       const r = toPosix(relative(root, abs));
@@ -228,12 +253,10 @@ export const extractor: Extractor = {
       }
     }
 
-    // 2) App Router の page / layout
+    // 2) Next の page / layout / route.ts / pages（nextjs-app と同じ ID。ファイル単位）
     const routeIdOf = new Map<string, string>();
-    const appDir = findAppDir(ctx.root, ctx.config.next?.appDir);
-    if (appDir) {
-      for (const f of listRouteFiles(ctx.root, appDir).files) routeIdOf.set(toPosix(f.abs), f.id);
-    }
+    const dirs = findNextDirs(ctx.root, sectionFor(ctx, ctx.config.next) ?? {});
+    for (const f of listNextFiles(ctx.root, dirs).files) routeIdOf.set(toPosix(f.abs), f.id);
 
     const handlerGlobs = Object.values(ctx.config.deploy ?? {}).flatMap((d) =>
       toArray(d.handlers).map(globToRegExp),
@@ -261,9 +284,34 @@ export const extractor: Extractor = {
       if (infos.length > 0) perFile.set(p, infos);
     }
 
-    // 4) ID を決める（衝突したらファイルパス付き）
-    const candidate = (rel: string, info: DeclInfo) =>
-      info.category === 'lib' ? `lib:${libName(rel)}` : `${info.category}:${info.exportName}`;
+    // 3.5) config.classify（glob → kind / layer）で上書き
+    for (const [p, infos] of perFile) {
+      const rel = toPosix(relative(root, p));
+      const rule = matchClassify(ctx.config.classify, ctx.repoName, rel);
+      if (!rule) continue;
+      for (const info of infos) {
+        if (rule.kind) info.kind = rule.kind;
+        if (rule.layer) info.layer = rule.layer;
+      }
+    }
+
+    // 4) ID を決める（衝突したらファイルパス付き。複数 repo なら他 repo の lib: とも衝突させない）
+    const multiRepo = Object.keys(ctx.repos ?? {}).length > 1;
+    const otherRepoIds = new Set(
+      multiRepo
+        ? upstream.nodes
+            .filter((n) => !(n.file ?? '').startsWith(`${ctx.repoName}/`))
+            .map((n) => n.id)
+        : [],
+    );
+    const prefixOf = (info: DeclInfo) =>
+      info.kind ? (KIND_PREFIX[info.kind] ?? info.kind) : info.category;
+    const isLib = (info: DeclInfo) => (info.kind ? info.kind === 'lib' : info.category === 'lib');
+    const candidate = (rel: string, info: DeclInfo) => {
+      if (!isLib(info)) return `${prefixOf(info)}:${info.exportName}`;
+      const id = `lib:${libName(rel)}`;
+      return otherRepoIds.has(id) ? `lib:${ctx.repoName}/${rel}` : id;
+    };
     const filesById = new Map<string, Set<string>>();
     for (const [p, infos] of perFile) {
       const rel = toPosix(relative(root, p));
@@ -280,8 +328,10 @@ export const extractor: Extractor = {
       for (const info of infos) {
         let id = candidate(rel, info);
         if ((filesById.get(id)?.size ?? 0) > 1) {
-          const fallback =
-            info.category === 'lib' ? `lib:${rel}` : `${info.category}:${rel}#${info.exportName}`;
+          const scoped = multiRepo ? `${ctx.repoName}/${rel}` : rel;
+          const fallback = isLib(info)
+            ? `lib:${scoped}`
+            : `${prefixOf(info)}:${scoped}#${info.exportName}`;
           ctx.log.info(`ts-imports: ${id} が複数ファイルにあるので ${fallback} にします`);
           id = fallback;
         }
@@ -297,7 +347,9 @@ export const extractor: Extractor = {
         const n: NodeAcc = {
           id,
           category: info.category,
-          name: info.category === 'lib' ? libName(rel) : info.exportName,
+          kind: info.kind ?? KIND_OF[info.category],
+          layer: info.layer,
+          name: isLib(info) ? libName(rel) : info.exportName,
           file: rel,
           line: stmt.getStartLineNumber(),
           code: truncate(stmt.getText()),
@@ -311,7 +363,7 @@ export const extractor: Extractor = {
     }
     // 同じ ID に型と zod の両方がある（EntryInput）など: コード片は宣言を並べる
     for (const n of nodes.values()) {
-      if (n.decls.length > 1 && n.category !== 'lib') {
+      if (n.decls.length > 1 && n.kind !== 'lib') {
         const sorted = [...n.decls].sort((a, b) => a.getStart() - b.getStart());
         n.code = truncate(sorted.map((d) => statementOf(d).getText()).join('\n'));
         n.line = statementOf(sorted[0]!).getStartLineNumber();
@@ -379,7 +431,8 @@ export const extractor: Extractor = {
 
     const out: PartialNode[] = [...nodes.values()].map((n) => ({
       id: n.id,
-      kind: KIND_OF[n.category],
+      kind: n.kind,
+      ...(n.layer ? { layer: n.layer } : {}),
       name: n.name,
       file: n.file,
       line: n.line,
@@ -387,7 +440,7 @@ export const extractor: Extractor = {
       meta: {
         extractors: [NAME],
         ts:
-          n.category === 'lib'
+          n.kind === 'lib'
             ? { exportName: n.exportNames[0]!, symbolKind: n.symbolKind, exports: n.exportNames }
             : { exportName: n.exportNames[0]!, symbolKind: n.symbolKind },
       },

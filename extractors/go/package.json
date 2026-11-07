@@ -1,0 +1,30 @@
+{
+  "name": "@stack-atlas/extractor-go",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Stack Atlas の Go 抽出器（toolchain 不要。パッケージ → ノード、import → uses、ルート登録 → meta.apiRoutes）",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "@stack-atlas/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@stack-atlas/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@stack-atlas/schema": "workspace:*"
+  }
+}

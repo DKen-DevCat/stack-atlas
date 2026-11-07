@@ -1,0 +1,81 @@
+openapi: 3.1.0
+info:
+  title: Shop API
+  version: 1.0.0
+paths:
+  /orders:
+    get:
+      operationId: listOrders
+      summary: 注文一覧
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: max-age=60
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderList'
+    post:
+      operationId: createOrder
+      requestBody:
+        $ref: '#/components/requestBodies/OrderCreate'
+      responses:
+        '201':
+          $ref: '#/components/responses/OrderCreated'
+  /orders/{id}:
+    delete:
+      operationId: deleteOrder
+      x-cache: none
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: deleted
+components:
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema:
+        $ref: '#/components/schemas/PageNumber'
+  requestBodies:
+    OrderCreate:
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OrderInput'
+  responses:
+    OrderCreated:
+      description: created
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Order'
+  schemas:
+    PageNumber:
+      type: integer
+    Order:
+      type: object
+      properties:
+        id: { type: string }
+        total: { type: integer }
+    OrderList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Order'
+    OrderInput:
+      type: object
+      properties:
+        total: { type: integer }

@@ -6,8 +6,10 @@ ts-morph で TypeScript を読み、**コンポーネント層・型層**のノ�
 
 | キー | 既定 | 意味 |
 |---|---|---|
+| `ts.repo` | — | この repo でだけ動かす（`sectionFor`。`next.tsconfig` も `next.repo` が合うときだけ足す） |
 | `ts.tsconfig` | `tsconfig.json` | 読む tsconfig の配列（tsconfig ごとに ts-morph の `Project`）。`next.tsconfig` も足す |
-| `next.appDir` | nextjs-app と同じ探索 | page / layout をノードにせず、その import を `route:` / `layout:` からの `uses` にする |
+| `next.appDir` / `next.pagesDir` | nextjs-app と同じ探索 | page / layout / route.ts / pages をノードにせず、その import を `route:` / `layout:` / `handler:` からの `uses` にする（ID は nextjs-app の `listNextFiles()`） |
+| `classify` | — | `{ glob, kind, layer, repo }`。repo 相対のファイルパスに合う最初のルールで、そのファイルの export の kind と ID の接頭辞（`component` → `comp`）・層を上書き。`kind: lib` ならファイル単位の `lib:` |
 | `deploy.*.handlers` | | この glob に合うファイルの関数 export は `handler:` |
 
 リポジトリ外・`node_modules`・`.d.ts` は対象外。解決できない import（react / next / swr / zod など）は debug ログを出して無視。
@@ -21,7 +23,10 @@ ts-morph で TypeScript を読み、**コンポーネント層・型層**のノ�
 5. `.tsx` / `.jsx` の PascalCase の関数（`memo(() => …)` も可）で、本体に JSX がある → `comp:`
 6. それ以外 → `lib:<ファイル名の camelCase>`（ファイル単位で 1 ノード。`index.ts` は親ディレクトリ名、`src` / `lib` などは飛ばす）
 
-同じ ID が複数ファイルに出たら `comp:<path>#<Name>`（lib は `lib:<path>`）にする。`meta.ts: { exportName, symbolKind }`。
+同じ ID が複数ファイルに出たら `comp:<path>#<Name>`（lib は `lib:<path>`）にする。複数 repo（`repos` が 2 つ以上）なら `<path>` は `<repo>/<path>`、
+また上流（他 repo）にある `lib:` と同じ ID になる lib は `lib:<repo>/<path>` にする。`meta.ts: { exportName, symbolKind }`。
+
+分類のあとに `classify` を当てる（上の規則より強い）。
 
 ## uses エッジ
 

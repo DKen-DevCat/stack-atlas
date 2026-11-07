@@ -127,3 +127,46 @@ describe('ts-imports extractor', async () => {
     }
   });
 });
+
+describe('config.classify', async () => {
+  const base = parse(
+    readFileSync(resolve(root, 'stack-atlas.config.yaml'), 'utf8'),
+  ) as StackAtlasConfig;
+  const g = await extractor.extract(
+    fixtureCtx({
+      ...base,
+      classify: [
+        { glob: 'apps/web/components/Header.tsx', kind: 'lib', layer: 'routes' },
+        { glob: 'packages/types/**', kind: 'schema' },
+        { glob: 'apps/web/hooks/**', kind: 'component', repo: 'other-repo' },
+      ],
+    }),
+    { nodes: [], edges: [] },
+  );
+  const byId = new Map(g.nodes.map((n) => [n.id, n]));
+  it('kind and id prefix follow the first matching rule', () => {
+    expect(byId.has('comp:Header')).toBe(false);
+    expect(byId.get('lib:Header')).toMatchObject({ kind: 'lib', layer: 'routes' });
+    expect(byId.get('schema:Race')?.kind).toBe('schema');
+    expect(byId.has('type:Race')).toBe(false);
+    // repo が違うルールは無視
+    expect(byId.get('hook:useRaces')?.kind).toBe('hook');
+    expect(g.edges.some((e) => e.from === 'layout:/' && e.to === 'lib:Header')).toBe(true);
+  });
+  it('multi-repo: lib ids that collide with another repo get the repo prefix', async () => {
+    const ctx = fixtureCtx(base);
+    ctx.repos = { fixture: root, other: '/nonexistent' };
+    const g2 = await extractor.extract(ctx, {
+      nodes: [{ id: 'lib:apiClient', kind: 'lib', file: 'other/src/apiClient.ts' }],
+      edges: [],
+    });
+    const ids = g2.nodes.map((n) => n.id);
+    expect(ids).toContain('lib:fixture/apps/web/lib/apiClient.ts');
+    expect(ids).not.toContain('lib:apiClient');
+  });
+  it('ts.repo scopes detect', async () => {
+    expect(await extractor.detect(fixtureCtx({ ...base, ts: { ...base.ts, repo: 'x' } }))).toBe(
+      false,
+    );
+  });
+});
