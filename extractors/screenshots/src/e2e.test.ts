@@ -78,6 +78,9 @@ describe('screenshots extractor (e2e, real Chromium)', () => {
           outDir,
         },
       },
+      repoName: 'fixture',
+      repos: { fixture: fixtureRoot },
+      configDir: fixtureRoot,
       log: { debug() {}, info() {}, warn: (m) => warnings.push(m), error: (m) => warnings.push(m) },
       resolve: (...s) => resolve(fixtureRoot, ...s),
     };

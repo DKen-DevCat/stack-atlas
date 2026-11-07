@@ -121,6 +121,9 @@ describe('clipRegion / joinUrl', () => {
 describe('detect', () => {
   const ctx = (config: RepoContext['config']): RepoContext => ({
     root: '/x',
+    repoName: 'x',
+    repos: { x: '/x' },
+    configDir: '/x',
     config,
     log: { debug() {}, info() {}, warn() {}, error() {} },
     resolve: (...s) => ['/x', ...s].join('/'),

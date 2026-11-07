@@ -4,7 +4,7 @@
  * YAML として壊れている・トップレベルがオブジェクトでない場合だけ例外にする。
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { parse } from 'yaml';
 import type { Logger, RepoContext, StackAtlasConfig } from './types.js';
 import { isPlainObject } from './util.js';
@@ -16,11 +16,21 @@ const KNOWN_KEYS: Record<keyof StackAtlasConfig, 'object' | 'array'> = {
   project: 'object',
   layers: 'array',
   layerOf: 'object',
+  repos: 'object',
   cdktf: 'object',
+  terraform: 'object',
+  cloudformation: 'object',
+  infra: 'object',
   next: 'object',
   ts: 'object',
+  go: 'object',
+  openapi: 'object',
+  sql: 'object',
   deploy: 'object',
   api: 'object',
+  classify: 'array',
+  files: 'array',
+  kinds: 'object',
   screenshots: 'object',
   extractors: 'object',
 };
@@ -113,10 +123,15 @@ export function createRepoContext(
   root: string,
   config: StackAtlasConfig,
   log: Logger = silentLogger,
+  opts: { repoName?: string; repos?: Record<string, string>; configDir?: string } = {},
 ): RepoContext {
   const abs = resolve(root);
+  const repoName = opts.repoName ?? basename(abs);
   return {
     root: abs,
+    repoName,
+    repos: opts.repos ?? { [repoName]: abs },
+    configDir: opts.configDir ?? abs,
     config,
     log,
     resolve: (...segments: string[]) => resolve(abs, ...segments),

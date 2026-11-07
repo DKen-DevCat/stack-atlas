@@ -14,6 +14,9 @@ function fixtureCtx(config?: StackAtlasConfig): RepoContext {
     config:
       config ??
       (parse(readFileSync(resolve(root, 'stack-atlas.config.yaml'), 'utf8')) as StackAtlasConfig),
+    repoName: 'fixture',
+    repos: { fixture: root },
+    configDir: root,
     log: silent,
     resolve: (...s) => resolve(root, ...s),
   };
