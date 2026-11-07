@@ -124,6 +124,9 @@ importers:
       '@stack-atlas/extractor-nextjs-app':
         specifier: workspace:*
         version: link:../../extractors/nextjs-app
+      '@stack-atlas/extractor-screenshots':
+        specifier: workspace:*
+        version: link:../../extractors/screenshots
       '@stack-atlas/extractor-ts-imports':
         specifier: workspace:*
         version: link:../../extractors/ts-imports

@@ -13,7 +13,8 @@
     "lint": "eslint .",
     "typecheck": "pnpm -r typecheck",
     "format": "prettier --write .",
-    "validate": "tsx packages/schema/src/cli.ts"
+    "validate": "tsx packages/schema/src/cli.ts",
+    "atlas": "tsx --conditions=@stack-atlas/source packages/cli/src/cli.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

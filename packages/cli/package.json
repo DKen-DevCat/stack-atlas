@@ -1,0 +1,37 @@
+{
+  "name": "@stack-atlas/cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Stack Atlas の CLI（build / validate / serve / diff）",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "@stack-atlas/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "stack-atlas": "./bin/stack-atlas.js"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@stack-atlas/core": "workspace:*",
+    "@stack-atlas/extractor-api-link": "workspace:*",
+    "@stack-atlas/extractor-screenshots": "workspace:*",
+    "@stack-atlas/extractor-cdktf": "workspace:*",
+    "@stack-atlas/extractor-nextjs-app": "workspace:*",
+    "@stack-atlas/extractor-ts-imports": "workspace:*",
+    "@stack-atlas/schema": "workspace:*"
+  }
+}

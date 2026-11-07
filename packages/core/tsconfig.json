@@ -2,6 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "types": ["node"],
+    "customConditions": ["@stack-atlas/source"],
     "noEmit": true
   },
   "include": ["src"]
