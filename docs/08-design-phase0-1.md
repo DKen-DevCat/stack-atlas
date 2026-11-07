@@ -59,6 +59,8 @@ project-map/                      GitHub: DKen-DevCat/project-map
 
 ビューアはこのパッケージを import して、読み込み時に検証する。エラーは画面に一覧表示し、**参照エラーがあっても描画は続ける**（前方互換の方針どおり）。
 
+実装メモ（Phase 0）: `validateGraph()` の戻り値は `{ ok, graph?, errors }`。`errors` は `level: 'error' | 'warning'` を持ち、自己ループ・未知の kind は警告（`ok` は true のまま）。`graph` はスキーマを通れば参照エラーがあっても返す（D7）。型名は `Node` ではなく `GraphNode`（DOM の `Node` と衝突するため。`Node` は別名として残す）。ワークスペース内からは package.json の `@stack-atlas/source` 条件で `src/` を直接読むので、ビューアの dev・test・typecheck に schema の事前ビルドは不要。
+
 ### 3.3 packages/viewer — モジュール分割
 
 プロトタイプの各ブロックを次のように割る。左が純粋ロジック（DOM・three.js に依存しない。Vitest でテスト）、右が副作用のある層。

@@ -15,7 +15,7 @@
 
 1. `HANDOFF.md` — 経緯・決定事項・ユーザーの反応・未決事項（必読）
 2. `docs/02-architecture.md` — 目標アーキテクチャ（抽出器 → graph.json → ビューア）
-3. `docs/03-graph-schema.md` + `schema/graph.schema.json` — 中間フォーマット
+3. `docs/03-graph-schema.md` + `packages/schema/graph.schema.json` — 中間フォーマット
 4. `docs/06-roadmap.md` — フェーズ別タスクと完了条件
 5. `docs/08-design-phase0-1.md` — Phase 0・1 の設計、タスク一覧、決定事項（Git 連携セッションで作成）
 6. 必要に応じて `docs/05-viewer-spec.md`（UI 仕様）、`docs/04-extractors.md`（抽出方法）
@@ -41,16 +41,30 @@ Phase 1 の完了条件は「`examples/race-site.graph.json` を読み込んだ�
 - 解析対象は業務コードになりうる。**ソースコードを外部 SaaS に送らない**。抽出もビューアもローカル／自前ホスティングで完結させる。
 - ビューアは graph.json だけを入力にし、特定プロジェクトの知識をハードコードしない。
 - スタック固有の処理はすべて抽出器（extractor）側に閉じ込める。
-- graph.json を変えたら `schema/graph.schema.json` と `docs/03-graph-schema.md` を同時に更新し、
-  `node scripts/validate-graph.mjs schema/graph.schema.json examples/race-site.graph.json` が通ること。
+- graph.json を変えたら `packages/schema/graph.schema.json`・`packages/schema/src/types.ts`・`docs/03-graph-schema.md` を同時に更新し、
+  `pnpm validate examples/race-site.graph.json` が通ること（型とスキーマのずれは `pnpm test` で検出される）。
+- コミット前に `pnpm lint && pnpm typecheck && pnpm test && pnpm build` を通す（CI と同じ）。
 - プロトタイプ（`prototype/`）は参照用として残す。新実装で置き換えても削除しない。
 - UI の文言は日本語。
 
-## リポジトリ内容（引き継ぎ時点）
+## リポジトリ内容
 
 ```
 CLAUDE.md                     ← これ
 HANDOFF.md                    ← 経緯・決定事項・未決事項
+README.md                     ← 概要と開発の始め方
+package.json                  ← pnpm workspace のルート（build / test / lint / typecheck / format / validate）
+pnpm-workspace.yaml
+tsconfig.base.json            ← 各パッケージ共通の TypeScript 設定
+eslint.config.js  .prettierrc  .editorconfig  .nvmrc(22)
+.github/workflows/ci.yml      ← lint・typecheck・test・build・サンプル検証
+packages/
+  schema/                     ← @stack-atlas/schema
+    graph.schema.json         ← JSON Schema (draft 2020-12)。これが正
+    src/types.ts              ← graph.json の TypeScript 型（手書き）
+    src/validate.ts           ← validateGraph()：スキーマ検証＋参照整合性チェック
+    src/cli.ts                ← stack-atlas-validate <file...>（pnpm validate の実体）
+  viewer/                     ← @stack-atlas/viewer（Vite + TypeScript + three.js。Phase 0 は空のアプリ）
 docs/
   01-vision.md                ← ユーザーの元の要望と要件
   02-architecture.md          ← 目標アーキテクチャと現状の差分
@@ -62,11 +76,10 @@ docs/
   08-design-phase0-1.md       ← Phase 0・1 の設計とタスク一覧
   images/                     ← プロトタイプのスクリーンショット
 prototype/
-  stack-atlas.html            ← 動くプロトタイプ（three.js r160、単一ファイル）
+  stack-atlas.html            ← 動くプロトタイプ（three.js r160、単一ファイル。参照用）
   README.md
-schema/graph.schema.json      ← JSON Schema (draft 2020-12)
 examples/race-site.graph.json ← プロトタイプのデータを graph.json に変換したもの
 scripts/
   export-prototype-data.mjs   ← プロトタイプ → graph.json 変換
-  validate-graph.mjs          ← スキーマ＋参照整合性チェック
+  validate-graph.mjs          ← 互換ラッパ（中身は packages/schema の CLI）
 ```

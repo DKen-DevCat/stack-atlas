@@ -3,7 +3,7 @@
 ## 結論
 
 抽出器とビューアの間の唯一の契約。**layers・nodes・edges・flows** の 4 つで構成する。
-正式な定義は `schema/graph.schema.json`（JSON Schema draft 2020-12）。サンプルは `examples/race-site.graph.json`。
+正式な定義は `packages/schema/graph.schema.json`（JSON Schema draft 2020-12）。TypeScript の型は `packages/schema/src/types.ts`（手書き。スキーマとのずれはテストで検出）。検証は `pnpm validate <graph.json>`。サンプルは `examples/race-site.graph.json`。
 
 ## 全体の形
 

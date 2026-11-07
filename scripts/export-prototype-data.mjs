@@ -1,5 +1,5 @@
 // プロトタイプ（prototype/stack-atlas.html）に直書きされているデータを
-// graph.json 形式（schema/graph.schema.json）に書き出すスクリプト。
+// graph.json 形式（packages/schema/graph.schema.json）に書き出すスクリプト。
 // 使い方: node scripts/export-prototype-data.mjs > examples/race-site.graph.json
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -38,7 +38,7 @@ for (const n of NODES) {
 }
 
 const graph = {
-  $schema: '../schema/graph.schema.json',
+  $schema: '../packages/schema/graph.schema.json',
   version: 1,
   project: {
     name: 'race-results (sample)',

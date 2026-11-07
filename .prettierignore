@@ -1,0 +1,9 @@
+pnpm-lock.yaml
+dist/
+coverage/
+prototype/
+docs/
+*.md
+examples/
+packages/schema/graph.schema.json
+scripts/export-prototype-data.mjs

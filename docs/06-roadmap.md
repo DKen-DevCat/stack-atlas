@@ -8,10 +8,10 @@
 
 ## Phase 0 — リポジトリの準備
 
-- [ ] 未決事項 Q1（モノレポかどうか、パッケージマネージャ）をユーザーに確認
-- [ ] `docs/02-architecture.md` の推奨構成で雛形を作る（TypeScript、Vite、Vitest、ESLint）
-- [ ] `schema/graph.schema.json` から TypeScript の型を作る（手書きか json-schema-to-typescript）
-- [ ] CI: lint、型チェック、`scripts/validate-graph.mjs` によるサンプル検証
+- [x] 未決事項 Q1（モノレポかどうか、パッケージマネージャ）をユーザーに確認 → pnpm モノレポ（docs/08 D1）
+- [x] `docs/02-architecture.md` の推奨構成で雛形を作る（TypeScript、Vite、Vitest、ESLint）
+- [x] `schema/graph.schema.json` から TypeScript の型を作る（手書きか json-schema-to-typescript） → 手書き。`packages/schema/src/types.ts`
+- [x] CI: lint、型チェック、`scripts/validate-graph.mjs` によるサンプル検証 → `.github/workflows/ci.yml`（`pnpm validate`）
 
 **完了条件**: `pnpm build` と `pnpm test` が通る。サンプル graph.json の検証が CI で通る。
 

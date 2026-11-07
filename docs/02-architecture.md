@@ -48,7 +48,7 @@
 
 ### ② graph.json
 
-- 仕様は `03-graph-schema.md`、JSON Schema は `schema/graph.schema.json`
+- 仕様は `03-graph-schema.md`、JSON Schema は `packages/schema/graph.schema.json`
 - スクショは graph.json からの相対パスで参照する
 
 ### ③ ビューア

@@ -1,5 +1,5 @@
 {
-  "$schema": "../schema/graph.schema.json",
+  "$schema": "../packages/schema/graph.schema.json",
   "version": 1,
   "project": {
     "name": "race-results (sample)",
