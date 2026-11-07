@@ -1,8 +1,9 @@
 /**
  * トップバー: 展開／重ねる、フロー切替（graph.flows から生成）、キャッシュ、視点リセット、開く（▾ メニュー）、
- * 差分のピル（?prev= があるとき）、孤立メモ（あるとき）
+ * ラベル（すべて／関連のみ／なし）、検索ボックス、差分のピル（?prev= があるとき）、孤立メモ（あるとき）
  */
 import type { Flow } from '@stack-atlas/schema';
+import type { LabelMode } from '../state';
 import { h } from './dom';
 
 export interface TopbarOptions {
@@ -20,6 +21,11 @@ export interface TopbarOptions {
   diff?: { text: string; title: string };
   onDiffToggle(on: boolean): void;
   onOrphans(): void;
+  /** 「ラベル」の初期値と変更 */
+  labelMode: LabelMode;
+  onLabelMode(mode: LabelMode): void;
+  /** 検索ボックス（ui/search.ts）。ラベルの右に置く */
+  search?: HTMLElement;
 }
 
 export interface Topbar {
@@ -28,6 +34,7 @@ export interface Topbar {
   setCache(on: boolean): void;
   /** 孤立メモの件数（0 なら隠す） */
   setOrphanCount(n: number): void;
+  setLabelMode(mode: LabelMode): void;
 }
 
 function segment(
@@ -88,6 +95,23 @@ export function createTopbar(o: TopbarOptions): Topbar {
   });
   const resetBtn = h('button', { class: 'btn', attrs: { type: 'button' } }, '視点リセット');
   resetBtn.addEventListener('click', () => o.onReset());
+
+  const labels = segment(
+    [
+      { label: 'すべて', value: 'all' },
+      { label: '関連のみ', value: 'related' },
+      { label: 'なし', value: 'none' },
+    ],
+    o.labelMode,
+    (v) => o.onLabelMode(v as LabelMode),
+  );
+  labels.el.id = 'labelSeg';
+  const labelGroup = h(
+    'div',
+    { class: 'labelseg', title: 'ラベルの出し方。ノードが多いときは「関連のみ」が既定' },
+    h('span', { class: 'lbl' }, 'ラベル'),
+    labels.el,
+  );
 
   // 「開く ▾」メニュー: graph.json を開く／前回と比較
   const menu = h('div', { class: 'menu', attrs: { role: 'menu' } });
@@ -174,6 +198,8 @@ export function createTopbar(o: TopbarOptions): Topbar {
     cacheBtn,
     resetBtn,
     openMenu,
+    labelGroup,
+    o.search ?? null,
     diffBtn,
     orphanBtn,
     h('div', { class: 'sp' }),
@@ -190,5 +216,6 @@ export function createTopbar(o: TopbarOptions): Topbar {
       orphanBtn.hidden = n <= 0;
       orphanBtn.textContent = `孤立メモ (${n})`;
     },
+    setLabelMode: (m) => labels.set(m),
   };
 }

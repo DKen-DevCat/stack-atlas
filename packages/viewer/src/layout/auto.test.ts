@@ -1,13 +1,17 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { buildModel } from '../graph/model';
+import { makeSyntheticGraph } from '../graph/synthetic';
 import {
   autoLayout,
   LABEL_W,
+  targetRows,
   type LayoutEdgeInput,
   type LayoutNodeInput,
   type LayoutResult,
 } from './auto';
+import { footprintOf } from './plate';
 
 const EPS = 1e-6;
 
@@ -339,5 +343,98 @@ describe('scale', () => {
     const ms = performance.now() - t0;
     expect(ms).toBeLessThan(500);
     expectSane(nodes, r);
+  });
+});
+
+describe('growth (Phase 7: 中身に合わせて板を広げる)', () => {
+  const synth = () => {
+    const g = makeSyntheticGraph();
+    const m = buildModel(g);
+    const nodes: LayoutNodeInput[] = m.nodes.map((x) => ({
+      id: x.id,
+      layer: x.layerIndex,
+      footprint: footprintOf(x),
+      screen: x.isScreen,
+    }));
+    return { m, nodes, edges: g.edges.map((e) => ({ from: e.from, to: e.to })) };
+  };
+  const rowsOf = (nodes: readonly LayoutNodeInput[], res: LayoutResult, layer: number) => {
+    const zs = new Map<number, number[]>();
+    for (const x of nodes) {
+      if (x.layer !== layer) continue;
+      const p = res.positions.get(x.id)!;
+      const k = Math.round(p.z * 1000) / 1000;
+      zs.set(
+        k,
+        [...(zs.get(k) ?? []), p.x].sort((a, b) => a - b),
+      );
+    }
+    return [...zs.entries()].sort((a, b) => a[0] - b[0]).map(([, xs]) => xs);
+  };
+
+  it('targetRows: ceil(sqrt(n / 6)) を 1..4 に収める', () => {
+    expect([0, 1, 6, 7, 24, 25, 54, 55, 96, 97, 300].map(targetRows)).toEqual([
+      1, 1, 1, 2, 2, 3, 3, 4, 4, 4, 4,
+    ]);
+  });
+
+  it('250 ノードの合成 graph: 板が広がり、段は 4 以下、重なりなし、ラベル幅のピッチを守る', () => {
+    const { nodes, edges } = synth();
+    expect(nodes.length).toBe(250);
+    const r = autoLayout(nodes, edges);
+    expectSane(nodes, r);
+    expect(r.plate.width).toBeGreaterThan(100);
+    expect(r.plate.depth).toBeGreaterThan(20);
+    for (const layer of [0, 2, 3]) {
+      const rows = rowsOf(
+        nodes.filter((x) => !x.screen),
+        r,
+        layer,
+      );
+      expect(rows.length, `layer ${layer}`).toBeLessThanOrEqual(4);
+      for (const xs of rows)
+        for (let i = 1; i < xs.length; i++)
+          expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(LABEL_W + 1.6 - 1e-6);
+    }
+    // 画面（14 枚）は 1 段 3 枚まで → 5 段
+    const screens = rowsOf(
+      nodes.filter((x) => x.screen),
+      r,
+      1,
+    );
+    expect(screens.length).toBe(5);
+    for (const xs of screens) expect(xs.length).toBeLessThanOrEqual(3);
+  });
+
+  it('画面 12 枚は 4 段になり、板の奥行きが 20 を超える', () => {
+    const nodes = [n('top', 0), ...Array.from({ length: 12 }, (_, i) => n(`s${i}`, 1, 6.4, 4.2))];
+    const r = autoLayout(
+      nodes,
+      nodes.slice(1).map((x) => ({ from: 'top', to: x.id })),
+    );
+    expectSane(nodes, r);
+    expect(rowsOf(nodes.slice(1), r, 1).map((xs) => xs.length)).toEqual([3, 3, 3, 3]);
+    expect(r.plate.depth).toBeGreaterThan(20);
+  });
+
+  it('小さな graph は 41 × 20 のまま（fixture の見た目を変えない）', () => {
+    const nodes = [n('a', 0), n('b', 0), n('c', 1), n('d', 1), n('e', 2)];
+    const r = autoLayout(nodes, [{ from: 'a', to: 'c' }]);
+    expect(r.plate).toEqual({ width: 41, depth: 20 });
+  });
+
+  it('決定的で、全体が x の中央に寄っている', () => {
+    const { nodes, edges } = synth();
+    const a = autoLayout(nodes, edges);
+    expect(autoLayout(nodes, edges)).toEqual(a);
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const x of nodes) {
+      const p = a.positions.get(x.id)!;
+      const w = Math.max(x.footprint.w, LABEL_W);
+      lo = Math.min(lo, p.x - w / 2);
+      hi = Math.max(hi, p.x + w / 2);
+    }
+    expect(Math.abs(lo + hi)).toBeLessThan(1e-6);
   });
 });

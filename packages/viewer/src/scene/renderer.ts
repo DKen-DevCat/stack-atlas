@@ -27,13 +27,35 @@ export interface SceneContext {
   dispose(): void;
 }
 
+/** プロトタイプの板の縦横比（41 : 20）。板がこれより横長なら視点リセット位置を正面寄りにする */
+const BASE_PLATE_ASPECT = 41 / 20;
+
+/**
+ * 視点リセットの位置。プロトタイプの (24, 22, 42) をシーンの大きさで掛ける。
+ * 横長の板（縦横比が 41:20 より大きい）では、x 成分を縦横比の分だけ縮めて正面寄り
+ * （板の長辺が画面の横に沿う）にし、y 成分を √(比) だけ上げて見下ろす角度を付ける（段が重なって見えないように）
+ */
+export function homePosition(
+  sceneScale: number,
+  plateAspect: number,
+  portrait: boolean,
+): THREE.Vector3 {
+  const base = portrait ? new THREE.Vector3(30, 32, 66) : new THREE.Vector3(24, 22, 42);
+  const ratio = Math.max(1, plateAspect / BASE_PLATE_ASPECT);
+  base.x /= ratio;
+  base.y *= Math.min(1.6, Math.sqrt(ratio));
+  return base.multiplyScalar(sceneScale);
+}
+
 /**
  * @param sceneScale プロトタイプ（板 41 幅・4 層）を 1 としたシーンの大きさ。カメラの距離に掛ける
+ * @param plateAspect 板の幅 ÷ 奥行き（視点リセット位置の向きに使う）
  */
 export function createSceneContext(
   stage: HTMLElement,
   labels: HTMLElement,
   sceneScale: number,
+  plateAspect = BASE_PLATE_ASPECT,
 ): SceneContext {
   const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: false });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -53,10 +75,7 @@ export function createSceneContext(
     500 * sceneScale,
   );
   const home = () =>
-    (window.innerWidth / window.innerHeight < 1
-      ? new THREE.Vector3(30, 32, 66)
-      : new THREE.Vector3(24, 22, 42)
-    ).multiplyScalar(sceneScale);
+    homePosition(sceneScale, plateAspect, window.innerWidth / window.innerHeight < 1);
   camera.position.copy(home());
 
   const controls = new OrbitControls(camera, renderer.domElement);

@@ -143,6 +143,58 @@ code {
 .sp {
   flex: 1;
 }
+.labelseg {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.labelseg .lbl {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.searchbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #1a1f2a;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 0 8px;
+}
+.searchbox.active {
+  border-color: #ff3b3b88;
+}
+.searchbox.empty {
+  border-color: #fbbf2488;
+}
+.searchbox input.search {
+  background: none;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  font-size: 12px;
+  padding: 6px 0;
+  width: 190px;
+}
+.searchbox input.search::placeholder {
+  color: var(--muted);
+}
+.searchbox .count {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+.searchbox .count:empty {
+  display: none;
+}
+.searchbox.active .count {
+  color: #ffd5d5;
+}
+.searchbox.empty .count {
+  color: var(--warn);
+}
 .repo {
   font-family: var(--mono);
   font-size: 11px;
@@ -151,14 +203,19 @@ code {
 }
 
 /* ---- 層チップ ---- */
-.layers {
+.left {
   position: fixed;
   left: 14px;
   top: 96px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   z-index: 4;
+}
+.layers {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .lchip {
   display: flex;
@@ -187,6 +244,41 @@ code {
 }
 .lchip.off {
   opacity: 0.35;
+}
+
+/* ---- kind チップ（層チップの下） ---- */
+.kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 220px;
+}
+.kchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #151922cc;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 3px 7px;
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+.kchip i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+.kchip span {
+  color: var(--muted);
+}
+.kchip.off {
+  opacity: 0.35;
+  text-decoration: line-through;
 }
 
 /* ---- 凡例 ---- */
@@ -348,6 +440,28 @@ code {
 .nl.flow {
   border-color: var(--cyan);
   color: #cffafe;
+}
+/* ラベルの LOD（ui/labels.ts）: 遠い・多いときは点に畳む、「関連のみ」「なし」は隠す */
+.nl.lod-dot {
+  font-size: 0;
+  line-height: 0;
+  padding: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--kc, #9ca3af);
+  border-color: #0d0f14;
+  opacity: 0.85;
+  transform: translateY(-4px);
+}
+.nl.lod-dot > * {
+  display: none;
+}
+.nl.lod-dot.dim {
+  opacity: 0.15;
+}
+.nl.lod-hide {
+  display: none;
 }
 .pl {
   font-size: 11px;
@@ -853,7 +967,7 @@ table.ct td:first-child {
   .repo {
     display: none;
   }
-  .layers {
+  .left {
     top: 150px;
     left: 10px;
   }
@@ -863,6 +977,15 @@ table.ct td:first-child {
     font-size: 11px;
   }
   .lchip span {
+    display: none;
+  }
+  .kinds {
+    display: none;
+  }
+  .searchbox input.search {
+    width: 110px;
+  }
+  .labelseg .lbl {
     display: none;
   }
   .legend {

@@ -104,12 +104,33 @@ export class ScreenCanvas {
   /** フォント読み込み後などにベースから描き直す */
   redraw(): void {
     this.drawBase();
-    this.render(this.lastOverlay);
+    this.render(this.lastOverlay, true);
   }
 
-  /** ベースの上に region のハイライトを重ねる */
-  render(ctx: RegionOverlayContext | null): void {
+  /** 前回描いた overlay の内容（region ごとの状態）。同じなら描き直さない */
+  private lastSignature = '';
+
+  private signatureOf(ctx: RegionOverlayContext | null): string {
+    const a = ctx?.hl.a;
+    if (!ctx || !a) return '';
+    const { down, up } = ctx.hl;
+    let sig = '';
+    for (const r of this.regions) {
+      const st = r.ref === a ? 's' : down.has(r.ref) ? 'd' : up.has(r.ref) ? 'u' : '';
+      if (st) sig += `${r.ref}:${st}${ctx.isVisible(r.ref) ? '' : '-'}|`;
+    }
+    return sig;
+  }
+
+  /**
+   * ベースの上に region のハイライトを重ねる。
+   * この画面の regions に関係しない変化（ほかのノードのホバー）では描き直さない（250 ノードでのホバーを軽くする）
+   */
+  render(ctx: RegionOverlayContext | null, force = false): void {
     this.lastOverlay = ctx;
+    const sig = this.signatureOf(ctx);
+    if (!force && sig === this.lastSignature) return;
+    this.lastSignature = sig;
     const c = this.canvas.getContext('2d');
     if (!c) return;
     c.clearRect(0, 0, CW, CH);

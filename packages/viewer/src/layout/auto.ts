@@ -6,10 +6,15 @@
  * - `fixed` のあるノードは動かさない
  * - 上の層から順に、子を親群の x の重心に置き、層内は footprint が重ならないよう押し広げる
  * - 全ノードが板（plate）の中に収まる。板は minPlateWidth × minPlateDepth を下回らない
+ * - 板は中身に合わせて広がる（詰め込まない）。層ごとに目標の段数
+ *   rows = clamp(ceil(sqrt(n / 6)), 1, 4)（n は画面以外のノード数）を決め、1 段 ceil(n / rows) 個を
+ *   ラベル幅込みのピッチ（max(w, LABEL_W) + gap）で並べられる幅を求める。板の幅はその全層の最大。
+ *   画面ノードは自分たちだけの段に 1 段 3 枚まで（6 枚で 2 段、12 枚で 4 段）。
+ *   段が 4 段以上の層は段間 ROW_GAP を保ち、板の奥行きを 20 より広げる
  *
  * 実装メモ:
  * - 順序の揺らぎを避けるため、入力を id 昇順に正規化してから処理する（入力順・辺の順に依存しない）。
- * - 画面ノードは footprint.w が SCREEN_MIN_W 以上のものとして判定する（kind を持たないため）。
+ * - 画面ノードは `screen` で指定する。指定がなければ footprint.w が SCREEN_MIN_W 以上のものとみなす（後方互換）。
  */
 
 export interface LayoutNodeInput {
@@ -20,6 +25,8 @@ export interface LayoutNodeInput {
   footprint: { w: number; d: number };
   /** graph.json の position。あれば固定 */
   fixed?: { x: number; z: number };
+  /** 画面ノードか（自分たちだけの段に 1 段 SCREENS_PER_ROW 枚まで並ぶ）。省略時は footprint.w ≥ 6 で判定 */
+  screen?: boolean;
 }
 
 export interface LayoutEdgeInput {
@@ -45,8 +52,13 @@ export interface LayoutResult {
 const SCREEN_MIN_W = 6;
 /** ラベル（HTML）の想定幅。x 方向の占有幅は max(footprint.w, LABEL_W) とする */
 export const LABEL_W = 4.5;
-/** 同じ層で段を分ける際の z 方向の理想的な段間隔 */
-const ROW_GAP = 4;
+/** 同じ層で段を分ける際の z 方向の理想的な段間隔（ラベルの高さ分。3 段までは板の奥行き 20 に収まる） */
+const ROW_GAP = 5.5;
+/** 目標の段数の上限と、1 段あたりの目安（rows = ceil(sqrt(n / ROW_DIVISOR))） */
+export const MAX_TARGET_ROWS = 4;
+const ROW_DIVISOR = 6;
+/** 画面ノードの 1 段あたりの最大枚数 */
+export const SCREENS_PER_ROW = 3;
 const MAX_RELAX_ITERATIONS = 50;
 const EPS = 1e-9;
 
@@ -55,6 +67,12 @@ interface Row {
   members: number[];
   /** members と同じ並びの x */
   xs: number[];
+}
+
+/** 画面以外のノードが n 個ある層の目標段数 */
+export function targetRows(n: number): number {
+  if (n <= 0) return 1;
+  return Math.max(1, Math.min(MAX_TARGET_ROWS, Math.ceil(Math.sqrt(n / ROW_DIVISOR))));
 }
 
 function cmpStr(a: string, b: string): number {
@@ -133,7 +151,8 @@ export function autoLayout(
 
   const W = (i: number) => Math.max(ns[i]!.footprint.w, LABEL_W);
   const D = (i: number) => ns[i]!.footprint.d;
-  const isScreen = (i: number) => ns[i]!.footprint.w >= SCREEN_MIN_W;
+  const screenFlags = ns.map((n) => n.screen ?? n.footprint.w >= SCREEN_MIN_W);
+  const isScreen = (i: number) => screenFlags[i]!;
 
   const byLayer = new Map<number, number[]>();
   for (let i = 0; i < N; i++) {
@@ -146,18 +165,44 @@ export function autoLayout(
 
   let maxItemW = 0;
   for (let i = 0; i < N; i++) if (!isFixed[i]) maxItemW = Math.max(maxItemW, W(i));
-  /** 1 段に収めたい幅 */
-  const cap = Math.max(minW - 2 * gap, maxItemW);
+  /**
+   * 層ごとに、目標の段数で並べたときの 1 段の幅（ラベル幅込みのピッチ）。
+   * 画面は 1 段 SCREENS_PER_ROW 枚、それ以外は 1 段 ceil(n / targetRows(n)) 個
+   */
+  const rowWidth = (ids: number[], perRow: number): number => {
+    if (ids.length === 0) return 0;
+    const pitch = Math.max(...ids.map(W)) + gap;
+    return perRow * pitch - gap;
+  };
+  const layerNeed = new Map<number, number>();
+  for (const [layer, all] of byLayer) {
+    const free = all.filter((i) => !isFixed[i]);
+    const screens = free.filter(isScreen);
+    const others = free.filter((i) => !isScreen(i));
+    const perOthers = Math.ceil(others.length / targetRows(others.length));
+    layerNeed.set(
+      layer,
+      Math.max(
+        rowWidth(others, perOthers),
+        rowWidth(screens, Math.min(SCREENS_PER_ROW, screens.length)),
+      ),
+    );
+  }
+  /** 1 段に収めたい幅（全層共通。どの層も目標の段数に収まるよう、中身に合わせて広げる） */
+  const cap = Math.max(minW - 2 * gap, maxItemW, ...layerNeed.values());
 
   /** 段（row）を z 方向に積み、z = 0 を中心にして Z に書き込む */
   const assignRowZ = (rows: Row[]): void => {
     const depths = rows.map((r) => Math.max(0, ...r.members.map(D)));
     const sumD = depths.reduce((s, d) => s + d, 0);
     // 段が複数あるときは板の奥行きを使って段間を広げる（ラベルが同じ基線に並ばないように）
+    // 4 段以上になる層は詰めずに ROW_GAP を保ち、板の奥行きのほうを広げる
     const rowGap =
-      rows.length > 1
-        ? Math.max(gap, Math.min(ROW_GAP, (minD - 2 * gap - sumD) / (rows.length - 1)))
-        : gap;
+      rows.length > 3
+        ? ROW_GAP
+        : rows.length > 1
+          ? Math.max(gap, Math.min(ROW_GAP, (minD - 2 * gap - sumD) / (rows.length - 1)))
+          : gap;
     const total = sumD + rowGap * Math.max(0, rows.length - 1);
     let z = -total / 2;
     rows.forEach((r, k) => {
@@ -172,7 +217,9 @@ export function autoLayout(
   };
 
   // ---- 最上段 ----
-  const layoutTop = (free: number[]): Row[] => {
+  const layoutTop = (free: number[], layer: number): Row[] => {
+    // 最上段も目標の段数で折り返す（板が他の層のために広くても、1 段に詰め込みすぎない）
+    const topCap = Math.max(minW - 2 * gap, maxItemW, layerNeed.get(layer) ?? 0);
     // 全体グラフでの連結成分
     const parent = ns.map((_, i) => i);
     const find = (a: number): number => {
@@ -237,7 +284,7 @@ export function autoLayout(
         const sp = ci > 0 && k === 0 ? 2 * gap : k > 0 ? gap : 0;
         const row = rowsOf[rowsOf.length - 1]!;
         const add = row.length === 0 ? 0 : sp;
-        if (row.length > 0 && cur + add + W(id) > cap) {
+        if (row.length > 0 && cur + add + W(id) > topCap + EPS) {
           rowsOf.push([{ id, sp: 0 }]);
           cur = W(id);
         } else {
@@ -290,7 +337,7 @@ export function autoLayout(
       xs.reduce((s, i) => s + W(i), 0) + gap * Math.max(0, xs.length - 1);
     const screens = free.filter(isScreen);
     const others = free.filter((i) => !isScreen(i));
-    const needSplit = widthOf(free) > cap;
+    const needSplit = widthOf(free) > cap || screens.length > SCREENS_PER_ROW;
     const groups =
       needSplit && screens.length > 0 && others.length > 0 ? [screens, others] : [free];
 
@@ -302,11 +349,13 @@ export function autoLayout(
           Number(isOrphan.has(a)) - Number(isOrphan.has(b)) ||
           a - b,
       );
-      // 段数 k: 各段の幅の合計が cap に収まる最小値（i mod k の振り分けで x の分布を保つ）
-      // 画面以外は 6 個以上で 2 段、11 個以上で 3 段に千鳥配置する
+      // 段数 k: 目標の段数（画面は 1 段 3 枚まで）以上で、各段の幅の合計が cap に収まる最小値
+      // （i mod k の振り分けで x の分布を保ち、段ごとに半ピッチずらして千鳥配置する）
       const isScreenGroup = sorted.length > 0 && sorted.every(isScreen);
-      const kMin = isScreenGroup ? 1 : sorted.length > 10 ? 3 : sorted.length > 5 ? 2 : 1;
-      let k = Math.max(kMin, Math.ceil(widthOf(sorted) / cap));
+      const kMin = isScreenGroup
+        ? Math.ceil(sorted.length / SCREENS_PER_ROW)
+        : targetRows(sorted.filter((i) => !isScreen(i)).length);
+      let k = kMin;
       let buckets: number[][] = [];
       for (; ; k++) {
         buckets = Array.from({ length: k }, () => []);
@@ -319,17 +368,36 @@ export function autoLayout(
         if (b.length === 0) continue;
         // 段ごとに半ピッチずつずらして千鳥にする（全段の平均は 0 なので重心は保たれる）
         const off = (bi - (k - 1) / 2) * half;
-        const xs = resolve1D(
-          b.map(W),
+        const ws = b.map(W);
+        let xs = resolve1D(
+          ws,
           b.map((i) => target.get(i)! + off),
           gap,
         );
-        let lo = Infinity;
-        let hi = -Infinity;
-        b.forEach((id, j) => {
-          lo = Math.min(lo, xs[j]! - W(id) / 2);
-          hi = Math.max(hi, xs[j]! + W(id) / 2);
-        });
+        const extent = (): [number, number] => {
+          let lo = Infinity;
+          let hi = -Infinity;
+          b.forEach((id, j) => {
+            lo = Math.min(lo, xs[j]! - W(id) / 2);
+            hi = Math.max(hi, xs[j]! + W(id) / 2);
+          });
+          return [lo, hi];
+        };
+        let [lo, hi] = extent();
+        if (hi - lo > cap + EPS) {
+          // 親の下に置けずに段が板より広がった（親なしの塊が端に寄る等）。
+          // 並び順は保ったまま目標位置を板の幅に線形に圧縮してから、もう一度押し広げる
+          const inner = cap - (ws[0]! + ws[ws.length - 1]!) / 2;
+          const span = Math.max(EPS, xs[xs.length - 1]! - xs[0]!);
+          const c0 = -cap / 2 + ws[0]! / 2;
+          const packed = resolve1D(
+            ws,
+            xs.map((x) => c0 + ((x - xs[0]!) / span) * inner),
+            gap,
+          );
+          xs = packed;
+          [lo, hi] = extent();
+        }
         if (hi - lo <= cap + EPS) {
           const shift = lo < -cap / 2 ? -cap / 2 - lo : hi > cap / 2 ? cap / 2 - hi : 0;
           for (let j = 0; j < xs.length; j++) xs[j] = xs[j]! + shift;
@@ -380,10 +448,22 @@ export function autoLayout(
     const all = byLayer.get(layer)!;
     const free = all.filter((i) => !isFixed[i]);
     if (free.length === 0) return;
-    const rows = li === 0 ? layoutTop(free) : layoutLower(free, layer);
+    const rows = li === 0 ? layoutTop(free, layer) : layoutLower(free, layer);
     assignRowZ(rows);
     if (free.length < all.length) relax(all);
   });
+
+  // ---- 全体を x の中央に寄せる（固定ノードがあるときは動かさない）----
+  if (N > 0 && !isFixed.some(Boolean)) {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = 0; i < N; i++) {
+      lo = Math.min(lo, X[i]! - W(i) / 2);
+      hi = Math.max(hi, X[i]! + W(i) / 2);
+    }
+    const shift = -(lo + hi) / 2;
+    for (let i = 0; i < N; i++) X[i] = X[i]! + shift;
+  }
 
   // ---- 板サイズ（原点中心・全層共通）----
   let needX = 0;

@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { TONE_COLORS } from '../graph/kinds';
 import type { ModelNode } from '../graph/model';
-import { layerY, SCREEN_H, SCREEN_W } from '../layout/plate';
+import { LAYER_GAP, layerY, SCREEN_H, SCREEN_W } from '../layout/plate';
 import { ScreenCanvas } from '../screen/texture';
 import type { NodeVisual } from '../state';
 
@@ -154,9 +154,10 @@ export function positionNodes(
   nodes: Iterable<SceneNode>,
   layerCount: number,
   explode: number,
+  gap = LAYER_GAP,
 ): void {
   for (const n of nodes) {
-    const y = layerY(n.m.layerIndex, layerCount, explode);
+    const y = layerY(n.m.layerIndex, layerCount, explode, gap);
     if (n.type === 'screen') {
       n.pivot.position.set(n.x, y - 0.33, n.z + 1.5);
       n.pivot.rotation.x = -Math.PI / 2 + explode * 1.05;

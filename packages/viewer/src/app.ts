@@ -15,7 +15,7 @@ import {
 import type { GraphModel } from './graph/model';
 import { resolveAssetUrl, type LoadResult } from './graph/load';
 import { placeGhosts, plateWithGhosts } from './layout/ghosts';
-import { computeSceneLayout } from './layout/plate';
+import { computeSceneLayout, layerGapFor, sceneScaleFor } from './layout/plate';
 import { CameraAnimator } from './scene/camera';
 import {
   applyEdgeVisual,
@@ -46,11 +46,18 @@ import {
 import { pickNode } from './scene/picking';
 import { createPlates, positionPlates } from './scene/plates';
 import { createSceneContext, type SceneContext } from './scene/renderer';
-import { computeVisuals, highlightTarget, initialState, type ViewState } from './state';
+import {
+  computeVisuals,
+  highlightTarget,
+  initialState,
+  isNodeShown,
+  type LabelMode,
+  type ViewState,
+} from './state';
 import { h } from './ui/dom';
 import { createFlowPill, type FlowPill } from './ui/flowPill';
 import { createLayerChips } from './ui/layerChips';
-import { makeNodeLabel } from './ui/labels';
+import { alwaysLabelLayers, applyLabelDisplay, labelMode, makeNodeLabel } from './ui/labels';
 import { createLegend } from './ui/legend';
 import {
   downloadMemos,
@@ -62,6 +69,7 @@ import {
 } from './ui/memos';
 import { OrphanList } from './ui/orphans';
 import { Panel, type ScreenInfo } from './ui/panel';
+import { createKindChips, createSearchBox, type SearchBox } from './ui/search';
 import { createTopbar, type Topbar } from './ui/topbar';
 import type * as THREE from 'three';
 
@@ -102,6 +110,12 @@ export class Viewer {
   private readonly ghosts: Map<string, GhostSceneNode> = new Map();
   private removedEdges: SceneEdge[] = [];
   private memoApiUrl: string | undefined;
+  private readonly search: SearchBox;
+  private readonly layerGap: number;
+  private readonly sceneScale: number;
+  private readonly alwaysLabel: ReadonlySet<number>;
+  private lastLod = 0;
+  private readonly plateSize: { width: number; depth: number };
   private explode = 1;
   private screenKey = '';
   private raf = 0;
@@ -111,7 +125,8 @@ export class Viewer {
   constructor(private readonly opts: ViewerOptions) {
     const { model, load } = opts;
     this.model = model;
-    this.state = initialState(model.layers.length);
+    this.state = initialState(model.layers.length, model.nodes.length);
+    this.alwaysLabel = alwaysLabelLayers(model.nodes);
     this.diff = opts.prev ? diffGraphs(opts.prev, model.graph) : null;
     this.marks = this.diff ? diffMarks(this.diff) : null;
     this.prevNodes = new Map((opts.prev?.nodes ?? []).map((n) => [n.id, n]));
@@ -119,7 +134,18 @@ export class Viewer {
 
     const stage = h('div', { class: 'stage' });
     const labels = h('div', { class: 'labels' });
+    this.search = createSearchBox({
+      nodes: model.nodes.map((n) => ({ id: n.id, name: n.node.name, file: n.node.file })),
+      onMatches: (ids) => {
+        this.state.searchMatches = ids ? new Set(ids) : null;
+        this.applyState();
+      },
+      onJump: (id) => this.select(id, true),
+    });
     this.topbar = createTopbar({
+      labelMode: this.state.labelMode,
+      onLabelMode: (m) => this.setLabelMode(m),
+      search: this.search.el,
       ...(model.graph.project?.name ? { projectName: model.graph.project.name } : {}),
       ...(model.graph.project?.sources ? { sources: model.graph.project.sources } : {}),
       flows: model.flows,
@@ -183,12 +209,20 @@ export class Viewer {
       stage,
       labels,
       this.topbar.el,
-      createLayerChips(model.layers, (i, v) => {
-        this.state.layerVisible[i] = v;
-        const p = this.plates[i];
-        if (p) p.visible = v;
-        this.applyState();
-      }),
+      h(
+        'div',
+        { class: 'left' },
+        createLayerChips(model.layers, (i, v) => {
+          this.state.layerVisible[i] = v;
+          const p = this.plates[i];
+          if (p) p.visible = v;
+          this.applyState();
+        }),
+        createKindChips(model.nodes, (kind, v) => {
+          this.state.kindVisible[kind] = v;
+          this.applyState();
+        }),
+      ),
       createLegend(model.layers),
       this.pill.el,
       this.panel.el,
@@ -203,9 +237,15 @@ export class Viewer {
         ? placeGhosts(model, layout.positions, opts.prev, this.diff.removedNodes)
         : new Map<string, { x: number; z: number; layerIndex: number }>();
     layout.plate = plateWithGhosts(layout.plate, ghostPlaces.values());
-    const span = Math.max(1, model.layers.length - 1) * 7.5;
-    const sceneScale = Math.max(1, layout.plate.width / 41, layout.plate.depth / 20, span / 22.5);
-    this.ctx = createSceneContext(stage, labels, sceneScale);
+    this.layerGap = layerGapFor(layout.plate.depth);
+    this.sceneScale = sceneScaleFor(layout.plate, model.layers.length, this.layerGap);
+    this.ctx = createSceneContext(
+      stage,
+      labels,
+      this.sceneScale,
+      layout.plate.width / layout.plate.depth,
+    );
+    this.plateSize = layout.plate;
     this.plates = createPlates(this.ctx.scene, model.layers, layout.plate);
     this.nodes = createSceneNodes(model.nodes, {
       scene: this.ctx.scene,
@@ -247,7 +287,19 @@ export class Viewer {
 
     this.bindPointer();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !(e.target instanceof HTMLTextAreaElement)) this.clearSelection();
+      const t = e.target;
+      const typing =
+        t instanceof HTMLTextAreaElement ||
+        t instanceof HTMLInputElement ||
+        (t instanceof HTMLElement && t.isContentEditable);
+      if (typing) return;
+      if (e.key === 'Escape') {
+        if (this.search.matches) this.search.clear();
+        this.clearSelection();
+      } else if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        this.search.focus();
+      }
     };
     window.addEventListener('keydown', onKey);
     this.cleanups.push(() => window.removeEventListener('keydown', onKey));
@@ -256,6 +308,7 @@ export class Viewer {
     this.refreshMemoBadges();
     this.layout();
     this.applyState();
+    this.updateLabelLod(true);
     // スクショは初回描画のあとに読み込む（遅延読み込み）
     window.setTimeout(() => this.screens.forEach((s) => s.screen.load()), 0);
     void document.fonts?.ready.then(() => {
@@ -297,24 +350,68 @@ export class Viewer {
     for (const se of this.removedEdges) {
       setRemovedEdgeVisual(se, v.ghostOpacity, (n) => layerOn(n.m.layerIndex));
     }
-    // 画面テクスチャはハイライト対象（と層の表示）が変わったときだけ描き直す
-    const key = `${v.hl.a ?? ''}|${this.state.layerVisible.join(',')}`;
+    // 画面テクスチャはハイライト対象（と層・kind の表示）が変わったときだけ描き直す
+    const kinds = Object.entries(this.state.kindVisible)
+      .filter(([, on]) => !on)
+      .map(([k]) => k)
+      .join(',');
+    const key = `${v.hl.a ?? ''}|${this.state.layerVisible.join(',')}|${kinds}`;
     if (key !== this.screenKey) {
       this.screenKey = key;
       const isVisible = (id: string) => this.isNodeVisible(id);
       for (const s of this.screens) s.screen.render({ hl: v.hl, isVisible });
     }
+    this.lastVisuals = v;
+    this.updateLabelLod(true);
+  }
+
+  private lastVisuals: ReturnType<typeof computeVisuals> | null = null;
+
+  /**
+   * ラベルの LOD（ui/labels.ts の labelMode）。カメラからの距離で判定するので、
+   * 描画ループから 200ms に 1 回、state が変わったときは即座に反映する
+   */
+  private updateLabelLod(force = false): void {
+    const now = performance.now();
+    if (!force && now - this.lastLod < 200) return;
+    this.lastLod = now;
+    const v = this.lastVisuals;
+    if (!v) return;
+    const n = this.nodes.size;
+    const cam = this.ctx.camera.position;
+    const mode = this.state.labelMode;
+    for (const sn of this.nodes.values()) {
+      const nv = v.nodes.get(sn.m.id);
+      if (!nv) continue;
+      const obj = sn.type === 'screen' ? sn.pivot : sn.hit;
+      const d = mode === 'all' && n > 80 ? obj.position.distanceTo(cam) : 0;
+      applyLabelDisplay(
+        sn.label,
+        labelMode(n, d, {
+          mode,
+          visual: nv.visual,
+          alwaysLayer: this.alwaysLabel.has(sn.m.layerIndex),
+          sceneScale: this.sceneScale,
+        }),
+      );
+    }
+  }
+
+  private setLabelMode(m: LabelMode): void {
+    this.state.labelMode = m;
+    this.topbar.setLabelMode(m);
+    this.updateLabelLod(true);
   }
 
   private isNodeVisible(id: string): boolean {
     const n = this.model.byId.get(id);
-    return !!n && (this.state.layerVisible[n.layerIndex] ?? true);
+    return !!n && isNodeShown(this.state, n);
   }
 
   private layout(): void {
-    positionPlates(this.plates, this.explode);
-    positionNodes(this.nodes.values(), this.model.layers.length, this.explode);
-    positionNodes(this.ghosts.values(), this.model.layers.length, this.explode);
+    positionPlates(this.plates, this.explode, this.layerGap);
+    positionNodes(this.nodes.values(), this.model.layers.length, this.explode, this.layerGap);
+    positionNodes(this.ghosts.values(), this.model.layers.length, this.explode, this.layerGap);
     this.ctx.scene.updateMatrixWorld(true);
     updateEdgeGeometry(this.edges);
     if (this.removedEdges.length) {
@@ -324,7 +421,8 @@ export class Viewer {
     this.flow.rebuild();
   }
 
-  private setHover(id: string | null): void {
+  /** ホバー対象を変える（ラベルの mouseenter／レイキャスト／e2e の計測から呼ぶ） */
+  hover(id: string | null): void {
     if (id === this.state.hoverId) return;
     this.state.hoverId = id;
     this.applyState();
@@ -506,8 +604,8 @@ export class Viewer {
   // ---------------------------------------------------------------- input
 
   private bindLabel(el: HTMLElement, id: string): void {
-    el.addEventListener('mouseenter', () => !isTouch() && this.setHover(id));
-    el.addEventListener('mouseleave', () => !isTouch() && this.setHover(null));
+    el.addEventListener('mouseenter', () => !isTouch() && this.hover(id));
+    el.addEventListener('mouseleave', () => !isTouch() && this.hover(null));
     el.addEventListener('click', (ev) => {
       ev.stopPropagation();
       this.select(id);
@@ -535,7 +633,7 @@ export class Viewer {
       if (e.pointerType !== 'mouse' || e.buttons) return;
       const id = pick(e);
       dom.style.cursor = id ? 'pointer' : '';
-      this.setHover(id);
+      this.hover(id);
     };
     dom.addEventListener('pointerdown', onDown);
     dom.addEventListener('pointerup', onUp);
@@ -554,6 +652,7 @@ export class Viewer {
       this.layout();
     }
     this.cam.update(now);
+    this.updateLabelLod();
     if (this.state.cacheOn) {
       const s = 1 + 0.05 * Math.sin(now / 300);
       for (const n of this.nodes.values()) n.ring?.scale.set(s, 1, s);
@@ -572,8 +671,18 @@ export class Viewer {
     ghosts: number;
     removedEdges: number;
     orphans: number;
+    plate: { width: number; depth: number };
+    layerGap: number;
+    sceneScale: number;
+    labelMode: LabelMode;
+    searchMatches: number | null;
   } {
     return {
+      plate: this.plateSize,
+      layerGap: this.layerGap,
+      sceneScale: this.sceneScale,
+      labelMode: this.state.labelMode,
+      searchMatches: this.state.searchMatches ? this.state.searchMatches.size : null,
       nodes: this.nodes.size,
       edges: this.edges.length,
       screens: this.screens.length,

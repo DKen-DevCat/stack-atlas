@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import type { Layer } from '@stack-atlas/schema';
-import { layerY } from '../layout/plate';
+import { LAYER_GAP, layerY } from '../layout/plate';
 
 export const DEFAULT_LAYER_COLOR = '#9ca3af';
 
@@ -40,6 +40,10 @@ export function createPlates(
   });
 }
 
-export function positionPlates(plates: readonly THREE.Group[], explode: number): void {
-  plates.forEach((p, i) => (p.position.y = layerY(i, plates.length, explode) - 0.4));
+export function positionPlates(
+  plates: readonly THREE.Group[],
+  explode: number,
+  gap = LAYER_GAP,
+): void {
+  plates.forEach((p, i) => (p.position.y = layerY(i, plates.length, explode, gap) - 0.4));
 }

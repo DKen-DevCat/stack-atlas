@@ -1,6 +1,13 @@
 /**
- * 表示状態（ホバー・選択・フロー・キャッシュ・展開・層の表示）と、そこから決まる見た目。
- * 優先順位「ハイライト ＞ フロー ＞ キャッシュ ＞ 差分 ＞ 通常」はここ（computeVisuals）の 1 か所で決める。
+ * 表示状態（ホバー・選択・検索・フロー・キャッシュ・展開・層と kind の表示・ラベル）と、そこから決まる見た目。
+ * 優先順位はここ（computeVisuals）の 1 か所で決める:
+ *
+ * - 見た目: 「検索の一致 ＞ ホバー／選択のハイライト ＞ フロー ＞ キャッシュ ＞ 差分 ＞ 通常」。
+ *   検索中は一致ノードが `sel`、ホバー中の依存先・影響範囲は `down` / `up`、それ以外は `dim`
+ *   （検索はホバーと同じ「ハイライト」の扱いで、ホバーより上に乗る）。
+ * - 表示／非表示: 層チップ（layerVisible）と kind チップ（kindVisible）はどちらも同じ扱いで、
+ *   ノードは両方がオンのときだけ描き、エッジは両端が描かれるときだけ描く。
+ *
  * three.js・DOM に依存しない純関数。
  */
 import type { Edge } from '@stack-atlas/schema';
@@ -20,9 +27,24 @@ export interface ViewState {
   explodeTarget: number;
   /** layers と同じ長さ */
   layerVisible: boolean[];
+  /** kind チップで隠した kind（無いものは表示） */
+  kindVisible: Record<string, boolean>;
+  /** 検索に一致したノード id。null なら検索していない（空の一致は Set() で「0 件」） */
+  searchMatches: ReadonlySet<string> | null;
+  /** ラベルの出し方（docs/05）。all = すべて、related = 関連のみ、none = なし */
+  labelMode: LabelMode;
 }
 
-export function initialState(layerCount: number): ViewState {
+export type LabelMode = 'all' | 'related' | 'none';
+
+/** これを超えるノード数ではラベルの既定を「関連のみ」にし、遠いラベルを点にする */
+export const LABEL_LOD_NODES = 80;
+
+export function defaultLabelMode(nodeCount: number): LabelMode {
+  return nodeCount > LABEL_LOD_NODES ? 'related' : 'all';
+}
+
+export function initialState(layerCount: number, nodeCount = 0): ViewState {
   return {
     hoverId: null,
     selectedId: null,
@@ -31,7 +53,15 @@ export function initialState(layerCount: number): ViewState {
     diffOn: true,
     explodeTarget: 1,
     layerVisible: Array.from({ length: layerCount }, () => true),
+    kindVisible: {},
+    searchMatches: null,
+    labelMode: defaultLabelMode(nodeCount),
   };
+}
+
+/** 層と kind の両方で表示されているか */
+export function isNodeShown(state: ViewState, n: { layerIndex: number; node: { kind: string } }) {
+  return (state.layerVisible[n.layerIndex] ?? true) && (state.kindVisible[n.node.kind] ?? true);
 }
 
 export type NodeVisual = 'normal' | 'sel' | 'down' | 'up' | 'dim' | 'flow' | 'soft';
@@ -89,16 +119,24 @@ export function computeVisuals(
   const hl = computeHighlight(model, a);
   const flow = state.flowId ? model.flows.find((f) => f.id === state.flowId) : undefined;
   const flowSet = flow ? new Set(flow.steps.map((s) => s.node)) : null;
-  const layerOn = (i: number) => state.layerVisible[i] ?? true;
+  const search = state.searchMatches;
   const diffShown = !!diff && state.diffOn;
-  // 差分の色分けはハイライト・フロー・キャッシュがないときだけ
-  const diffActive = diffShown && !hl.a && !flowSet && !state.cacheOn;
+  // 差分の色分けはハイライト・検索・フロー・キャッシュがないときだけ
+  const diffActive = diffShown && !hl.a && !search && !flowSet && !state.cacheOn;
 
   const nodes = new Map<string, NodeVisualState>();
   for (const n of model.nodes) {
-    const visible = layerOn(n.layerIndex);
+    const visible = isNodeShown(state, n);
     let visual: NodeVisual = 'normal';
-    if (hl.a) {
+    if (search) {
+      visual = search.has(n.id)
+        ? 'sel'
+        : hl.a && (n.id === hl.a || hl.down.has(n.id))
+          ? 'down'
+          : hl.a && hl.up.has(n.id)
+            ? 'up'
+            : 'dim';
+    } else if (hl.a) {
       visual = n.id === hl.a ? 'sel' : hl.down.has(n.id) ? 'down' : hl.up.has(n.id) ? 'up' : 'dim';
     } else if (flowSet) {
       visual = flowSet.has(n.id) ? 'flow' : 'dim';
@@ -123,8 +161,12 @@ export function computeVisuals(
   const edges = model.edges.map((e): EdgeVisualState => {
     const fromN = model.byId.get(e.from);
     const toN = model.byId.get(e.to);
-    const visible = !!fromN && !!toN && layerOn(fromN.layerIndex) && layerOn(toN.layerIndex);
+    const visible = !!fromN && !!toN && isNodeShown(state, fromN) && isNodeShown(state, toN);
     const base = edgeBaseStyle(model, e);
+    if (search && !hl.a) {
+      const both = search.has(e.from) && search.has(e.to);
+      return { visible, color: base.color, opacity: both ? base.opacity : 0.05 };
+    }
     if (hl.a) {
       const h = edgeHighlight(hl, e);
       if (h === 'down') return { visible, color: HIGHLIGHT_COLORS.down, opacity: 1 };
@@ -137,7 +179,7 @@ export function computeVisuals(
 
   const ghostOpacity = !diffShown
     ? 0
-    : hl.a
+    : hl.a || search
       ? 0.06
       : flowSet || state.cacheOn
         ? 0.1
