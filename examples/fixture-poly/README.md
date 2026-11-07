@@ -76,13 +76,13 @@ fixture-poly/
 
 | from → to | kind | 見つける抽出器 |
 |---|---|---|
-| `infra:lambda_api/api` → `infra:aurora/db` | ref | terraform: `var.db_secret_arn` → `module.aurora.secret_arn` → `aws_secretsmanager_secret.db.arn` |
-| `infra:lambda_api/api` → `infra:app` | ref | terraform: `var.image_uri` → `"${aws_ecr_repository.app.repository_url}:api"`（root の式まで解決） |
-| `infra:lambda_api/{gmail_webhook,notify}` → `infra:app`, `infra:aurora/db` | ref | 同上 |
-| `infra:lambda_api/api` → `infra:cognito/this` | ref | terraform: `var.cognito_issuer` → `module.cognito.issuer` → `aws_cognito_user_pool.this.endpoint` |
-| `infra:aurora/this` ↔ instance | ref | `cluster_identifier = aws_rds_cluster.this.id`（同一ノードに畳むなら不要） |
+| `infra:lambda_api/api` → `infra:aurora/db` | flow | terraform: `var.db_secret_arn` → `module.aurora.secret_arn` → `aws_secretsmanager_secret.db.arn` |
+| `infra:lambda_api/api` → `infra:app` | flow | terraform: `var.image_uri` → `"${aws_ecr_repository.app.repository_url}:api"`（root の式まで解決） |
+| `infra:lambda_api/{gmail_webhook,notify}` → `infra:app`, `infra:aurora/db` | flow | 同上 |
+| `infra:lambda_api/api` → `infra:cognito/this` | flow | terraform: `var.cognito_issuer` → `module.cognito.issuer` → `aws_cognito_user_pool.this.endpoint` |
+| `infra:aurora/this` ↔ instance | flow | `cluster_identifier = aws_rds_cluster.this.id`（同一ノードに畳むなら不要） |
 | `infra:static_site/this` → `infra:static_site/site` | http | CloudFront origin → `bucket_regional_domain_name` |
-| `infra:scheduler_notify/daily` → `infra:lambda_api/notify` | ref | terraform: `var.lambda_arn` → `module.lambda_api.notify_arn` |
+| `infra:scheduler_notify/daily` → `infra:lambda_api/notify` | flow | terraform: `var.lambda_arn` → `module.lambda_api.notify_arn` |
 | `handler:cmd/api` → `handler:internal/api`, `lib:internal/auth`, `schema:internal/store` | uses | go: module 内 import |
 | `handler:cmd/gmail-webhook` → `lib:internal/inbound`, `lib:internal/parser`, `schema:internal/store` | uses | go |
 | `handler:internal/api` → `schema:internal/store`, `type:internal/domain`, `lib:internal/push` | uses | go |
