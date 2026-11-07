@@ -304,6 +304,13 @@ export function autoLayout(
           x += W(it.id);
           return c;
         });
+        // 板が最上段の必要幅より広いときは、段を板の幅（上限 1.8 倍）まで広げて
+        // ラベルの重なりを減らす（下の層は親の重心に置かれるので一緒に広がる）
+        const spread = r.length > 1 ? Math.min(cap, total * 1.8) : total;
+        if (spread > total + EPS) {
+          const k = spread / total;
+          for (let i = 0; i < xs.length; i++) xs[i] = xs[i]! * k;
+        }
         return { members: r.map((it) => it.id), xs };
       });
   };

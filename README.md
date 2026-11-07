@@ -112,6 +112,8 @@ DOCS_SCREENSHOTS=1 pnpm --filter @stack-atlas/viewer e2e docs-screenshots   # do
 | 層を積んだ全体像 | ResultTable を指すと、使う画面と型が光る |
 | ![cache flow](docs/images/phase1-cache-flow.png) | ![diff](docs/images/phase5-diff.png) |
 | キャッシュモードと「閲覧 MISS」フロー | 前回との差分（追加は緑、削除はゴースト） |
+| ![poly](docs/images/phase7-poly.png) | ![search](docs/images/phase7-search.png) |
+| 2 リポジトリ（Go ＋ Terraform ＋ Next 静的エクスポート）の合成フィクスチャ | 250 ノードでの検索とラベルの間引き |
 
 ## 関連ドキュメント
 

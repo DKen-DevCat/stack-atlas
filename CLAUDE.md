@@ -11,14 +11,14 @@
 現状: **Phase 0〜5（フィクスチャ `examples/fixture-repo/`）と Phase 7「どんな構成にもはめる」が完了**し、**Phase 6（実リポジトリへの適用）はグラフ生成まで完了**。
 抽出器 12 個（files / cdktf / terraform / cloudformation / nextjs-app / ts-imports / go / openapi / sql / api-link / cache / screenshots）→ `graph.json` → ビューア、`stack-atlas` CLI（build / validate / serve / diff / init-flows）、メモ共有・差分表示・配信テンプレートまで動く。
 ユーザーの実リポジトリ 2 つ（`damage-web`: Next 静的エクスポート → S3 + CloudFront、`damage-platform`: Go Lambda ×5 ＋ Terraform HCL ＋ OpenAPI ＋ SQL）で **149 ノード / 330 エッジ / エラー 0 / 警告 0**。
-残りは、150 ノードで密になるビューアのレイアウト・LOD・検索（**進行中**）、実アプリのスクショ・flows・配信先。最初の単一 HTML プロトタイプ（`prototype/`）は参照用に残している。
+ビューアは 150〜250 ノードでも読めるよう、板の拡張・ラベルの LOD・検索・kind チップを実装済み。残りは実アプリのスクショ・flows の推敲・配信先。最初の単一 HTML プロトタイプ（`prototype/`）は参照用に残している。
 
 ## まず読む順番
 
 1. `HANDOFF.md` — 現在地（§0）、経緯・決定事項・ユーザーの反応・未決事項（必読）
 2. `docs/02-architecture.md` — アーキテクチャ（抽出器 → graph.json → ビューア）と実装状況
 3. `docs/03-graph-schema.md` + `packages/schema/graph.schema.json` — 中間フォーマット
-4. `docs/06-roadmap.md` — フェーズ別タスクと達成状況（Phase 6 の残りと Phase 7-6 が進行中）
+4. `docs/06-roadmap.md` — フェーズ別タスクと達成状況（Phase 6 の残りが次）
 5. `docs/08-design-phase0-1.md` — Phase 0・1 の設計・決定事項 D1〜D8
 6. `docs/09-design-phase2-5.md` — Phase 2〜5 の設計・決定事項 D9〜D13、設定ファイル（§3.3）
 7. `docs/12-design-generalization.md` — Phase 6・7 の設計（複数 repo、Terraform / Go / OpenAPI / SQL、`classify` / `files` / `kinds`）、決定事項 D14〜D19、末尾に実装結果
@@ -28,17 +28,17 @@
 
 ## 現在の状態と次のタスク
 
-テストは `pnpm test` で 379 件、viewer の e2e は 18 件。`examples/fixture-poly/`（2 repo の合成）は 56 ノード / 95 エッジ / 2 フロー / エラー 0。
+テストは `pnpm test` で 397 件、viewer の e2e は 20 件。`examples/fixture-poly/`（2 repo の合成）は 56 ノード / 95 エッジ / 2 フロー / エラー 0。
 実リポジトリでは設定を**この公開リポジトリの外**（兄弟ディレクトリ。`repos: { web: ../damage-web, platform: ../damage-platform }`）に置いて build し、149 / 330 / エラー 0 / 警告 0 を確認した（内訳は `HANDOFF.md` §0）。
 
-次にやること（`docs/06-roadmap.md` Phase 6 の未了と Phase 7-6）:
+次にやること（`docs/06-roadmap.md` Phase 6 の未了）:
 
-1. ビューアの大規模 graph 対応（レイアウトの広がり、ラベルの LOD、検索ボックス）— 別タスクで**進行中**。完了を主張しない
+1. （完了）ビューアの大規模 graph 対応: 板の拡張、ラベル「すべて / 関連のみ / なし」と LOD、検索（`/`）、kind チップ
 2. 実アプリのスクショ: サイトを起動し、`data-component` を付け、`screenshots`（`baseUrl` / `routes` / `storageState`）を書く
 3. 実アプリの `flows.yaml`（`init-flows` で雛形は出る。文を直す）
 4. 配信先（S3 + CloudFront か `serve`。Q5）と CI（`docs/ci-example.yml`）
 5. 設定を `damage-web` にコミットするか、非公開の別ディレクトリに置くかをユーザーと決める
-6. fixture-poly の end-to-end を CI に足す（7-7）
+6. （完了）fixture-poly の end-to-end は CLI テストと CI で実行される（7-7）
 
 ## ユーザーについて
 

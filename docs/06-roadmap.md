@@ -93,7 +93,7 @@
 
 **達成状況**: グラフの生成までは達成。設定（`repos` が両 repo を指す）を**この公開リポジトリの外**に置いて `stack-atlas build` を実行し、**149 ノード / 330 エッジ / エラー 0 / 警告 0**。内訳は terraform 16 / 22（module インスタンス 11、リソース 70、未解決の参照 0）、nextjs-app 6 / 6、ts-imports 78 / 188、go 19 / 50、openapi 27 / 21、sql 7 / 14、api-link 7 / 30。
 Lambda → Go 入口の推定 5 件、DB の推定、Function URL の呼び先の推定はすべて当たっていた（各 `推定` の警告は `deploy` / `sql.db` / `api.targets` で固定できる）。
-ビューアでは endpoint を指すと route → コンポーネント → fetcher → endpoint → Go ハンドラ → テーブルが点灯した。ただし 150 ノードではレイアウトが密で読みにくい（Phase 7 の進行中項目）。
+ビューアでは endpoint を指すと route → コンポーネント → fetcher → endpoint → Go ハンドラ → テーブルが点灯した。ただし 150 ノードではレイアウトが密で読みにくい（Phase 7 の完了項目）。
 未了: スクショ、実アプリの flows、配信先、設定をどこに置くか（`HANDOFF.md` §0）。
 
 ## Phase 7 — どんな構成にもはめる
@@ -106,12 +106,12 @@ Lambda → Go 入口の推定 5 件、DB の推定、Function URL の呼び先�
 - [x] 7-3 backend / 結線: `extractors/go`、`extractors/openapi`、`extractors/sql`、api-link の一般化（`api.clients` / `callers` / `targets`、ラッパー検出、endpoint 照合）、nextjs-app の `output: 'export'` / Pages Router / `route.ts`
 - [x] 7-4 fixture: `examples/fixture-poly/`（Go ＋ Terraform HCL ＋ Next 静的エクスポート ＋ OpenAPI ＋ SQL の合成 2 repo。56 ノード / 95 エッジ / 2 フロー / エラー 0）
 - [x] 7-5 統合: 実リポジトリで build（上の結果）、docs 更新（`docs/12` §6、`docs/13`）
-- [ ] 7-6 ビューアの大規模 graph 対応（**進行中**）: レイアウトの広がり、ラベルの間引き（LOD）、検索ボックス。実リポジトリ 149 ノードで密になったのが発端
-- [ ] 7-7 fixture-poly の end-to-end（`pnpm atlas build examples/fixture-poly`）を CI に足す（未着手）
+- [x] 7-6 ビューアの大規模 graph 対応: レイアウトの広がり、ラベルの間引き（LOD）、検索ボックス。実リポジトリ 149 ノードで密になったのが発端
+- [x] 7-7 fixture-poly の end-to-end（`pnpm atlas build examples/fixture-poly`）を CLI テストと CI で実行
 
 **完了条件**: 設定だけで CDKtf / Terraform / CDK / SAM、Next、Go、OpenAPI、SQL の構成が 1 つの graph.json になり、パーサの無いものも `files` で載る。
 
-**達成状況**: 7-1〜7-5 は達成（テスト 379 件）。7-6 は進行中、7-7 は未着手。
+**達成状況**: 7-1〜7-7 すべて達成（テスト 397 件、viewer e2e 20 件）。
 
 ## 後回し・アイデア
 
@@ -119,5 +119,5 @@ Lambda → Go 入口の推定 5 件、DB の推定、Function URL の呼び先�
 - Vite / Remix / Python / Java など他のスタック用の抽出器（Terraform / AWS CDK / SAM / Go は Phase 7 で実装済み。それ以外は `files` で載せられる）
 - エディタ連携（ノードから VS Code を開く、`vscode://file/...`）
 - X-Ray / OpenTelemetry からのフロー自動生成
-- 規模が大きいときの折りたたみ・フィルタ（LOD・検索は Phase 7-6 で進行中）
+- 規模が大きいときの折りたたみ・フィルタ（LOD・検索は Phase 7-6 で完了）
 - AI に質問できる機能（「この型を変えたら何が壊れる？」に graph で答える）
