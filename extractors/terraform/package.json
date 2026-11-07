@@ -1,0 +1,32 @@
+{
+  "name": "@stack-atlas/extractor-terraform",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Stack Atlas の Terraform（HCL）抽出器",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "@stack-atlas/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@cdktf/hcl2json": "0.21.0",
+    "@stack-atlas/core": "workspace:*",
+    "@stack-atlas/tf-graph": "workspace:*"
+  },
+  "devDependencies": {
+    "@stack-atlas/schema": "workspace:*"
+  }
+}

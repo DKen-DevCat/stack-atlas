@@ -22,7 +22,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@stack-atlas/core": "workspace:*"
+    "@stack-atlas/core": "workspace:*",
+    "@stack-atlas/tf-graph": "workspace:*"
   },
   "devDependencies": {
     "@stack-atlas/schema": "workspace:*",

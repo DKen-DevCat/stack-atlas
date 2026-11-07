@@ -1,0 +1,62 @@
+# 合成フィクスチャ（stack-atlas のテスト用）
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+Resources:
+  ItemsTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      TableName: items
+  GetItemFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.get
+      CodeUri: src/
+      Environment:
+        Variables:
+          TABLE: !Ref ItemsTable
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref ItemsTable
+      Events:
+        GetItem:
+          Type: Api
+          Properties:
+            Path: /items/{id}
+            Method: get
+  WorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-${Stage}-worker'
+      Handler: worker.handler
+      FunctionUrlConfig:
+        AuthType: NONE
+      Events:
+        Jobs:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt JobsQueue.Arn
+  JobsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Join ['-', [jobs, !Ref Stage]]
+  Nightly:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: nightly
+      ScheduleExpression: cron(0 3 * * ? *)
+      FlexibleTimeWindow:
+        Mode: 'OFF'
+      Target:
+        Arn: !GetAtt WorkerFunction.Arn
+        RoleArn: !GetAtt SchedulerRole.Arn
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: {}
+Outputs:
+  Api:
+    Value: !Sub 'https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/'
