@@ -17,7 +17,8 @@
 2. `docs/02-architecture.md` — 目標アーキテクチャ（抽出器 → graph.json → ビューア）
 3. `docs/03-graph-schema.md` + `schema/graph.schema.json` — 中間フォーマット
 4. `docs/06-roadmap.md` — フェーズ別タスクと完了条件
-5. 必要に応じて `docs/05-viewer-spec.md`（UI 仕様）、`docs/04-extractors.md`（抽出方法）
+5. `docs/08-design-phase0-1.md` — Phase 0・1 の設計、タスク一覧、決定事項（Git 連携セッションで作成）
+6. 必要に応じて `docs/05-viewer-spec.md`（UI 仕様）、`docs/04-extractors.md`（抽出方法）
 
 ## 最初のタスク
 
@@ -58,6 +59,7 @@ docs/
   05-viewer-spec.md           ← ビューアの UI・インタラクション仕様（プロトタイプ準拠）
   06-roadmap.md               ← フェーズ別タスクと完了条件
   07-existing-tools.md        ← 既存ツール調査
+  08-design-phase0-1.md       ← Phase 0・1 の設計とタスク一覧
   images/                     ← プロトタイプのスクリーンショット
 prototype/
   stack-atlas.html            ← 動くプロトタイプ（three.js r160、単一ファイル）
