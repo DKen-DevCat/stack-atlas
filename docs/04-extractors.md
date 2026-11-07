@@ -88,6 +88,12 @@ deploy:
 
 二段キャッシュ（ISR ＋ CDN の s-maxage）の最悪鮮度など、複数ノードにまたがる判定は、マージ後に「ルールエンジン」として実行するのがよい。
 
+**実装メモ（Phase 4）**
+
+- CloudFront / HTTP API / Lambda@Edge は `extractors/cdktf`、route の `revalidate` / `dynamic` は `extractors/nextjs-app`、api client の fetch は `extractors/api-link` が作る。
+- `extractors/cache` は残り（hook の SWR / React Query のオプション、`meta.deployApp: 'next'` の Lambda の next.config の `cacheHandler` / `isrMemoryCacheSize`、cache の無い route の `fetch` オプション）を、cache の無いノードにだけ足す。詳細は `extractors/cache/README.md`。
+- core のルール（`packages/core/src/rules/`、`DEFAULT_RULES` の順に適用）: `lambda-fs-isr`（cache が無い Next の Lambda に ISR /tmp）→ `two-tier-staleness`（ISR + CDN の最悪鮮度）→ `cookie-cache-key`（CDN のキャッシュキーに Cookie → warn と note）→ `no-store-behind-cdn`（force-dynamic の route に当たる CDN behavior がキャッシュ有効 → warn と note）。
+
 ## 6. screenshots — 画面のスクショと領域
 
 - **Playwright** で各 `route:` を開いてスクショを撮る
@@ -111,3 +117,8 @@ deploy:
 ```
 
 - 将来案: X-Ray や OpenTelemetry のトレースからステップ列を作る
+
+**実装メモ（Phase 4）**: `stack-atlas init-flows <repo> [--out <file>] [--force]` が、いまのグラフ（スクショなしの build）から
+CloudFront → Lambda（Next）→ route の経路を探して `miss` / `hit`（tone: cache-hit）/ `invalidate` の雛形を書く。
+ノード ID は実在するものだけを使う（MISS の API 部分は route から `uses` をたどった先の `http` エッジ → ハンドラを載せた Lambda → その手前の API Gateway → Lambda の参照するテーブル。hook はクライアントで動くので MISS ではたどらない）。
+経路が無ければ 2 ステップの最小の雛形。既存の flows.yaml は `--force` が無ければ上書きしない。

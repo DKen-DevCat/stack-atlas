@@ -3,6 +3,13 @@ export { runBuild, formatBuildSummary, type BuildOptions } from './commands/buil
 export { runValidate } from './commands/validate.js';
 export { runDiff, formatDiff } from './commands/diff.js';
 export {
+  runInitFlows,
+  generateFlows,
+  serializeFlowsYaml,
+  type InitFlowsOptions,
+  type GeneratedFlows,
+} from './commands/init-flows.js';
+export {
   runServe,
   createAtlasServer,
   resolveStaticPath,

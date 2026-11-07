@@ -2,6 +2,7 @@ import { createConsoleLogger } from '@stack-atlas/core';
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { runBuild } from './commands/build.js';
 import { runDiff } from './commands/diff.js';
+import { runInitFlows } from './commands/init-flows.js';
 import { runServe } from './commands/serve.js';
 import { runValidate } from './commands/validate.js';
 
@@ -18,6 +19,9 @@ export const USAGE = `使い方: stack-atlas <コマンド> [オプション]
       --repo を付けると、ビューアからのメモ保存（POST /api/memos）を <repo>/.stack-atlas/memos.json に書き戻す
   diff <prev.json> <next.json>
       2 つの graph.json の差分（追加・削除・変更）を表示する
+  init-flows <repo> [--out <file>] [--force]
+      いまのグラフから flows.yaml（既定 <repo>/flows.yaml）の雛形（MISS / HIT / 無効化）を書き出す。
+      既存のファイルは --force が無ければ上書きしない
 `;
 
 function parse(
@@ -85,6 +89,23 @@ export async function main(argv: string[]): Promise<number> {
       }
       case 'diff':
         return runDiff(parse(rest, {}).positionals);
+      case 'init-flows': {
+        const { values, positionals } = parse(rest, {
+          out: { type: 'string', short: 'o' },
+          force: { type: 'boolean', short: 'f' },
+          verbose: { type: 'boolean', short: 'v' },
+        });
+        if (positionals.length !== 1) {
+          console.error('使い方: stack-atlas init-flows <repo> [--out <file>] [--force]');
+          return 2;
+        }
+        return await runInitFlows({
+          repo: positionals[0]!,
+          out: values.out as string | undefined,
+          force: Boolean(values.force),
+          log: createConsoleLogger({ level: values.verbose ? 'debug' : 'warn' }),
+        });
+      }
       case undefined:
       case 'help':
       case '-h':

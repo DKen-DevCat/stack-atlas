@@ -1,0 +1,32 @@
+{
+  "name": "@stack-atlas/extractor-cache",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Stack Atlas の cache 抽出器（SWR / React Query のオプション、Lambda 上の Next の ISR キャッシュ、server component の fetch）",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "@stack-atlas/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@stack-atlas/core": "workspace:*",
+    "ts-morph": "^28.0.0"
+  },
+  "devDependencies": {
+    "yaml": "^2.8.0",
+    "@stack-atlas/schema": "workspace:*"
+  }
+}

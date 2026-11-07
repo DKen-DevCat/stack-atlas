@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// stack-atlas <build|validate|serve|diff> — エントリポイント
+// stack-atlas <build|validate|serve|diff|init-flows> — エントリポイント
 import { main } from './main.js';
 
 main(process.argv.slice(2)).then(
