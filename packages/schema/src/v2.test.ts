@@ -2,8 +2,10 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { REGION_SOURCES } from './types.js';
 import {
   BROKEN_LEVELS,
+  CHECKED_STATUSES,
   CONFIDENCES,
   NODE_KINDS_V2,
   PORT_DIRS,
@@ -103,7 +105,8 @@ describe('v2.ts と graph-v2.schema.json の一致', () => {
       sorted(['from', 'to', 'via', 'reply', 'when', 'broken', 'label', 'route', 'meta']),
     );
     expect(sorted(schema.$defs.wire!.required!)).toEqual(['from', 'to', 'via']);
-    expect(keys(schema.$defs.link!)).toEqual(sorted(['from', 'to', 'when', 'confidence']));
+    // 2026-11-09 変更（8-4）: links に meta（補いの出どころ by・reason。docs/19 §3.1）
+    expect(keys(schema.$defs.link!)).toEqual(sorted(['from', 'to', 'when', 'confidence', 'meta']));
     expect(keys(schema.$defs.variant!)).toEqual(sorted(['id', 'name', 'default']));
     expect(keys(schema.$defs.view!)).toEqual(
       sorted(['id', 'name', 'description', 'start', 'variants']),
@@ -115,6 +118,23 @@ describe('v2.ts と graph-v2.schema.json の一致', () => {
     expect(keys(schema.$defs.screen!)).toEqual(
       sorted(['html', 'source', 'screenshot', 'width', 'height', 'regions']),
     );
+  });
+
+  it('regions の source と project.generator.report（8-4。docs/19 §3.2・§3.7）', () => {
+    const screen = schema.$defs.screen! as unknown as {
+      properties: { regions: { items: Def & { properties: Def['properties'] } } };
+    };
+    const region = screen.properties.regions.items;
+    expect(keys(region)).toEqual(sorted(['ref', 'x', 'y', 'w', 'h', 'source']));
+    expect(sorted(region.properties.source!.enum!)).toEqual(sorted(REGION_SOURCES));
+    const report = schema.$defs.report! as unknown as Def & {
+      properties: { checked: { additionalProperties: Def } };
+    };
+    expect(keys(report)).toEqual(sorted(['version', 'checked', 'counts', 'lists']));
+    expect(sorted(report.required!)).toEqual(['checked', 'counts', 'version']);
+    const checked = report.properties.checked.additionalProperties;
+    expect(keys(checked)).toEqual(sorted(['status', 'role', 'reason']));
+    expect(sorted(checked.properties.status!.enum!)).toEqual(sorted(CHECKED_STATUSES));
   });
 });
 

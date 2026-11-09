@@ -23,7 +23,10 @@
           "type": "object",
           "additionalProperties": true,
           "description": "graph を作ったもの。v2: \"upgrade\" は core の upgradeGraph が v1 から変換した箱の単位の graph（docs/16 §10）。ビューアはこの印のある graph だけ、箱の単位で必ず出る警告を一覧から畳む",
-          "properties": { "v2": { "type": "string" } }
+          "properties": {
+            "v2": { "type": "string" },
+            "report": { "$ref": "#/$defs/report" }
+          }
         }
       }
     },
@@ -47,6 +50,39 @@
     }
   },
   "$defs": {
+    "report": {
+      "type": "object",
+      "required": ["version", "checked", "counts"],
+      "additionalProperties": true,
+      "description": "build の報告（docs/19 §3.2・§3.3）。validate --strict が読む。自己申告なので品質の関門であって安全の境界ではない",
+      "properties": {
+        "version": { "type": "integer", "description": "報告の形の版（今は 1）" },
+        "checked": {
+          "type": "object",
+          "description": "抽出器名 → 動いたか。skipped は対象を見つけたのに動かせなかったもの（go-types の go が無いなど）",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["status"],
+            "additionalProperties": false,
+            "properties": {
+              "status": { "enum": ["ok", "disabled", "not-detected", "failed", "skipped"] },
+              "role": { "enum": ["language", "contract"] },
+              "reason": { "type": "string" }
+            }
+          }
+        },
+        "counts": {
+          "type": "object",
+          "description": "§3.2 の一覧の数と strict の違反の数（strictErrors・strictWarnings）",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "lists": {
+          "type": "object",
+          "description": "一覧の中身（文字列。1 つの一覧につき上限まで）",
+          "additionalProperties": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
     "nodeId": {
       "type": "string",
       "pattern": "^[a-z]+:[^#]+$",
@@ -243,7 +279,12 @@
         "from": { "$ref": "#/$defs/localRef", "description": "dir in の口の項目" },
         "to": { "$ref": "#/$defs/localRef", "description": "dir out の口の項目" },
         "when": { "$ref": "#/$defs/when" },
-        "confidence": { "$ref": "#/$defs/confidence" }
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "meta": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "補いの出どころなど（overrides の v2: で足した links は by: \"overrides\" と reason。docs/19 §3.1）"
+        }
       }
     },
     "variant": {
@@ -383,7 +424,11 @@
               "x": { "type": "number" },
               "y": { "type": "number" },
               "w": { "type": "number" },
-              "h": { "type": "number" }
+              "h": { "type": "number" },
+              "source": {
+                "enum": ["screenshot", "yaml"],
+                "description": "領域の出どころ。省略時は screenshot（スクショで測った値）。yaml は .stack-atlas/screens/<slug>.regions.yaml で補った値で、ビューアは ref ごとに合わせ、HTML の計測が勝つ（docs/19 §3.7）"
+              }
             }
           }
         }

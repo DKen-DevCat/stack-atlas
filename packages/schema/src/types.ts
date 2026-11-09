@@ -87,7 +87,13 @@ export interface Region {
   y: number;
   w: number;
   h: number;
+  /** 出どころ。省略時は screenshot。yaml は regions.yaml で補った値（docs/19 §3.7） */
+  source?: RegionSource;
 }
+
+/** 領域の出どころ（v1・v2 で同じ。schema の regions[].source の enum と一致させる） */
+export const REGION_SOURCES = ['screenshot', 'yaml'] as const;
+export type RegionSource = (typeof REGION_SOURCES)[number];
 
 /** screen.html の出どころ。v2 の ScreenSource と同じ語彙（schema の screen.source の enum と一致させる） */
 export const SCREEN_SOURCES_V1 = [

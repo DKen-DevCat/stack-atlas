@@ -68,6 +68,11 @@ export const SCREEN_SOURCES = [
   'screenshot',
 ] as const;
 
+/** build の報告（project.generator.report）の checked の状態（docs/19 §3.2） */
+export const CHECKED_STATUSES = ['ok', 'disabled', 'not-detected', 'failed', 'skipped'] as const;
+/** project.generator.report の形の版 */
+export const HARNESS_REPORT_VERSION = 1;
+
 export type NodeKindV2 = (typeof NODE_KINDS_V2)[number];
 export type Runtime = (typeof RUNTIMES)[number];
 export type WireVia = (typeof WIRE_VIAS)[number];
@@ -101,7 +106,28 @@ export interface ProjectV2 {
    * graph を作ったもの。`v2: "upgrade"` は core の upgradeGraph が v1 から変換した箱の単位の graph（docs/16 §10）。
    * ビューアはこの印のある graph だけ、箱の単位で必ず出る警告を一覧から畳む
    */
-  generator?: { v2?: string; [key: string]: unknown };
+  generator?: { v2?: string; report?: HarnessReportV2; [key: string]: unknown };
+  [key: string]: unknown;
+}
+
+export type CheckedStatus = (typeof CHECKED_STATUSES)[number];
+
+/**
+ * build の報告（`project.generator.report`。docs/19 §3.2・§3.3）。`validate --strict` が読む。
+ * 自己申告なので品質の関門であって安全の境界ではない
+ */
+export interface HarnessReportV2 {
+  /** 報告の形の版（HARNESS_REPORT_VERSION） */
+  version: number;
+  /** 抽出器名 → 動いたか。skipped は対象を見つけたのに動かせなかったもの（go-types の go が無いなど） */
+  checked: Record<
+    string,
+    { status: CheckedStatus; role?: 'language' | 'contract'; reason?: string }
+  >;
+  /** §3.2 の一覧の数と strict の違反の数（strictErrors・strictWarnings） */
+  counts: Record<string, number>;
+  /** 一覧の中身（1 つの一覧につき上限まで） */
+  lists?: Record<string, string[]>;
   [key: string]: unknown;
 }
 
@@ -163,6 +189,8 @@ export interface LinkV2 {
   to: LocalRef;
   when?: When;
   confidence?: Confidence;
+  /** 補いの出どころなど（overrides の v2: で足した links は `by: "overrides"` と reason。docs/19 §3.1） */
+  meta?: Record<string, unknown>;
 }
 
 export interface VariantV2 {
@@ -191,6 +219,8 @@ export interface RegionV2 {
   y: number;
   w: number;
   h: number;
+  /** 出どころ。省略時は screenshot。yaml は regions.yaml で補った値で、ビューアは ref ごとに合わせ計測が勝つ（docs/19 §3.7） */
+  source?: 'screenshot' | 'yaml';
 }
 
 /** docs/14 §3.3 の画面（ビルド成果物の HTML か、スクリーンショット） */

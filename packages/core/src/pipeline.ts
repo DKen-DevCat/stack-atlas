@@ -9,6 +9,12 @@
  * → detectBroken の順で重ねる
  * （docs/17 §2・§7 #4・#5、D50・D53）。overrides.yaml は 1 回だけ読み、v1 と v2 の両方に当てる
  *
+ * ハーネスの補い（Phase 8-4。docs/19 §2・§3、D67・D73）: 手書きの部分グラフ（`.stack-atlas/graph/*.v2.yaml`。言語アダプタ
+ * hand）は抽出の後に v2 の部分グラフへ足す。overrides の `v2:` は 2 段で当てる（段 A: join の後・cleanupV2 の前に
+ * wires・remove・nodes と retarget、段 B: cleanupV2 の後に items・variants・links・when）。その後 writeBroken →
+ * views.yaml → validateGraphV2 → 最後の graph から数え直した報告（harness）と strict（strictIssues）。報告は
+ * `project.generator.report` にも書く（validate --strict が読む）
+ *
  * 複数リポジトリ（config.repos、docs/12 §3.2）: 抽出器ごとに、repo を宣言順に回す
  * （`for extractor { for repo { detect; extract } }`）。そのため後続の抽出器（api-link など）は、
  * 先行する抽出器の **全 repo 分** の結果を upstream で読める。
@@ -33,7 +39,7 @@ import { gitCommit, gitRemote } from './git.js';
 import { assignLayers } from './layers.js';
 import { silentLogger } from './logger.js';
 import { mergePartialGraphs } from './merge.js';
-import { disambiguateV2 } from './v2-parts.js';
+import { disambiguateV2, mergePartialV2 } from './v2-parts.js';
 import {
   cleanupV2,
   coverageV2,
@@ -45,10 +51,35 @@ import { joinAll, type JoinReport } from './join.js';
 import { writeBroken } from './broken-v2.js';
 import { addExtractorName } from './meta.js';
 import { completeNodes } from './nodes.js';
-import { applyOverrides, loadOverrides } from './overrides.js';
+import { applyOverrides, loadOverrides, OVERRIDES_FILE } from './overrides.js';
+import { HAND_ADAPTER, loadHandGraphs } from './hand-graph.js';
+import {
+  applySupplementsA,
+  applySupplementsB,
+  finishRetarget,
+  supplementText,
+  type SupplementResult,
+} from './supplements.js';
+import {
+  computeHarnessReport,
+  strictIssues,
+  toGraphReport,
+  type CheckedEntry,
+  type HarnessReport,
+  type StrictResult,
+} from './strict.js';
+import { applyViewsYaml } from './views-yaml.js';
+import type { UndeterminedWire } from './merge-v2.js';
 import { prefixRepoFiles, resolveRepos } from './repo.js';
 import { DEFAULT_RULES, runRules, type Rule } from './rules/index.js';
-import type { BuildIssue, Extractor, Logger, PartialGraph, StackAtlasConfig } from './types.js';
+import type {
+  BuildIssue,
+  Extractor,
+  Logger,
+  PartialGraph,
+  PartialNodeV2,
+  StackAtlasConfig,
+} from './types.js';
 import { upgradeGraph } from './upgrade.js';
 import { clone, isPlainObject } from './util.js';
 
@@ -82,6 +113,8 @@ export interface RepoExtractorReport {
   edges: number;
   flows: number;
   error?: string;
+  /** detect は通ったのに動かせなかった理由（PartialGraph.skipped。go-types の go が無いなど） */
+  skipped?: string;
 }
 
 /** 抽出器ごとの実行結果（nodes / edges / flows は全 repo の合計） */
@@ -118,6 +151,13 @@ export interface BuildGraphResult {
   config: StackAtlasConfig;
   /** 解析した repo（名前 → 絶対パス、宣言順） */
   repos: Record<string, string>;
+  /**
+   * ハーネスの報告（build --dry-run --json の中身。最後の graph から数え直したもの。docs/19 §3.2）。v1Only なら無い。
+   * graph.json には数と一覧の文字列だけを project.generator.report に書く
+   */
+  harness?: HarnessReport;
+  /** strict の判定（strictIssues(result)。build --strict が失敗にするのは errors。docs/19 §3.3）。v1Only なら無い */
+  strict?: StrictResult;
 }
 
 /** 言語アダプタを重ねた結果の数（docs/17 §4） */
@@ -140,8 +180,13 @@ export interface V2AdapterReport {
   groups: number;
   /** アダプタの線で置き換えた箱の単位の線 */
   replaced: number;
-  /** group になった v1 の箱に残った線のうち、付け替え先を決められず中の全部へ付け替えたもの */
+  /**
+   * group になった v1 の箱に残った線のうち、付け替え先を決められず中の全部へ付け替えたもの（overrides の v2.retarget で
+   * 決めたものは数えない）
+   */
   undetermined: number;
+  /** 付け替え先を決められなかった group の端（docs/19 §3.2 の undetermined） */
+  undeterminedList?: UndeterminedWire[];
   /** broken を持つ線 */
   broken: number;
 }
@@ -205,6 +250,7 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
           continue;
         }
         const part = prefixRepoFiles(await ex.extract(ctx, merged), ctx);
+        if (part.skipped) rr.skipped = part.skipped;
         // 抽出器の報告は issues.json へ（error は出させない。ビルドを止めるのは検証の役目）
         for (const i of part.issues ?? [])
           issues.push({ ...i, level: i.level === 'info' ? 'info' : 'warning' });
@@ -252,8 +298,23 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
     }
     const failed = list.find((r) => r.error);
     if (failed?.error) report.error = failed.error;
+    const skipped = list.find((r) => r.skipped);
+    if (skipped?.skipped) report.skipped = skipped.skipped;
     if (parts.length)
       partials[ex.name] = parts.length === 1 ? parts[0]! : mergePartialGraphs(parts);
+  }
+
+  // 1b. 手書きの部分グラフ（言語アダプタ hand。docs/19 §3.1）。アダプタ・契約と同じ id の箱は子の追加だけ（アダプタが勝つ）
+  const owned = new Map<string, PartialNodeV2>((merged.v2?.nodes ?? []).map((n) => [n.id, n]));
+  const hand = opts.v1Only ? undefined : loadHandGraphs(configDir, owned);
+  if (hand) {
+    issues.push(...hand.issues);
+    if (hand.part) {
+      merged = { ...merged, v2: mergePartialV2([merged.v2, hand.part])! };
+      partials[HAND_ADAPTER] = { nodes: [], edges: [], v2: hand.part };
+    }
+    if (hand.files.length)
+      log.info(`- ${HAND_ADAPTER}: 手書きの部分グラフ ${hand.files.length} ファイル`);
   }
 
   // 2. kind / name の補完 → classify → config.deploy → overrides
@@ -269,7 +330,18 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
   });
   // overrides.yaml は 1 回だけ読む（v2 にも同じものを当てる。読み直すと警告が 2 回出る）
   const overrides = loadOverrides(configCtx);
-  const overridden = applyOverrides(deployed.graph, overrides);
+  // remove の id は v2 の箱（言語アダプタだけが出す fn: など。その @runtime の複製の元も）にあれば v1 で警告しない（v2 で消える）
+  const v2Ids = new Set<string>();
+  for (const n of merged.v2?.nodes ?? []) {
+    v2Ids.add(n.id);
+    if (typeof n.meta?.sharedOf === 'string') v2Ids.add(n.meta.sharedOf);
+  }
+  const v1Ids = new Set(deployed.graph.nodes.map((n) => n.id));
+  const removeMissing = (overrides.remove ?? []).filter(
+    (r): r is string => typeof r === 'string' && !v1Ids.has(r) && !v2Ids.has(r),
+  );
+  const addedBoxes = (overrides.nodes ?? []).map((n) => n.id).filter((id) => !v1Ids.has(id));
+  const overridden = applyOverrides(deployed.graph, overrides, OVERRIDES_FILE, { knownIds: v2Ids });
   issues.push(...overridden.issues);
   issues.push(...completeNodes(overridden.graph));
 
@@ -322,6 +394,16 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
   if (!opts.v1Only) {
     const v2path = (i: ValidationIssue): ValidationIssue => ({ ...i, path: `v2:${i.path}` });
     let graphV2 = upgradeGraph(graph, { onIssue: (i) => issues.push(v2path(i)) });
+    const supplements: SupplementResult[] = [...(hand?.results ?? [])];
+    let groups: ReadonlyMap<string, string[]> = new Map();
+    let undeterminedList: UndeterminedWire[] = [];
+    let joinReport: Pick<JoinReport, 'client' | 'server' | 'table'> | undefined;
+    const roleOf = new Map(opts.extractors.map((e) => [e.name, e.v2Role ?? 'language']));
+    const withV2 = Object.entries(partials)
+      .filter(([, p]) => p.v2?.nodes.length)
+      .map(([name]) => name);
+    const adapters = withV2.filter((n) => roleOf.get(n) !== 'contract');
+    const contracts = withV2.filter((n) => roleOf.get(n) === 'contract');
     if (merged.v2) {
       // 言語アダプタと契約の v2 を重ねる。overrides は v2 にも当てる（remove の箱・その複製と中の関数の箱、
       // nodes の上書き。remove の線は合流の後）
@@ -329,12 +411,6 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
         (overrides.remove ?? []).filter((r): r is string => typeof r === 'string'),
       );
       const removedNodes = deployed.graph.nodes.filter((n) => removedIds.has(n.id));
-      const roleOf = new Map(opts.extractors.map((e) => [e.name, e.v2Role ?? 'language']));
-      const withV2 = Object.entries(partials)
-        .filter(([, p]) => p.v2?.nodes.length)
-        .map(([name]) => name);
-      const adapters = withV2.filter((n) => roleOf.get(n) !== 'contract');
-      const contracts = withV2.filter((n) => roleOf.get(n) === 'contract');
       const state = mergeV2(graphV2, merged.v2, { overrides, removedNodes, adapters, contracts });
       // endpoint を受け持つインフラ（v1 の deploy。handler が複数合うときに host で選ぶ。§7 #11）
       const endpointHosts = new Map<string, string[]>();
@@ -343,27 +419,98 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
           endpointHosts.set(e.to, [...(endpointHosts.get(e.to) ?? []), e.from]);
       const joined = joinAll(state.graph, { endpointHosts, skip: new Set(state.groups.keys()) });
       removeOverrideWiresV2(state, overrides);
-      const cleaned = cleanupV2(state, { pairs: joined.pairs });
+      // 補いの段 A（wires・remove・nodes。retarget は cleanupV2 が使う。docs/19 §3.1）
+      const stageA = applySupplementsA(state.graph, overrides.v2, { groups: state.groups });
+      const cleaned = cleanupV2(state, { pairs: joined.pairs, retarget: stageA.retarget });
+      finishRetarget(stageA, cleaned.retargetUsed);
       issues.push(...joined.issues, ...cleaned.issues);
       graphV2 = cleaned.graph;
+      // 補いの段 B（items・variants・links・when）は掃除（`_` の crude の links）の後
+      const stageB = applySupplementsB(graphV2, overrides.v2);
+      supplements.push(...stageA.results, ...stageB);
       const broken = writeBroken(graphV2, { fixed: joined.fixedBroken });
+      groups = state.groups;
+      undeterminedList = cleaned.undeterminedList;
+      joinReport = { client: joined.client, server: joined.server, table: joined.table };
       result.v2Adapters = {
         adapters,
         contracts,
         coverage: coverageV2(graphV2),
         joined: joined.client.matched + joined.client.direct,
         unjoined: joined.client.unmatched,
-        join: { client: joined.client, server: joined.server, table: joined.table },
+        join: joinReport,
         groups: cleaned.groups,
         replaced: cleaned.replaced,
         undetermined: cleaned.undetermined,
+        undeterminedList,
         broken,
       };
+    } else if (overrides.v2) {
+      // 言語アダプタが無くても補いは当てる（箱の単位の graph の線・箱）
+      const stageA = applySupplementsA(graphV2, overrides.v2);
+      finishRetarget(stageA, new Set());
+      supplements.push(...stageA.results, ...applySupplementsB(graphV2, overrides.v2));
+    }
+    // views.yaml（同じ id は flows.yaml 由来の view に勝つ。docs/19 §3.4）
+    const views = applyViewsYaml(graphV2, configDir, groups);
+    issues.push(...views.issues);
+    supplements.push(...views.results);
+    for (const r of supplements) {
+      if (r.status === 'applied' && !r.noReason) continue;
+      if (r.kind === 'hand' && r.status === 'applied') continue;
+      if (r.kind === 'view' && r.status === 'applied') continue;
+      issues.push({
+        level: 'warning',
+        path: `supplements:${r.kind}`,
+        message:
+          r.status === 'applied'
+            ? `${supplementText(r)}。reason がありません（strict ではエラー）`
+            : supplementText(r),
+      });
     }
     const v2 = validateGraphV2(graphV2);
     issues.push(...v2.errors.map(v2path));
     result.graphV2 = graphV2;
     result.v2Warnings = v2.warnings;
+
+    // ハーネスの報告と strict（最後の graph から数え直す。D73）
+    const checked: Record<string, CheckedEntry> = {};
+    for (const r of reports) {
+      const role = opts.extractors.find((e) => e.name === r.name)?.v2Role;
+      const c: CheckedEntry = { status: r.skipped ? 'skipped' : r.status };
+      if (role) c.role = role;
+      const reason = r.skipped ?? r.error;
+      if (reason) c.reason = reason;
+      checked[r.name] = c;
+    }
+    checked[HAND_ADAPTER] = {
+      status: hand?.files.length ? 'ok' : 'not-detected',
+      role: 'language',
+    };
+    result.harness = computeHarnessReport({
+      graph: graphV2,
+      ...(joinReport ? { join: joinReport } : {}),
+      undetermined: undeterminedList,
+      supplements,
+      removeMissing,
+      addedBoxes,
+      checked,
+      adapters,
+      contracts,
+      issues,
+      config,
+      multi,
+    });
+    if (result.v2Adapters)
+      result.v2Adapters.unjoined = result.harness.unjoined.calls.map(
+        (c) => `${c.box} ${c.method} ${c.path}`,
+      );
+    result.strict = strictIssues(result);
+    const project = (graphV2.project ??= {});
+    project.generator = {
+      ...(project.generator ?? {}),
+      report: toGraphReport(result.harness, result.strict),
+    };
   }
   return result;
 }

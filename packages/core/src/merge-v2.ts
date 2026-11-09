@@ -412,7 +412,25 @@ export interface CleanupV2Result {
   undetermined: number;
   /** 消した線（参照が解けないもの） */
   dropped: number;
+  /**
+   * 付け替え先を決められなかった group の端の一覧（docs/19 §3.2 の undetermined。build の報告に出し、overrides の
+   * v2.retarget で決められる）。group・peer・via ごとに 1 つ
+   */
+  undeterminedList: UndeterminedWire[];
+  /** 使った retarget のキー（`<group>\u0000<peer>`） */
+  retargetUsed: Set<string>;
   issues: ValidationIssue[];
+}
+
+/** 付け替え先を決められなかった線の group の端（docs/19 §3.2） */
+export interface UndeterminedWire {
+  /** group になった v1 の箱 */
+  group: string;
+  /** 線の相手の箱 */
+  peer: string;
+  via: WireVia;
+  /** 中の関数の箱（全部へ付け替えた） */
+  candidates: string[];
 }
 
 export interface CleanupV2Options {
@@ -421,6 +439,11 @@ export interface CleanupV2Options {
    * （応答の項目の無い handler など、片方の向きに線が無くても箱の単位の線を残さない）
    */
   pairs?: ReadonlySet<string>;
+  /**
+   * 付け替え先の指定（overrides の v2.retarget。docs/19 §3.1）: `<group>\u0000<peer>` → 中の関数の箱 id。group の端の
+   * 付け替え先を、参照の手がかりより先にこれで決める（決められた側に数える）
+   */
+  retarget?: ReadonlyMap<string, readonly string[]>;
 }
 
 /** 掃除（D50・D53）。join の後に呼ぶ。state.graph を書き換えて返す */
@@ -461,6 +484,9 @@ export function cleanupV2(state: MergedV2, opts: CleanupV2Options = {}): Cleanup
   let retargeted = 0;
   let undetermined = 0;
   let dropped = 0;
+  const undeterminedList: UndeterminedWire[] = [];
+  const undeterminedSeen = new Set<string>();
+  const retargetUsed = new Set<string>();
   const kept: WireV2[] = [];
   for (const w of graph.wires) {
     if (upgradeWires.has(w) && finePairs.has(`${boxOf(w.from)}\u0000${boxOf(w.to)}`)) {
@@ -565,10 +591,23 @@ export function cleanupV2(state: MergedV2, opts: CleanupV2Options = {}): Cleanup
       const callerBox = w.reply ? b : a;
       const ends = (box: string, members: string[] | undefined, other: string) => {
         if (!members) return { list: [box], determined: true };
+        // overrides の v2.retarget（docs/19 §3.1）が先
+        const key = `${box}\u0000${other}`;
+        const given = opts.retarget?.get(key);
+        if (given) {
+          retargetUsed.add(key);
+          return { list: [...given], determined: true };
+        }
         // 中が 1 つだけなら、付け替え先はそれしか無い（決められた側に数える。2026-11-09 8-2b レビュー）
         if (members.length === 1) return { list: members, determined: true };
         const hit = referrers(members, other, box === callerBox, w);
-        return hit ? { list: hit, determined: true } : { list: members, determined: false };
+        if (hit) return { list: hit, determined: true };
+        const k = `${key}\u0000${w.via}`;
+        if (!undeterminedSeen.has(k)) {
+          undeterminedSeen.add(k);
+          undeterminedList.push({ group: box, peer: other, via: w.via, candidates: [...members] });
+        }
+        return { list: members, determined: false };
       };
       const fe = ends(a, ga, b);
       const te = ends(b, gb, a);
@@ -647,7 +686,17 @@ export function cleanupV2(state: MergedV2, opts: CleanupV2Options = {}): Cleanup
     if (n.kind !== 'endpoint') n.ports = n.ports.filter((p) => p.items.length > 0);
     linkUnderscores(n);
   }
-  return { graph, groups: groups.size, replaced, retargeted, undetermined, dropped, issues };
+  return {
+    graph,
+    groups: groups.size,
+    replaced,
+    retargeted,
+    undetermined,
+    dropped,
+    undeterminedList,
+    retargetUsed,
+    issues,
+  };
 }
 
 const roots = (n: NodeV2, dir: 'in' | 'out', portId?: string) =>

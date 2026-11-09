@@ -7,7 +7,9 @@
  * - `nodes`: 既存ノードには deep merge で上書き（overrides の値が勝つ。配列は置き換え）、無ければ追加
  * - `edges` / `deploy`: 参照するノードが無ければ **エラー**（人が書いたものなので厳密に）。そのエッジは張らない
  * - `remove`: ノード ID（そのノードに繋がるエッジも消す）か `{from, to, kind}`（kind 省略で from→to をすべて）。
- *   見つからなければ警告
+ *   見つからなければ警告（ノード ID は、言語アダプタの v2 の箱 id（opts.knownIds）にあれば警告しない。v2 で消える。
+ *   2026-11-09 8-4: v1 にだけ無い `fn:` の id で「ありません」と出て実態と合わなかった。docs/17 §8.3b の 8）
+ * - `v2`: v2 の補い（docs/19 §3.1）。ここでは形（オブジェクトと配列）だけ確かめ、当てるのは supplements.ts
  */
 import type { Edge, ValidationIssue } from '@stack-atlas/schema';
 import { existsSync } from 'node:fs';
@@ -15,12 +17,24 @@ import { join } from 'node:path';
 import { AtlasConfigError, readYamlFile } from './config.js';
 import { edgeKey } from './merge.js';
 import { addExtractorName } from './meta.js';
-import type { Overrides, PartialGraph, PartialNode, RepoContext } from './types.js';
+import type { Overrides, PartialGraph, PartialNode, RepoContext, SupplementsV2 } from './types.js';
 import { clone, deepMerge, isPlainObject, issue } from './util.js';
 
 export const OVERRIDES_FILE = 'stack-atlas.overrides.yaml';
 /** overrides で足した・書き換えたノードの meta.extractors に入る名前 */
 export const OVERRIDES_SOURCE = 'overrides';
+
+/** overrides の v2: の節のキー（docs/19 §3.1） */
+export const SUPPLEMENT_KEYS = [
+  'nodes',
+  'wires',
+  'retarget',
+  'remove',
+  'links',
+  'variants',
+  'when',
+  'items',
+] as const;
 
 /** overrides.yaml を読む。無ければ `{}`。形が違う部分は警告して捨てる */
 export function loadOverrides(ctx: RepoContext): Overrides {
@@ -47,8 +61,27 @@ export function checkOverrides(
   const out: Overrides = {};
   const warn = (m: string) => ctx.log.warn(`${file}: ${m}`);
   for (const key of Object.keys(raw)) {
-    if (!['nodes', 'edges', 'remove', 'deploy'].includes(key))
+    if (!['nodes', 'edges', 'remove', 'deploy', 'v2'].includes(key))
       warn(`未知のキー "${key}" は無視します`);
+  }
+  if (raw.v2 != null) {
+    if (!isPlainObject(raw.v2)) warn('v2 はオブジェクト（nodes・wires・… の配列）で書いてください');
+    else {
+      const v2: SupplementsV2 = {};
+      for (const [k, list] of Object.entries(raw.v2)) {
+        if (!(SUPPLEMENT_KEYS as readonly string[]).includes(k)) {
+          warn(`v2 の未知のキー "${k}" は無視します（${SUPPLEMENT_KEYS.join(' / ')}）`);
+          continue;
+        }
+        if (!Array.isArray(list)) {
+          warn(`v2.${k} は配列で書いてください（無視します）`);
+          continue;
+        }
+        // 要素は当てるときに確かめる（解けない補いとして report と strict に出す。ここで捨てると黙って消える）
+        v2[k as keyof SupplementsV2] = list.map((x) => (isPlainObject(x) ? x : { invalid: x }));
+      }
+      out.v2 = v2;
+    }
   }
   if (raw.nodes != null) {
     if (!Array.isArray(raw.nodes)) warn('nodes は配列で書いてください');
@@ -105,6 +138,7 @@ export function applyOverrides(
   graph: PartialGraph,
   overrides: Overrides,
   file = OVERRIDES_FILE,
+  opts: { knownIds?: ReadonlySet<string> } = {},
 ): ApplyOverridesResult {
   const g = clone(graph);
   const issues: ValidationIssue[] = [];
@@ -117,7 +151,8 @@ export function applyOverrides(
       const before = g.nodes.length;
       g.nodes = g.nodes.filter((n) => n.id !== r);
       if (g.nodes.length === before) {
-        warn(`/remove/${i}`, `削除しようとしたノード "${r}" はありません`);
+        if (!opts.knownIds?.has(r))
+          warn(`/remove/${i}`, `削除しようとしたノード "${r}" は v1 にも v2 にもありません`);
         return;
       }
       g.edges = g.edges.filter((e) => e.from !== r && e.to !== r);

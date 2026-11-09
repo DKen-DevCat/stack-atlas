@@ -459,7 +459,12 @@ describe('go-types: go が無いとき（D51）', () => {
     const log = createMemoryLogger();
     const ex = createGoTypesExtractor({ ...missing, env: {} });
     const part = await ex.extract(ctxFor(root, {}, log), { nodes: [], edges: [] });
-    expect(part).toEqual({ nodes: [], edges: [] });
+    // 2026-11-09 変更（8-4）: 飛ばした理由を skipped に返す（build の報告の checked が skipped になり、strict がエラーにする）
+    expect(part).toEqual({
+      nodes: [],
+      edges: [],
+      skipped: expect.stringContaining('go が見つかりません'),
+    });
     expect(log.of('warn').some((m) => m.startsWith('go-types: go が見つかりません'))).toBe(true);
   });
 
