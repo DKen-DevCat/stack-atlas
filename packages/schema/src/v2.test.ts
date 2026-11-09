@@ -15,6 +15,7 @@ import {
   parseLocalRef,
   parseWhenKey,
   wireTypeCompatible,
+  wireTypeMatch,
 } from './v2.js';
 
 interface Def {
@@ -155,5 +156,15 @@ describe('参照の切り方（D36）', () => {
     expect(wireTypeCompatible('object', 'array')).toBe(false);
     expect(wireTypeCompatible('unknown', 'array')).toBe(true);
     expect(wireTypeCompatible('array', 'unknown')).toBe(true);
+  });
+
+  it('合流点の照合（D46）: number → integer は warn、string → datetime は sql の境界だけ互換', () => {
+    expect(wireTypeMatch('integer', 'number')).toBe('ok');
+    expect(wireTypeMatch('number', 'integer')).toBe('warn');
+    expect(wireTypeMatch('string', 'datetime', 'sql')).toBe('ok');
+    expect(wireTypeMatch('string', 'datetime', 'http')).toBe('error');
+    expect(wireTypeMatch('string', 'datetime')).toBe('error');
+    expect(wireTypeMatch('object', 'array', 'sql')).toBe('error');
+    expect(wireTypeMatch('unknown', 'integer')).toBe('ok');
   });
 });

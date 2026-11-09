@@ -32,13 +32,16 @@ const layer = (svg: string, name: string) => {
 const count = (s: string, re: RegExp) => (s.match(re) ?? []).length;
 
 describe('renderScene', () => {
-  it('選択なし: 箱・枠・線は全部下の層、線は細く薄く、切れている線は赤（lit）で 3 件', () => {
+  it('選択なし: 箱・枠・線は全部下の層、線は細く薄く、切れている線は赤 2 件・黄 1 件（lit）', () => {
     const svg = scene(null);
     expect(count(svg, /data-box="/g)).toBe(layout.boxes.size);
     expect(count(svg, /data-host="/g)).toBe(2);
     expect(count(layer(svg, 'base-wires'), /class="wire thin/g)).toBe(graph.wires.length);
     expect(count(svg, /data-broken="/g)).toBe(3);
-    expect(count(svg, /class="wire broken error lit"/g)).toBe(3);
+    // 2026-11-09 変更（D46）: 例の POST /transactions の amount（number → integer）を error から warn にしたので、
+    // 赤（error）は 3 件から 2 件になり、黄（warn）が 1 件になった
+    expect(count(svg, /class="wire broken error lit"/g)).toBe(2);
+    expect(count(svg, /class="wire broken warn lit"/g)).toBe(1);
     expect(layer(svg, 'lit-boxes')).toBe('');
     expect(svg).not.toContain(' dim"');
     // 箱の種類は外側の左上（y が箱の上端より上）

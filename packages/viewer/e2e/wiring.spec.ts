@@ -107,14 +107,21 @@ test('v2 を配線図で開く: 箱・枠・レーン、切れている線は選
   ]);
   // 箱の種類は外側の左上
   await expect(page.locator('[data-box="route:/"] .kind')).toHaveText('screen');
-  // 切れている線 3 件（2 本の線）。選択に関係なく赤
+  // 切れている線 3 件（2 本の線）。選択に関係なく描く。
+  // 2026-11-09 変更（D46）: POST /transactions の amount（number → integer）は error から warn にしたので、
+  // 赤（error）2 件・黄（warn）1 件
   const broken = page.locator('path[data-broken]');
   await expect(broken).toHaveCount(3);
   for (const el of await broken.all()) {
     await expect(el).toHaveClass(/\blit\b/);
-    await expect(el).toHaveCSS('stroke', 'rgb(255, 59, 59)');
     await expect(el).toHaveCSS('stroke-dasharray', /\d/);
   }
+  const errorWires = page.locator('path[data-broken].error');
+  const warnWires = page.locator('path[data-broken].warn');
+  await expect(errorWires).toHaveCount(2);
+  await expect(warnWires).toHaveCount(1);
+  for (const el of await errorWires.all()) await expect(el).toHaveCSS('stroke', 'rgb(255, 59, 59)');
+  await expect(warnWires).toHaveCSS('stroke', 'rgb(251, 191, 36)');
   await expect(page.locator('path.wire.broken.cut')).toHaveCount(3);
   // 選択前は球も再生バーも無い
   await expect(page.locator('.ball')).toHaveCount(0);

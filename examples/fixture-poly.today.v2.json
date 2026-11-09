@@ -2316,8 +2316,8 @@
       "broken": [
         {
           "path": "amount",
-          "level": "error",
-          "reason": "wireType が互換でない（number → integer）"
+          "level": "warn",
+          "reason": "送る側の型が広い（number → integer）"
         },
         {
           "path": "occurredAt",

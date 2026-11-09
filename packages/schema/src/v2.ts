@@ -298,3 +298,18 @@ export function wireTypeCompatible(a: WireType, b: WireType): boolean {
   if (a === 'datetime' && b === 'string') return true;
   return false;
 }
+
+/** wireType の照合の結果。ok = 切れない、warn = 黄（送る側が広い）、error = 赤 */
+export type WireTypeMatch = 'ok' | 'warn' | 'error';
+
+/**
+ * 合流点の wireType の照合（D46）。包含（wireTypeCompatible）に加えて:
+ * - number → integer は warn（送る側が広い。TS の number を OpenAPI の integer に送るなど）
+ * - string → datetime は via が sql のときだけ ok（DB が変換する）。それ以外は error
+ */
+export function wireTypeMatch(a: WireType, b: WireType, via?: string): WireTypeMatch {
+  if (wireTypeCompatible(a, b)) return 'ok';
+  if (a === 'number' && b === 'integer') return 'warn';
+  if (a === 'string' && b === 'datetime' && via === 'sql') return 'ok';
+  return 'error';
+}

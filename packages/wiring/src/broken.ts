@@ -1,6 +1,7 @@
 // 切れている線（docs/16 §6、docs/15 §3.3）。合流点で両側の項目が食い違っている所を、項目の木から計算する。
-// 名前が相手に無い（error）、wireType が互換でない（error）、送る側が nullable / optional で受ける側は必須（warn）
-import { wireTypeCompatible, type BrokenV2 } from '@stack-atlas/schema';
+// 名前が相手に無い（error）、wireType が互換でない（error。number → integer は warn、sql の string → datetime は互換。D46）、
+// 送る側が nullable / optional で受ける側は必須（warn）
+import { wireTypeMatch, type BrokenV2 } from '@stack-atlas/schema';
 import type { GraphIndex, IndexedItem, IndexedWire } from './graph-index.js';
 
 /** 切れている線の端（書かれた broken の 1 件ごと）。配線図はこの 2 点の間を赤の破線で描き、受ける側の手前で切る */
@@ -38,8 +39,11 @@ export function brokenOfWire(w: IndexedWire): BrokenV2[] {
     const path = relPath(a, w.from);
     const wa = a.item.wireType;
     const wb = b.item.wireType;
-    if (wa && wb && !wireTypeCompatible(wa, wb)) {
+    const match = wa && wb ? wireTypeMatch(wa, wb, w.wire.via) : 'ok';
+    if (match === 'error') {
       add({ path, level: 'error', reason: `wireType が互換でない（${wa} → ${wb}）` });
+    } else if (match === 'warn') {
+      add({ path, level: 'warn', reason: `送る側の型が広い（${wa} → ${wb}）` });
     }
     if (a.item.nullable && !b.item.nullable) {
       add({ path, level: 'warn', reason: '送る側が nullable、受ける側は必須' });

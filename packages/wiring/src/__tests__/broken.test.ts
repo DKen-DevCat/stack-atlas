@@ -20,15 +20,10 @@ describe('detectBroken', () => {
     expect(w.broken).toEqual([
       { path: 'entries.occurredAt', level: 'error', reason: '受ける側（GET /today）に無い' },
     ]);
-    // 見つかったこと: SQL の境界でも string → datetime（query.date → WHERE date）が規則どおり切れる。
+    // 2026-11-09 変更（D46）: 以前は SQL の境界の string → datetime（query.date → WHERE date）も
+    // error で切れていたが、DB が変換するので via が sql の線では互換にした。切れるのは occurredAt の 1 本だけ。
     // それ以外の線は切れていない（int64 → integer、integer → number、datetime → string は互換）
-    expect(found.map((b) => b.wire.wire.from).sort()).toEqual([
-      'fn:api.handleToday#out/resp',
-      'fn:store.ListEntries#out/query_date',
-    ]);
-    expect(
-      found.find((b) => b.wire.wire.from === 'fn:store.ListEntries#out/query_date')!.broken,
-    ).toEqual([{ path: '', level: 'error', reason: 'wireType が互換でない（string → datetime）' }]);
+    expect(found.map((b) => b.wire.wire.from).sort()).toEqual(['fn:api.handleToday#out/resp']);
   });
 
   it('wireType が互換でない / nullable → 必須 / 受ける側だけの必須 / 子の無い側は不透明', () => {
@@ -77,8 +72,9 @@ describe('detectBroken', () => {
     };
     const found = detectBroken(indexGraph(g));
     const by = (from: string) => found.find((b) => b.wire.wire.from === from)?.broken;
+    // 2026-11-09 変更（D46）: number → integer は error から warn（送る側が広い）にした
     expect(by('fn:A#out/x')).toEqual([
-      { path: '', level: 'error', reason: 'wireType が互換でない（number → integer）' },
+      { path: '', level: 'warn', reason: '送る側の型が広い（number → integer）' },
     ]);
     expect(by('fn:A#out/n')).toEqual([
       { path: '', level: 'warn', reason: '送る側が nullable、受ける側は必須' },
