@@ -23,6 +23,7 @@ import {
   type BuildGraphResult,
   type Extractor,
   type Logger,
+  type V2AdapterReport,
 } from '@stack-atlas/core';
 import {
   cpSync,
@@ -95,10 +96,12 @@ export function formatBuildSummary(
   );
   if (!v1Only && graphV2) {
     const frames = new Set(graphV2.nodes.map((n) => n.host).filter((h): h is string => !!h));
+    const a = res.v2Adapters;
     lines.push(
       `v2: 箱 ${graphV2.nodes.length}（うち枠 ${frames.size}）、線 ${graphV2.wires.length}、型 ${graphV2.types?.length ?? 0}、view ${graphV2.views?.length ?? 0}` +
-        `（v2 の警告 ${res.v2Warnings.length} 件。箱の単位の変換なので口の単位の線が残る。stack-atlas validate で一覧）`,
+        `（v2 の警告 ${res.v2Warnings.length} 件。${a ? '言語アダプタの無い所に' : '箱の単位の変換なので'}口の単位の線が残る。stack-atlas validate で一覧）`,
     );
+    if (a) lines.push(...formatAdapterSummary(a));
   }
   const errors = issues.filter((i) => i.level === 'error');
   const warnings = issues.filter((i) => i.level === 'warning');
@@ -113,6 +116,22 @@ export function formatBuildSummary(
     lines.push(`      ${join(outDir, 'graph.v1.json')}（v1。3D の地図）`);
   }
   return lines.join('\n');
+}
+
+/**
+ * 言語アダプタの自動率（docs/17 §4）: 項目（unknown）、線（項目の単位 / 箱の単位、うち呼び出しでない参照）、
+ * links（exact / crude）と不透明な箱、合流と掃除の数
+ */
+export function formatAdapterSummary(a: V2AdapterReport): string[] {
+  const c = a.coverage;
+  const lines = [
+    `言語アダプタ（${a.adapters.join(', ')}）: 項目 ${c.items}（unknown ${c.unknownItems}）、` +
+      `線 ${c.wires}（項目 ${c.itemWires} / 箱の単位 ${c.boxWires}、うち呼び出しでない参照 ${c.refWires}）、` +
+      `links ${c.links}（exact ${c.exactLinks} / crude ${c.crudeLinks}）・不透明な箱 ${c.opaqueBoxes}`,
+    `  合流: endpoint と結んだ HTTP の呼び出し ${a.joined}${a.unjoined.length ? `、結べない ${a.unjoined.length}` : ''}。` +
+      `group にした v1 の箱 ${a.groups}、項目の線で置き換えた箱の単位の線 ${a.replaced}、食い違いのある線 ${a.broken}`,
+  ];
+  return lines;
 }
 
 const isSymlink = (p: string) => lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink() === true;

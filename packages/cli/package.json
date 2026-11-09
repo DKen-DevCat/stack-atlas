@@ -39,6 +39,7 @@
     "@stack-atlas/extractor-sql": "workspace:*",
     "@stack-atlas/extractor-terraform": "workspace:*",
     "@stack-atlas/extractor-ts-imports": "workspace:*",
+    "@stack-atlas/extractor-ts-types": "workspace:*",
     "@stack-atlas/schema": "workspace:*"
   },
   "devDependencies": {

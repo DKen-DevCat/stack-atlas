@@ -25,12 +25,18 @@ import { gatewayRoutesFromMeta, loadGateway, type GatewayRoute } from './gateway
 import { globBase, globToRegExp, sectionFor, toArray } from '@stack-atlas/core';
 
 export {
+  constResolverFor,
   detectWrappers,
+  exprToPattern,
+  httpCallInfo,
   parseClientCalls,
   parseClientFiles,
   passesParam,
   toPath,
   type ApiCall,
+  type ConstResolver,
+  type HttpCallInfo,
+  type Wrapper,
 } from './client.js';
 export {
   apiPathMatches,

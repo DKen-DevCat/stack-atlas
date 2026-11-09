@@ -4,6 +4,8 @@
  *
  * 結果は v1（`graph`。3D の地図と既存の呼び出し元）と v2（`graphV2`。配線図。`stack-atlas build` の graph.json）の両方。
  * 抽出器は v1 の部分グラフを出し続け、v2 は v1 を upgradeGraph で変換して作る（D38）。
+ * 言語アダプタ（ts-types など）と openapi は v2 の部分グラフ（PartialGraph.v2）も出す。変換した v2 に
+ * mergeV2 → join（合流）→ cleanupV2（細かい方が勝つ掃除）→ detectBroken の順で重ねる（docs/17 §2・§7 #4・#5、D50・D53）。
  *
  * 複数リポジトリ（config.repos、docs/12 §3.2）: 抽出器ごとに、repo を宣言順に回す
  * （`for extractor { for repo { detect; extract } }`）。そのため後続の抽出器（api-link など）は、
@@ -29,6 +31,9 @@ import { gitCommit, gitRemote } from './git.js';
 import { assignLayers } from './layers.js';
 import { silentLogger } from './logger.js';
 import { mergePartialGraphs } from './merge.js';
+import { cleanupV2, coverageV2, mergeV2, type CoverageV2 } from './merge-v2.js';
+import { joinEndpoints } from './join.js';
+import { writeBroken } from './broken-v2.js';
 import { addExtractorName } from './meta.js';
 import { completeNodes } from './nodes.js';
 import { applyOverrides, loadOverrides } from './overrides.js';
@@ -92,6 +97,11 @@ export interface BuildGraphResult {
    * 項目まで下げる言語アダプタ（8-2）で減っていく
    */
   v2Warnings: ValidationIssue[];
+  /**
+   * 言語アダプタを重ねた結果（アダプタの v2 が無ければ無い）: 自動率（項目・線・links）、合流、掃除の数。
+   * CLI の build の要約に出す（docs/17 §4）
+   */
+  v2Adapters?: V2AdapterReport;
   /** 抽出器名 → その抽出器の出力（全 repo 分をマージしたもの。複数 repo なら file は修飾済み） */
   partials: Record<string, PartialGraph>;
   /** 抽出器ごとの実行結果（抽出器の順） */
@@ -99,6 +109,22 @@ export interface BuildGraphResult {
   config: StackAtlasConfig;
   /** 解析した repo（名前 → 絶対パス、宣言順） */
   repos: Record<string, string>;
+}
+
+/** 言語アダプタを重ねた結果の数（docs/17 §4） */
+export interface V2AdapterReport {
+  /** v2 を出した抽出器 */
+  adapters: string[];
+  coverage: CoverageV2;
+  /** endpoint と照合できた / できなかった HTTP の呼び出し */
+  joined: number;
+  unjoined: string[];
+  /** group にした v1 の箱 */
+  groups: number;
+  /** アダプタの線で置き換えた箱の単位の線 */
+  replaced: number;
+  /** broken を持つ線 */
+  broken: number;
 }
 
 /** repo ごとの状態 → 抽出器全体の状態（failed > ok > not-detected > disabled） */
@@ -259,7 +285,31 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
   };
   if (!opts.v1Only) {
     const v2path = (i: ValidationIssue): ValidationIssue => ({ ...i, path: `v2:${i.path}` });
-    const graphV2 = upgradeGraph(graph, { onIssue: (i) => issues.push(v2path(i)) });
+    let graphV2 = upgradeGraph(graph, { onIssue: (i) => issues.push(v2path(i)) });
+    if (merged.v2) {
+      // 言語アダプタの v2 を重ねる。overrides で消した箱はアダプタからも出さない
+      const removed = new Set(
+        (loadOverrides(configCtx).remove ?? []).filter((r): r is string => typeof r === 'string'),
+      );
+      const adapters = Object.entries(partials)
+        .filter(([, p]) => p.v2?.nodes.length)
+        .map(([name]) => name);
+      const state = mergeV2(graphV2, merged.v2, { removed, adapters });
+      const joined = joinEndpoints(state.graph);
+      const cleaned = cleanupV2(state);
+      issues.push(...joined.issues, ...cleaned.issues);
+      graphV2 = cleaned.graph;
+      const broken = writeBroken(graphV2);
+      result.v2Adapters = {
+        adapters,
+        coverage: coverageV2(graphV2),
+        joined: joined.matched,
+        unjoined: joined.unmatched,
+        groups: cleaned.groups,
+        replaced: cleaned.replaced,
+        broken,
+      };
+    }
     const v2 = validateGraphV2(graphV2);
     issues.push(...v2.errors.map(v2path));
     result.graphV2 = graphV2;

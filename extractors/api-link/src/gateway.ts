@@ -6,6 +6,16 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RepoContext } from '@stack-atlas/core';
 
+// パスの正規化と照合は core に移した（docs/17 §7 #5。合流 join.ts でも使う）。従来の import 先のまま使えるよう再 export する
+export {
+  apiPathMatches,
+  methodMatches,
+  normalizeRoutePath,
+  pathMatches,
+  pickMostSpecific,
+  routeSpecificity,
+} from '@stack-atlas/core';
+
 export interface GatewayRoute {
   /** `GET /races/{id}` */
   routeKey: string;
@@ -91,63 +101,6 @@ export function loadGateway(ctx: RepoContext, upstream: UpstreamLookup): Gateway
   return { routes, lambdas, infraId };
 }
 
-const GREEDY = /^\{.+\+\}$/;
-const PARAM = /^\{.*\}$/;
-
-/**
- * route のパス（`/races/{id}`、`/{proxy+}`）とクライアントのパス（`/races/{id}`）が合うか。
- * API Gateway と同じく greedy（`{proxy+}`）は 1 セグメント以上に当たる（`/races/{proxy+}` は `/races` に当たらない）
- */
-export function pathMatches(routePath: string, clientPath: string): boolean {
-  const rs = routePath.split('/').filter(Boolean);
-  const cs = clientPath.split('/').filter(Boolean);
-  for (let i = 0; i < rs.length; i++) {
-    const r = rs[i]!;
-    if (GREEDY.test(r)) return cs.length > i;
-    const c = cs[i];
-    if (c === undefined) return false;
-    if (PARAM.test(r)) continue;
-    if (r !== c) return false;
-  }
-  return rs.length === cs.length;
-}
-
-export function methodMatches(routeMethod: string, clientMethod: string): boolean {
-  return routeMethod === 'ANY' || routeMethod === clientMethod;
-}
-
-/**
- * route の具体性。API Gateway は「リテラル → パラメータ → greedy → $default」の順で 1 本だけ選ぶので、
- * 同じ呼び出しに複数の route が合うときはこの値が最大のものだけを使う。
- * [$default でない, greedy でない, リテラルの数, メソッドが ANY でない] を辞書順に比べる
- */
-export function routeSpecificity(r: Pick<GatewayRoute, 'routeKey' | 'path' | 'method'>): number[] {
-  const segs = r.path.split('/').filter(Boolean);
-  return [
-    r.routeKey === '$default' ? 0 : 1,
-    segs.some((s) => GREEDY.test(s)) ? 0 : 1,
-    segs.filter((s) => !PARAM.test(s)).length,
-    r.method === 'ANY' ? 0 : 1,
-  ];
-}
-
-/** 合った route のうち最も具体的なもの（同点なら全部） */
-export function pickMostSpecific<T extends Pick<GatewayRoute, 'routeKey' | 'path' | 'method'>>(
-  routes: T[],
-): T[] {
-  if (routes.length <= 1) return routes;
-  const cmp = (a: number[], b: number[]) => {
-    for (let i = 0; i < a.length; i++) if (a[i]! !== b[i]!) return a[i]! - b[i]!;
-    return 0;
-  };
-  let best: number[] | undefined;
-  for (const r of routes) {
-    const s = routeSpecificity(r);
-    if (!best || cmp(s, best) > 0) best = s;
-  }
-  return routes.filter((r) => cmp(routeSpecificity(r), best!) === 0);
-}
-
 /** `meta.infra.apiRoutes: [{ routeKey, lambdaId }]`（tf-graph が API Gateway ノードに付ける）を route にする */
 export function gatewayRoutesFromMeta(
   nodes: ReadonlyArray<{ id: string; meta?: Record<string, unknown> }>,
@@ -174,19 +127,4 @@ export function gatewayRoutesFromMeta(
     }
   }
   return out;
-}
-
-/** 末尾の / をそろえ、Go の `{rest...}` / Express の `:id` / `*` を API Gateway 形式にする */
-export function normalizeRoutePath(p: string): string {
-  let s = p
-    .replace(/\{([^}]*?)\.\.\.\}/g, '{$1+}')
-    .replace(/\/:(\w+)/g, '/{$1}')
-    .replace(/\/\*$/, '/{proxy+}');
-  if (s.length > 1) s = s.replace(/\/+$/, '');
-  return s || '/';
-}
-
-/** endpoint / meta.apiRoutes 用: 末尾スラッシュの違いと Go / Express 形式のパラメータを許す */
-export function apiPathMatches(routePath: string, clientPath: string): boolean {
-  return pathMatches(normalizeRoutePath(routePath), normalizeRoutePath(clientPath));
 }

@@ -1,0 +1,35 @@
+{
+  "name": "@stack-atlas/extractor-ts-types",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Stack Atlas の ts-types 抽出器（TS の型 API で関数の単位の箱・口・項目・links・線を v2 に出す言語アダプタ）",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "@stack-atlas/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@stack-atlas/core": "workspace:*",
+    "@stack-atlas/extractor-api-link": "workspace:*",
+    "@stack-atlas/extractor-nextjs-app": "workspace:*",
+    "@stack-atlas/extractor-ts-imports": "workspace:*",
+    "@stack-atlas/schema": "workspace:*",
+    "ts-morph": "^28.0.0"
+  },
+  "devDependencies": {
+    "@stack-atlas/wiring": "workspace:*"
+  }
+}

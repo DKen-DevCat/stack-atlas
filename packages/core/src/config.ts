@@ -33,6 +33,7 @@ const KNOWN_KEYS: Record<keyof StackAtlasConfig, 'object' | 'array'> = {
   kinds: 'object',
   screenshots: 'object',
   extractors: 'object',
+  adapters: 'object',
 };
 
 /** 読み込みエラー（YAML の構文エラーなど）。CLI はメッセージだけを出して終了する */

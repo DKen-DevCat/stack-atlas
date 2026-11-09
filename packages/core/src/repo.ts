@@ -53,7 +53,7 @@ export function fileInRepo(ctx: RepoInfo, file: string | undefined): string | un
 }
 
 /**
- * 抽出器の出力の `file` を `<repoName>/` で修飾する（複数 repo のときだけ）。
+ * 抽出器の出力の `file` を `<repoName>/` で修飾する（複数 repo のときだけ）。v2 の部分グラフの箱と型の `file` も。
  * すでに `<repoName>/` で始まり、かつ repo 相対パスとしては存在しないものは修飾済みとみなす。
  */
 export function prefixRepoFiles(
@@ -62,17 +62,21 @@ export function prefixRepoFiles(
 ): PartialGraph {
   if (!isMultiRepo(ctx)) return part;
   const pre = `${ctx.repoName}/`;
-  return {
-    ...part,
-    nodes: part.nodes.map((n) => {
-      if (!n.file) return n;
-      let f = n.file;
-      if (isAbsolute(f)) f = relative(ctx.root, f);
-      f = toPosix(f);
-      if (f.startsWith(pre) && !existsSync(join(ctx.root, f))) return { ...n, file: f };
-      return { ...n, file: pre + f };
-    }),
+  const qualify = <T extends { file?: string }>(n: T): T => {
+    if (!n.file) return n;
+    let f = n.file;
+    if (isAbsolute(f)) f = relative(ctx.root, f);
+    f = toPosix(f);
+    if (f.startsWith(pre) && !existsSync(join(ctx.root, f))) return { ...n, file: f };
+    return { ...n, file: pre + f };
   };
+  const out: PartialGraph = { ...part, nodes: part.nodes.map(qualify) };
+  // v2 の部分グラフ（言語アダプタ）も同じ規則で修飾する。線は箱 id で書くのでそのまま
+  if (part.v2) {
+    out.v2 = { ...part.v2, nodes: part.v2.nodes.map(qualify) };
+    if (part.v2.types) out.v2.types = part.v2.types.map(qualify);
+  }
+  return out;
 }
 
 /**
