@@ -11,7 +11,7 @@
 ```
  解析対象リポジトリ（repos: 1 つ以上。例 web / platform）
  ├─ infra/ (CDKtf / Terraform HCL / CDK・SAM・CFn) ┐
- ├─ web/   (Next.js App / Pages / 静的エクスポート)  │   ① 抽出器（13 個。抽出器 × repo の順に回す）
+ ├─ web/   (Next.js App / Pages / 静的エクスポート)  │   ① 抽出器（14 個。抽出器 × repo の順に回す）
  ├─ src/   (TypeScript)   cmd/ internal/ (Go)        │      files / cdktf / terraform / cloudformation /
  ├─ openapi/ (契約)       migrations/ (SQL)          │      nextjs-app / ts-imports / go / openapi / sql /
  └─ そのほか（files の glob）                        ┘      api-link / cache / screenshots
@@ -41,7 +41,7 @@
 - 1 つの抽出器 = 1 つの関心事。入力はリポジトリのパスと設定（`RepoContext`）、出力は**部分グラフ**（nodes と edges の断片）。設定の `repo` で対象 repo を絞れる（`sectionFor`）
 - インフラの 3 抽出器（cdktf / terraform / cloudformation）はそれぞれの入力を Terraform JSON の形にして `packages/tf-graph`（純関数）に渡す。リソース → ノード、参照 → エッジ、CloudFront / API Gateway の cache はここに 1 つ
 - 抽出器どうしは**ノード ID の規約**（`<kind>:<識別子>`）で合流する。たとえば ts-imports が出す `comp:ResultTable` と、screenshots が出す領域の `ref: comp:ResultTable` は同じノードを指す。OpenAPI の `endpoint:` は client（api-link）とサーバー（Go / Next のルート）の合流点
-- 後続の抽出器は先行の結果を `upstream` で読める（api-link は infra / endpoint / Go のルートを参照する）。順序は `files → cdktf → terraform → cloudformation → nextjs-app → ts-imports → ts-types → go → openapi → sql → api-link → cache → screenshots`
+- 後続の抽出器は先行の結果を `upstream` で読める（api-link は infra / endpoint / Go のルートを参照する）。順序は `files → cdktf → terraform → cloudformation → nextjs-app → ts-imports → ts-types → go → go-types → openapi → sql → api-link → cache → screenshots`
 - 一覧と方法は `04-extractors.md`、各 `extractors/*/README.md`、使い方は `13-apply-to-your-repo.md`
 
 ### マージ＋補正
@@ -74,7 +74,7 @@
 | ノード配置（x, z） | 手置き | 自動レイアウト（`layout/auto.ts`、決定的）。`position` があれば優先（実装済み） |
 | 画面ノードの判定 | `L === 1` 固定 | `screen` フィールド、または `kind` が `page` / `layout`（実装済み） |
 | 画面の中身 | ページ ID ごとの Canvas 描画関数 | `screen.screenshot` ＋ `regions`。無ければプレースホルダ（実装済み） |
-| ノードの関係データ | 手書きの `NODES` / `EDGES` | 抽出器 13 個（インフラ 3 種、Next、TS、TS の言語アダプタ、Go、OpenAPI、SQL、api-link、files…）＋ classify / deploy / overrides（実装済み） |
+| ノードの関係データ | 手書きの `NODES` / `EDGES` | 抽出器 14 個（インフラ 3 種、Next、TS、TS と Go の言語アダプタ、Go、OpenAPI、SQL、api-link、files…）＋ classify / deploy / overrides（実装済み） |
 | 複数リポジトリ | — | `repos` で宣言。`file` を `<repo>/<path>` で修飾（実装済み。Phase 7） |
 | 未知の kind | — | graph.json の `kinds` をビューアの kind レジストリにマージ（実装済み） |
 | キャッシュ | 手書きの `CACHE` | cdktf・nextjs-app・api-link・cache 抽出器と core のルールエンジン（実装済み） |

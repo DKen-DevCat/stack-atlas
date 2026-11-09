@@ -125,7 +125,7 @@ ts-types / go-types（v2 の部分グラフ）───────────�
 | # | 内容 |
 |---|---|
 | 8-2a | 契約（`PartialGraph.v2`、merge と prefix が運ぶ）、パスの正規化を core へ、openapi が endpoint の 4 口と項目を出す、ts-types（画面・部品・hook・関数、呼び出し・render・戻り、起動の links、runtime と複製、HTTP の呼び出し）、join の endpoint（クライアント側）、mergeV2 の掃除（join の後）と group 化、detectBroken をパイプラインに、例の id と runtime を規則に合わせる、テスト（POST の 2 件が出る） |
-| 8-2b | go-types（helper、自前の importer、net/http・認証・SQL のレシピ、型の表）、sql が table の 3 口と項目を出す、join の endpoint（サーバー側）と table、受け入れ条件のテスト（§7 #6）、CI で go を必須に、サマリ。8-2a の残り（§8.3）: export したオブジェクトリテラルのメソッドを関数の箱にする（fixture-repo の `api.getRaces`）、役割ごとの欠け（必須の body を送っていない）を broken で表す |
+| 8-2b（完了。§9） | go-types（helper、自前の importer、net/http・認証・SQL のレシピ、型の表）、sql が table の 3 口と項目を出す、join の endpoint（サーバー側）と table、受け入れ条件のテスト（§7 #6）、CI で go を必須に、サマリ。8-2a の残り（§8.3）: export したオブジェクトリテラルのメソッドを関数の箱にする（fixture-repo の `api.getRaces`）、役割ごとの欠け（必須の body を送っていない）を broken で表す |
 
 ## 6. 決めたこと
 
@@ -143,6 +143,8 @@ ts-types / go-types（v2 の部分グラフ）───────────�
 | D57 | 型の照合（detectBroken）は endpoint・table に触れる線だけ。body の無い応答（`out/status`）→ `ret_n` は照合しない | docs/15 §3.5「切れるのは合流点」。言語の中の線は構造的部分型で、送る側にだけあるプロパティが error になる。fetch の `Response` と integer を比べて誤った error が出た |
 | D58 | 起動の links（`in/html` / `in/call` / `in/props` / `in/r` → `call_n` / `render_n` / データ由来の link が無い `out/return`）は `crude`。起動の項目が無い箱（引数を持つ関数）は引数の全部が起点。残った `_` は `in/_` → `out/_` と `in/_` → 全部の out を crude で足す。例の 2 本（`route:/`・`fn:getToday`）も crude に直した | §7 #3 の規則どおり。`_` の links が無いと fixture-repo の `route:/` から `schema:RaceItem` が光らない |
 | D59 | 合流点で、受ける側の**必須の役割**（requestBody が required など）を呼び出し元が丸ごと送っていないときは、呼び出し元の親の項目 `call_n` から `endpoint#in/<役割>` へ線を 1 本引き（via http）、`broken: [{ path: "", level: "error", reason: "送る側に無い（必須の body）" }]` を付ける | 役割ごとの欠けは子の照合（線の端どうし）では出ない。線が無いと赤くする場所が無い。path が空なら線そのものを指す（`detectBroken` の相対パスの規約どおり）。fixture-poly の PushToggle → POST /push/subscriptions で見つかった |
+| D65 | `types[]` の同じ id は、契約（openapi・sql）が言語アダプタ（ts-types・go-types）に勝つ。同じ側どうしは先に出たものを残す。負けた側の `file:line` は `meta.copies` に足す | 契約は両側が共有する語彙（手で組んだ例は OpenAPI の `type:Transaction`）。Go の型の場所も失わない |
+| D66 | table の読む線（`#read/row` → `fn#in/row`、via sql、reply）は**受ける側の子だけ**を比べる（SELECT の射影）。受ける側だけにある SQL の式（`meta.expr`。`SUM(amount)`）も error にしない。UPDATE は送る側（SET）の子だけ、INSERT は両側（必須のカラムの欠けは error） | 部分集合の SELECT で「受ける側に無い」の誤った error が出る |
 
 ## 8. 実装結果（Phase 8-2a。2026-11-09）
 
@@ -192,3 +194,79 @@ docs/15 §7 の見積り（項目 90%・線 80%）との比較: 項目の型が�
 - App Router の `route.ts`、クラスの部品（未対応）
 - export したオブジェクトリテラルのメソッド（fixture-repo の `api.getRaces`）。fixture-repo の HTTP の呼び出しが項目の単位にならず、合流が 0 本 → 8-2b
 - 見つかったこと: PushToggle は body を送らないのに、POST /push/subscriptions は requestBody が必須。役割ごとの欠けは子の照合では出ないので 8-2a では出していない → D59 で表し方を決め、8-2b で実装する
+
+## 9. 実装結果（Phase 8-2b。2026-11-09）
+
+### 9.1 できたもの
+
+- `extractors/go-types`（新規）: 標準ライブラリだけの helper（`helper/`、go 1.21、依存なし）を `go run`。自前の ImporterFrom、型の表、レシピ（net/http・認証・SQL・chi / gin / echo / fiber）、host の閉包、`refs`（関数ごとに参照するモジュール内のパッケージ）。go が無ければ警告して空（`STACK_ATLAS_REQUIRE_GO=1` なら失敗。CI は必須）
+- `extractors/sql`: table の 3 口（key / write / read）とカラムの項目（D66 の照合のため `row` の親）。契約（`v2Role: contract`）
+- core の合流: サーバー側（`req/<役割>` → handler の役割の項目、応答 → `res/body`、`WriteHeader` → `res/status`、login の分岐）と table（WHERE → `key/<col>`、INSERT / UPDATE → `write/row`、`read/row` → 関数の `in/row`）、D59（必須の役割の欠け）、OpenAPI の無いときの直接の合流
+- ts-types: export したオブジェクトリテラルのメソッドを関数の箱に（`fn:api.getRaces`）
+- 例: POST /transactions にも login の分岐（§7 #11）、`today.go` と InsertTransaction の host（§9.3 の 1）
+
+### 9.2 数字（テストで固定）
+
+| | fixture-poly | fixture-repo |
+|---|---|---|
+| 項目（unknown） | 550（61。型が決まった割合 **89%**） | 176（55。69%） |
+| 線（項目の単位 / 箱の単位、うち参照） | 143（106 / 37、うち 12）。項目の単位 **74%** | 68（46 / 22、うち 4） |
+| links（exact / crude）・不透明な箱 | 183（43 / 110）・6 | 57（13 / 41）・4 |
+| 合流: クライアント側 | 5（必須の役割の欠け 1） | 6（handler へ直接。3 メソッド × @server / @browser） |
+| 合流: サーバー側 | 7（handler の無い endpoint 1 = GET /transactions、login 7） | 0 |
+| 合流: table | 8 | 0 |
+| group / 置き換えた線 / 付け替え先を決められない線 | 13 / 66 / 11 | 2 / 32 / 0 |
+
+docs/15 §7 の見積り（項目 90%・線 80%）に対して、fixture-poly は 89% / 74%。残りの箱の単位の線はインフラ（Terraform）と、中が `main` 1 つの `cmd/*` の group。
+
+fixture-poly の broken は 4 本（受け入れテストで固定）:
+
+1. `PushToggle#out/call_1 → POST /push/subscriptions#in/body`: `""`・error（D59。必須の body を送っていない）
+2. `createTransaction#out/call_1.body → POST /transactions#in/body`: `amount`・warn、`occurredAt`・error
+3. `handleToday#out/resp → GET /today#res/body`: `entries.occurredAt`・error
+4. `handleEntries#out/txs → GET /entries#res/body`: `occurredAt`・error（見つかったこと。Go の `[]Transaction` と OpenAPI の `Entry[]`）
+
+受け入れ（§7 #6）: 別名表は空、例の箱（TS 8・Go 4・endpoint 2・`schema:transactions`）の kind / runtime / host が一致、言語の中の線と合流点の線（クライアント・サーバー・table）が項目の参照まで一致、例に無い余分な線 0（許可表も空）、例の線の broken は例の 3 件と一致、validateGraphV2 のエラー 0。`route:/` のクリックで endpoint → handler → ListByDate → transactions → 戻りまで項目の単位で光り、Scheduler → notify → push_subscriptions も光る。
+
+### 9.3 go-types と sql の v2 で決めたこと（8-2b の前半）
+
+1. **fixture と例**: `today.go` は map のリテラルを変数 `resp` に入れてから Encode する形に直した（規則「変数なら `out/<名前>`、式なら `out/response`」と例の `out/resp` の両方が成り立つ）。`store.InsertTransaction` は cmd/api と cmd/gmail-webhook の両方から届くので、規則どおり host を空にして `meta.hosts` に 2 つの Lambda を並べ、例もそう直した
+2. **閉包の辿り方**（host を決める）: 呼び出し、関数の値の参照（`HandleFunc` に渡した handler）、interface への変換（呼び出しの引数と return。`ListenAndServe(h)` → `h.ServeHTTP`）の 3 つ。「型を作れば全部のメソッドに届く」は採らない（ListByDate まで 2 つの入口になる）
+3. **標準ライブラリ**: `importer.ForCompiler("source")` ではなく、同じ ImporterFrom の中で GOROOT のソースを並列に読む（srcimporter は net/http だけで約 1.7 秒、自前は約 0.4 秒）。ソースから読む・全体で 1 つを共有する・`go list` を使わない、は §3.3 のまま
+4. **replace と vendor**: replace の先はモジュールの根の中だけ読む（`../x` は警告して読まない）。モジュールへの置き換えは外部。vendor と replace の struct は型が分かるので展開する。unknown にするのは標準ライブラリの名前付きの型（基本型のものを除く）・interface・解けない外部の型。箱にするのは解析対象のモジュールの関数だけ
+5. **id**: モジュールの根のパッケージは `fn:<module の最後の要素>.<名前>`。名前が衝突したメソッドだけ `.<型>.<名前>`、関数はそのまま。kind は classify に関係なく常に `fn`、runtime は常に `server`
+6. **リクエストの項目**: id は常に `r`（name は実際の引数名）。path は string に子を付ける形、query は url.Values で子は optional。`FormValue` は query の子（`meta.form`）。gin / echo の Context も `r` と同じ扱い
+7. **戻り値と error**: `(T, error)` は T、error だけなら `out/return`（type error、nullable）。多値は `r0` / `r1`（名前付きの戻りならその名前）
+8. **状態コード**: 400 以上の `WriteHeader` と `c.JSON(4xx)` は数えない（middleware の 401 も）。`http.Error` は無視。複数のコードは `A | B`。status の links は起動の項目と、その前に戻った `ret_n` から crude
+9. **SQL の項目**: 関数ごとに 1 つの数え方で `query_k` / `insert_k` / `update_k`。DELETE は query、UPDATE は update と `meta.sql.where`、RETURNING は row。プレースホルダの値は、SQL の定数を渡した呼び出し（か並び）の SQL より後ろの式を $1, $2 … とみなし、数が合わなければフィールドとカラムを名前で照合して crude。カラムの型は sql 抽出器の `readTables` で埋め、cast があればその型（`occurred_at::date` → datetime）
+10. **table の口**: key は全部のカラム（例は WHERE のカラムだけ）。write/row の子は DEFAULT・serial・identity・nullable のものを optional、read/row の子は NOT NULL でなければ nullable。`in/row` の子は SELECT したカラムだけ（D66 で照合を受ける側に限る）
+11. **links の確かさ**: 1 回だけ代入した変数を経由しても exact。箱でない関数（`len` など）を通したものは crude（ts-types は exact のまま通す。言語で揃っていないのは既知）
+12. **呼び出しでない参照**: TS の `_` の線（D53）は Go では引かない（引くと `Server.Handler` から全部の handler が光る）。ルートは合流がつなぐ
+13. **フレームワーク**: chi / gin / echo / fiber はルートの登録のほか、Param / Query / Bind 系 → in、`c.JSON` → out も読む。フレームワークはルーターの変数（`gin.Default()` など）から決める
+14. **go が古いとき**: helper の go 行より古い go は「go が無い」と同じ扱い（警告）。それ以外の helper の失敗は抽出器のエラー
+15. **決定的な出力**: GOARCH は amd64 に固定、警告は並べ替えてから出す
+16. **時間**: helper の解析 0.6〜0.9 秒、`go run` を含めて約 1.4 秒（初回のコンパイルで約 2.2 秒）。テストの上限は helper 3 秒・全体 60 秒
+
+### 9.4 合流で決めたこと（8-2b の後半）
+
+1. **login の形は例に合わせる**: 分岐は endpoint が持ち、`when: { login: true }` は endpoint の中の `in/* → req/*` の links に付ける（線には付けない）。`meta.auth` は middleware の関数名と見るヘッダ
+2. **handler の選び方**: method の無いルートは ANY、そのうえで最も具体的なもの。複数なら v1 の deploy のエッジ（endpoint を受け持つインフラ）と host・`meta.hosts` が合うもの。それでも複数なら全部と結んで警告。対象は項目まで下がった箱で group にならないものだけ（go が無いときは箱の単位の線のまま）
+3. **サーバー側の線**: 役割ごとに親 1 本 `req/<役割> → in/<役割の項目>`（via call）。役割の項目が無い handler は入口の項目（`r`、無ければ役割・ret・row 以外の最初の項目）へ。endpoint に無い役割は警告。合流した箱の対は行きの線を引けたときだけ数える
+4. **handler の無い endpoint は数えるだけ**（実装が別の所にありうる）。OpenAPI に無い handler のルートは警告して数える
+5. **OpenAPI の無いとき**は endpoint を合成しない（§3.4 の route の行は未実装）。endpoint に合わない呼び出しを、ルートを持つ handler と直接結ぶ（行き via http、戻りは応答の項目か `return` から `ret_n`）。endpoint・table に触れないので broken は書かない（D57）
+6. **table**: UPDATE の WHERE は項目が無い（`meta.sql.where` だけ）ので線にしない。WHERE の無い SELECT は `query_n → table#key/_`。JOIN の 2 つ目以降のテーブルは結ばない。テーブル名は大文字小文字を区別せず、引用符を外し、`schema.table` は最後の段で引く
+7. **group の host**: `meta.hosts` を持つ関数は group の host を受け継がない
+8. **overrides の sql の線**（`handler:cmd/notify → schema:push_subscriptions`）: `meta.sql` でそのテーブルを使う中の関数へ付け替え、無ければ入口（`main`）へ
+9. **go-types の refs**: helper が関数ごとに参照するモジュール内のパッケージを、v1 のパッケージの箱 id にして渡す（付け替え先を決められない線 15 → 11、`push.Send` への付け替え 36 → 8）
+10. **D59 の対象**: body（required）と query（必須のパラメータがあるとき）。path は URL なので欠けない
+11. **オブジェクトのメソッドの id**: `fn:<オブジェクト>.<メソッド>`（`fn:api.getRaces`）、衝突したら `fn:<file>~api.getRaces`。プロパティが全部関数のときだけ箱にする。`api.X` の呼び出し・参照はメソッドの箱へ
+12. **table の links の既存の不具合**: `_` の links を書くと既定の key → read が消えていた。既定を先に書き出し、write → read はつながない
+13. **要約**は 3 行（自動率 / 合流のクライアント・サーバー・table / 掃除）
+
+### 9.5 見つかったこと（upgrade-wiring に固定）
+
+- テーブルから下流だけたどると、読んだ行が表示する部品まで届く（35 / 下流 21。以前は 14 / 13）。画面と INSERT・DELETE の側は光らない
+- group になって消えた箱の差し替え: `handler:internal/api` の起点は `fn:internal/api.handleToday`、`handler:cmd/notify` は `fn:cmd/notify.main`、fixture-repo の `lib:apiClient` は `fn:api.getRace@server`
+- `route:/push` をクリックすると、型だけの参照の `_` の線（D53）で `push.Send` が光る
+- fixture-repo の `post(path, body)` ラッパーの呼び出しは `path` の子しか出ない（既知の動詞の扱い）
+- build の抽出器ごとの行で、ts-types・go-types は v2 だけを出すので「ノード 0」と出る（見た目だけ）
