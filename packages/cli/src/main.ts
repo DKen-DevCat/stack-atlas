@@ -3,18 +3,32 @@ import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { runBuild } from './commands/build.js';
 import { runDiff } from './commands/diff.js';
 import { runInitFlows } from './commands/init-flows.js';
+import { harnessVersion, runInitSkill } from './commands/init-skill.js';
+import { runInitViews } from './commands/init-views.js';
 import { runServe } from './commands/serve.js';
 import { runValidate } from './commands/validate.js';
+import { createStderrLogger } from './commands/harness.js';
 
 export const USAGE = `使い方: stack-atlas <コマンド> [オプション]
 
 コマンド:
   build <repo> [-o <outDir>] [--with-viewer] [--no-screenshots] [--v1] [--verbose]
+        [--dry-run] [--json] [--strict]
       リポジトリを解析して <outDir>（既定 <repo>/.stack-atlas/out）に graph.json（v2。配線図）・
       graph.v1.json（v1。3D の地図）・issues.json・memos.json を書く。
-      --with-viewer でビューアも同梱する。--v1 は graph.json に v1 だけを書く（従来の出力）。検証エラーがあれば終了コード 1
-  validate <graph.json...>
-      graph.json をスキーマと参照整合性で検証する（version 1 / 2 を見て検証器を選ぶ）
+      --with-viewer でビューアも同梱する。--v1 は graph.json に v1 だけを書く（従来の出力）。検証エラーがあれば終了コード 1。
+      --dry-run は出力先に書かない（スクショも撮らない）。--json は標準出力を build の報告の JSON だけにする（ログは標準エラー）。
+      --strict は埋められる隙間（結べない呼び出し・解けない補いなど。docs/19 §3.3）があれば終了コード 1（CI の関門）
+  validate [--strict] <graph.json...>
+      graph.json をスキーマと参照整合性で検証する（version 1 / 2 を見て検証器を選ぶ）。
+      --strict は graph.json の build の報告を読み、報告が無い・言語アダプタを飛ばした・strict の違反がある graph をエラーにする
+  init-views <repo> [--out <file>]
+      いまのグラフから .stack-atlas/views.yaml の雛形（始点の候補: 画面・trigger・利用者）を書く。既存のファイルは上書きしない
+  init --skill [<dir>] [--update]
+      <dir>（既定はカレント）に Claude Code の skill（.claude/skills/stack-atlas/）と雛形（設定・overrides・views.yaml・
+      DECISIONS.md）を置く。既存のファイルは上書きしない。--update は手で変えていないファイルだけ更新し、変えたものは .new に出す
+  --version
+      ハーネスの版（skill の VERSION と比べる）
   serve <outDir> [--port 4173] [--host 127.0.0.1] [--repo <repo>] [--allowed-host <name>]...
       outDir を配信する（index.html が無ければワークスペースのビューアを使う）。
       --repo を付けると、ビューアからのメモ保存（POST /api/memos）を <repo>/.stack-atlas/memos.json に書き戻す。
@@ -53,24 +67,66 @@ export async function main(argv: string[]): Promise<number> {
           screenshots: { type: 'boolean', default: true },
           v1: { type: 'boolean' },
           verbose: { type: 'boolean', short: 'v' },
+          'dry-run': { type: 'boolean' },
+          json: { type: 'boolean' },
+          strict: { type: 'boolean' },
         });
         if (positionals.length !== 1) {
           console.error(
-            '使い方: stack-atlas build <repo> [-o <outDir>] [--with-viewer] [--no-screenshots] [--v1]',
+            '使い方: stack-atlas build <repo> [-o <outDir>] [--with-viewer] [--no-screenshots] [--v1] [--dry-run] [--json] [--strict]',
           );
           return 2;
         }
+        const level = values.verbose ? 'debug' : 'info';
         return await runBuild({
           repo: positionals[0]!,
           outDir: values.out as string | undefined,
           withViewer: Boolean(values['with-viewer']),
           screenshots: values.screenshots !== false,
           v1Only: Boolean(values.v1),
-          log: createConsoleLogger({ level: values.verbose ? 'debug' : 'info' }),
+          dryRun: Boolean(values['dry-run']),
+          json: Boolean(values.json),
+          strict: Boolean(values.strict),
+          log: values.json ? createStderrLogger({ level }) : createConsoleLogger({ level }),
         });
       }
-      case 'validate':
-        return runValidate(parse(rest, {}).positionals);
+      case 'validate': {
+        const { values, positionals } = parse(rest, { strict: { type: 'boolean' } });
+        return runValidate(positionals, console.log, { strict: Boolean(values.strict) });
+      }
+      case 'init-views': {
+        const { values, positionals } = parse(rest, {
+          out: { type: 'string', short: 'o' },
+          verbose: { type: 'boolean', short: 'v' },
+        });
+        if (positionals.length !== 1) {
+          console.error('使い方: stack-atlas init-views <repo> [--out <file>]');
+          return 2;
+        }
+        return await runInitViews({
+          repo: positionals[0]!,
+          out: values.out as string | undefined,
+          log: createConsoleLogger({ level: values.verbose ? 'debug' : 'warn' }),
+        });
+      }
+      case 'init': {
+        const { values, positionals } = parse(rest, {
+          skill: { type: 'boolean' },
+          update: { type: 'boolean' },
+        });
+        if (!values.skill || positionals.length > 1) {
+          console.error('使い方: stack-atlas init --skill [<dir>] [--update]');
+          return 2;
+        }
+        return runInitSkill({
+          ...(positionals[0] ? { dir: positionals[0] } : {}),
+          update: Boolean(values.update),
+        });
+      }
+      case '--version':
+      case '-V':
+        console.log(harnessVersion());
+        return 0;
       case 'serve': {
         const { values, positionals } = parse(rest, {
           port: { type: 'string', short: 'p' },

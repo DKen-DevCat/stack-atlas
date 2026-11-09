@@ -206,10 +206,12 @@ describe('fixture-poly（web/export。from: dir、trailingSlash の a/index.html
     );
 
     // カバー率: / は TodayIsland の「読み込み中」だけ（TotalCard・EntryList は fetch の後に描く。docs/14 §3.3 の SPA 型の限界）
+    // 2026-11-09 変更（8-4）: data に数（build --dry-run --json の screens が読む。docs/19 §3.2）
     expect(issue('screens:/', /カバー率/)).toEqual({
       level: 'info',
       path: 'screens:/',
       message: 'regions のカバー率 1/3（33%）。HTML に無い部品: comp:EntryList, comp:TotalCard',
+      data: { reachable: 3, dom: 1, yaml: 0 },
     });
     expect(issue('screens:/calendar', /カバー率/)!.message).toBe('regions のカバー率 2/2（100%）');
     expect(issue('screens:/push', /カバー率/)!.message).toBe('regions のカバー率 1/1（100%）');

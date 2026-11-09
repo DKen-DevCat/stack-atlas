@@ -7,6 +7,8 @@
  *   `screens.routes` のサンプル（最初の 1 件）。HTML が無ければ何もしない（プレースホルダのまま）
  * - 消毒（sanitize.ts・css.ts）と資産の写し（assets.ts・fsafe.ts）。落としたものの数と regions のカバー率（coverage.ts）を issues.json に出す
  * - 書き出し先は config.screens.outDir（CLI の build が出力先を入れる。設定ファイルからは書けない）。無ければ何もしない
+ * - `.stack-atlas/screens/<slug>.regions.yaml`（regions-yaml.ts。docs/19 §3.7）: HTML で測れない部品の領域を `source: "yaml"`
+ *   で足す（HTML の data-component で解ける ref は使わない）。カバー率は計測の分と別に数える
  */
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
@@ -14,6 +16,7 @@ import {
   SCREENS_DIR,
   SCREENS_MARKER,
   isMultiRepo,
+  resolveRegionRef,
   sectionFor,
   type BuildIssue,
   type Extractor,
@@ -24,6 +27,7 @@ import { findNextDirs, readNextConfig } from '@stack-atlas/extractor-nextjs-app'
 import { routeToUrls, slugify } from '@stack-atlas/extractor-screenshots';
 import { ASSETS_DIR, AssetStore, DEFAULT_LIMITS, toSitePath } from './assets.js';
 import { computeCoverage, type Coverage } from './coverage.js';
+import { readRegionsYaml } from './regions-yaml.js';
 import { confineDir, findSiteFile, readNoFollow, SafeOutput } from './fsafe.js';
 import { sanitizeHtml, type SanitizeStats } from './sanitize.js';
 
@@ -32,6 +36,12 @@ export { sanitizeStylesheet, sanitizeDeclarations } from './css.js';
 export { computeCoverage, type Coverage } from './coverage.js';
 export { AssetStore, toSitePath } from './assets.js';
 export { classifyUrl } from './urls.js';
+export {
+  readRegionsYaml,
+  regionsYamlPath,
+  REGIONS_YAML_LIMITS,
+  type YamlRegion,
+} from './regions-yaml.js';
 
 export const NAME = 'screens';
 export const DEFAULT_VIEWPORT = { width: 1280, height: 800 } as const;
@@ -80,12 +90,18 @@ export function summarizeStats(s: SanitizeStats): { text: string; warn: boolean 
   return { text: parts.join('、'), warn: s.external + s.unsafe + s.css.imports > 0 };
 }
 
-/** カバー率の issue（0 なら警告） */
+/**
+ * カバー率の issue（0 なら警告）。data に数（reachable・dom・yaml）を入れる（build --dry-run --json の screens。docs/19 §3.2）。
+ * regions.yaml で補った部品は計測の分子と別に数える（docs/19 §3.7）
+ */
 export function coverageIssue(pattern: string, c: Coverage): Issue {
   const path = `screens:${pattern}`;
   const total = c.reachable.length;
+  const yaml = c.yaml ?? [];
+  const data = { reachable: total, dom: c.covered.length, yaml: yaml.length };
   const extra = [
     c.absent.length ? `HTML に無い部品: ${c.absent.join(', ')}` : '',
+    yaml.length ? `regions.yaml で補った部品: ${yaml.join(', ')}` : '',
     c.unresolved.length ? `箱に解けない data-component: ${c.unresolved.join(', ')}` : '',
   ].filter(Boolean);
   if (total === 0)
@@ -93,20 +109,23 @@ export function coverageIssue(pattern: string, c: Coverage): Issue {
       level: 'info',
       path,
       message: `regions のカバー率: この画面から uses でたどれる部品がありません${extra.length ? `（${extra.join('。')}）` : ''}`,
+      data,
     };
-  if (c.covered.length === 0)
+  if (c.covered.length === 0 && yaml.length === 0)
     return {
       level: 'warning',
       path,
       message:
         `regions が取れません（data-component で解けた部品 0 / たどれる部品 ${total}）。` +
         `部品のルート要素に data-component を付けてください（docs/10）${extra.length ? `。${extra.join('。')}` : ''}`,
+      data,
     };
   const pct = Math.round((c.covered.length / total) * 100);
   return {
     level: 'info',
     path,
     message: `regions のカバー率 ${c.covered.length}/${total}（${pct}%）${extra.length ? `。${extra.join('。')}` : ''}`,
+    data,
   };
 }
 
@@ -192,6 +211,7 @@ export const extractor: Extractor = {
     );
 
     const nodes: PartialNode[] = [];
+    const ids = new Set(upstream.nodes.map((n) => n.id));
     const slugs = new Map<string, string>();
     const noSample: string[] = [];
     const noHtml: string[] = [];
@@ -240,6 +260,14 @@ export const extractor: Extractor = {
       }
       const slug = screenSlug(pattern, slugs);
       out.write([SCREENS_DIR, slug, 'index.html'], result.html);
+      // regions.yaml（HTML の data-component で測れない部品だけ。docs/19 §3.7）
+      const measured = new Set(
+        result.dataComponents
+          .map((name) => resolveRegionRef(name, ids))
+          .filter((id): id is string => !!id),
+      );
+      const yaml = readRegionsYaml(ctx.configDir, slug, { pattern, viewport, ids, measured });
+      issues.push(...yaml.issues);
       nodes.push({
         id: r.id,
         screen: {
@@ -247,6 +275,7 @@ export const extractor: Extractor = {
           width: viewport.width,
           height: viewport.height,
           source,
+          ...(yaml.regions.length ? { regions: yaml.regions } : {}),
         },
       });
       // 写した CSS ファイルで落としたものは、ファイルごとに 1 回だけ出す（下）
@@ -257,7 +286,17 @@ export const extractor: Extractor = {
           path: `screens:${pattern}`,
           message: `消毒（${found.sitePath}）: ${sum.text}${sum.warn ? '。外部・危険な URL は読み込まない（画面に出ない）' : ''}`,
         });
-      issues.push(coverageIssue(pattern, computeCoverage(r.id, upstream, result.dataComponents)));
+      issues.push(
+        coverageIssue(
+          pattern,
+          computeCoverage(
+            r.id,
+            upstream,
+            result.dataComponents,
+            yaml.regions.map((x) => x.ref),
+          ),
+        ),
+      );
     }
     for (const [sitePath, f] of store.cssFiles) {
       const sum = summarizeStats(f.stats);

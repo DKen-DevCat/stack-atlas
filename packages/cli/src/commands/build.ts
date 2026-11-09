@@ -16,6 +16,12 @@
  *
  * スクショ抽出器の書き出し先（config.screenshots.outDir）は、解析対象の repo の設定なので信用しない。
  * build の出力先の中だけにする（confineShotsOutDir。絶対パス・出力先の外は警告して出力先にする）。
+ *
+ * ハーネス（Phase 8-4。docs/19 §3.2・§3.3。出力は harness.ts）:
+ * - `--dry-run`: 抽出から strict の判定まで行い、出力先には書かない（screens は一時ディレクトリに書いて消す。screenshots は
+ *   強制的に無効。--with-viewer は無視）
+ * - `--json`: 標準出力は build の報告の JSON だけ（docs/19 §3.2）。ログと要約は標準エラー
+ * - `--strict`: strict の違反（strictIssues）があれば終了コード 1（CI の関門）
  */
 import {
   AtlasConfigError,
@@ -38,14 +44,22 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { tmpdir } from 'node:os';
 import { loadExtractors } from '../extractors.js';
 import { VIEWER_DIST } from '../paths.js';
+import {
+  createStderrLogger,
+  formatHarnessSummary,
+  harnessJson,
+  redirectConsoleLog,
+} from './harness.js';
 
 export interface BuildOptions {
   repo: string;
@@ -58,6 +72,12 @@ export interface BuildOptions {
   viewerDist?: string;
   /** graph.json に v1 だけを書く（Phase 8-1 より前の出力。graph.v1.json は書かない） */
   v1Only?: boolean;
+  /** 出力先に書かない（一時ディレクトリで抽出して捨てる。screenshots は無効。docs/19 §3.2） */
+  dryRun?: boolean;
+  /** 標準出力を build の報告の JSON だけにする（ログと要約は標準エラー） */
+  json?: boolean;
+  /** strict の違反があれば終了コード 1（docs/19 §3.3） */
+  strict?: boolean;
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -302,7 +322,36 @@ export function clearScreens(outDir: string, log?: Logger): boolean {
 }
 
 export async function runBuild(opts: BuildOptions): Promise<number> {
-  const log = opts.log ?? createConsoleLogger();
+  const log = opts.log ?? (opts.json ? createStderrLogger() : createConsoleLogger());
+  if ((opts.strict || opts.json) && opts.v1Only) {
+    log.error('--strict / --json は v2 の graph の報告を使うので、--v1 とは一緒に使えません');
+    return 2;
+  }
+  // --json: 標準出力は JSON だけ（抽出器が直に console.log しても標準エラーへ）
+  const restore = opts.json ? redirectConsoleLog() : undefined;
+  // --dry-run: 一時ディレクトリに書いて捨てる（screens もここで測る）
+  const tmp = opts.dryRun ? mkdtempSync(join(tmpdir(), 'stack-atlas-dry-run-')) : undefined;
+  try {
+    const code = await buildInto(
+      {
+        ...opts,
+        log,
+        ...(tmp ? { outDir: tmp, screenshots: false, withViewer: false } : {}),
+      },
+      restore,
+    );
+    return code;
+  } finally {
+    restore?.();
+    if (tmp) rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+async function buildInto(
+  opts: BuildOptions & { log: Logger },
+  restoreConsole: (() => void) | undefined,
+): Promise<number> {
+  const log = opts.log;
   const repo = resolve(opts.repo);
   if (!existsSync(repo) || !statSync(repo).isDirectory()) {
     log.error(`リポジトリ ${repo} がありません`);
@@ -371,6 +420,7 @@ export async function runBuild(opts: BuildOptions): Promise<number> {
     throw e;
   }
 
+  if (opts.dryRun) return finishHarness(res, outDir, opts, restoreConsole);
   mkdirSync(outDir, { recursive: true });
   if (opts.withViewer) cpSync(viewerDist, outDir, { recursive: true });
   const json = (v: unknown) => `${JSON.stringify(v, null, 2)}\n`;
@@ -393,6 +443,28 @@ export async function runBuild(opts: BuildOptions): Promise<number> {
     rmSync(join(outDir, 'memos.json'), { force: true });
   }
 
-  console.log(formatBuildSummary(res, outDir, orphans, opts.v1Only));
-  return res.issues.some((i) => i.level === 'error') ? 1 : 0;
+  return finishHarness(res, outDir, opts, restoreConsole, orphans);
+}
+
+/** 要約・補いと strict の要約・JSON を出し、終了コードを決める（--json のとき要約は標準エラー、標準出力は JSON だけ） */
+function finishHarness(
+  res: BuildGraphResult,
+  outDir: string,
+  opts: BuildOptions,
+  restoreConsole: (() => void) | undefined,
+  orphans: string[] = [],
+): number {
+  const text = [
+    formatBuildSummary(res, outDir, orphans, opts.v1Only),
+    ...(opts.v1Only ? [] : [formatHarnessSummary(res, opts)]),
+  ]
+    .filter(Boolean)
+    .join('\n');
+  if (opts.json) {
+    process.stderr.write(`${text}\n`);
+    restoreConsole?.();
+    process.stdout.write(`${JSON.stringify(harnessJson(res), null, 2)}\n`);
+  } else console.log(text);
+  if (res.issues.some((i) => i.level === 'error')) return 1;
+  return opts.strict && res.strict?.errors.length ? 1 : 0;
 }

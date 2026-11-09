@@ -1,0 +1,3 @@
+# 配線図の名前付きの始点（docs/16 §8）。stack-atlas init-views で候補を並べた雛形も作れる。
+# start は箱 id か項目の参照、線なら { from, to }。variants のキーは "<箱 id>#<分岐 id>"。
+views: []

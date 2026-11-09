@@ -20,6 +20,8 @@ export interface Coverage {
   outside: string[];
   /** 箱 id に解けない data-component の名前 */
   unresolved: string[];
+  /** たどれる部品のうち、HTML に無く regions.yaml で補ったもの（計測の分子とは別に数える。docs/19 §3.7） */
+  yaml: string[];
 }
 
 const isPart = (id: string, kind: string | undefined) =>
@@ -39,6 +41,7 @@ export function computeCoverage(
   routeId: string,
   graph: Readonly<PartialGraph>,
   names: readonly string[],
+  yamlRefs: readonly string[] = [],
 ): Coverage {
   const kinds = new Map(graph.nodes.map((n) => [n.id, n.kind]));
   const uses = new Map<string, string[]>();
@@ -77,11 +80,13 @@ export function computeCoverage(
     if (id) resolved.add(id);
     else unresolved.add(name);
   }
+  const fromYaml = new Set(yamlRefs);
   return {
     reachable,
     covered: [...resolved].filter((id) => reach.has(id)).sort(),
-    absent: reachable.filter((id) => !resolved.has(id)),
+    absent: reachable.filter((id) => !resolved.has(id) && !fromYaml.has(id)),
     outside: [...resolved].filter((id) => !reach.has(id)).sort(),
     unresolved: [...unresolved].sort(),
+    yaml: reachable.filter((id) => !resolved.has(id) && fromYaml.has(id)),
   };
 }

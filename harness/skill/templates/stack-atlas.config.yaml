@@ -1,0 +1,22 @@
+# Stack Atlas の設定（docs/13 §4.1 にキーの一覧）。stack-atlas init --skill が置いた雛形。
+# 例は合成のフィクスチャ（examples/fixture-poly）の形。実際の repo に合わせて直す。
+project:
+  name: my-app
+
+# 複数 repo なら名前 → このファイルからの相対パス（1 つなら消す）
+# repos:
+#   web: ./web
+#   platform: ./platform
+
+# next:
+#   appDir: src/app
+# go:
+#   entries: ["cmd/*"]
+# openapi:
+#   files: [openapi/api.yaml]
+# sql:
+#   migrations: ["migrations/*.up.sql"]
+
+# ビルド成果物の画面（docs/18 §3.3）。静的エクスポートの HTML があるときだけ
+# screens:
+#   from: next-export

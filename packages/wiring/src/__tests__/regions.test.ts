@@ -86,6 +86,41 @@ describe('regionsOf（graph の screen.regions が計測より優先）', () => 
     expect(regionsOf(undefined, undefined)).toEqual({ regions: [], from: 'none' });
     expect(regionsOf({ width: 1280, height: 800 }, [])).toEqual({ regions: [], from: 'none' });
   });
+  it('regions.yaml の領域（source: yaml）は ref ごとに合わせ、計測が勝つ（8-4。docs/19 §3.7）', () => {
+    const screen = {
+      width: 1280,
+      height: 800,
+      regions: [
+        { ref: 'comp:A', x: 100, y: 100, w: 10, h: 10, source: 'yaml' as const },
+        { ref: 'comp:C', x: 5, y: 6, w: 7, h: 8, source: 'yaml' as const },
+      ],
+    };
+    // 計測にある comp:A は計測の値、無い comp:C は yaml の値
+    expect(regionsOf(screen, measured)).toEqual({
+      regions: [
+        { ref: 'comp:A', x: 1, y: 2, w: 3, h: 4 },
+        { ref: 'comp:C', x: 5, y: 6, w: 7, h: 8 },
+      ],
+      from: 'measured',
+    });
+    // 計測が無ければ yaml だけ（from は graph）
+    expect(regionsOf(screen, undefined)).toEqual({
+      regions: [
+        { ref: 'comp:A', x: 100, y: 100, w: 10, h: 10 },
+        { ref: 'comp:C', x: 5, y: 6, w: 7, h: 8 },
+      ],
+      from: 'graph',
+    });
+    // スクショの regions（source 無し）があれば従来どおりそれが勝ち、yaml は無い ref だけ足す
+    const both = {
+      ...screen,
+      regions: [...screen.regions, { ref: 'comp:A', x: 50, y: 50, w: 5, h: 5 }],
+    };
+    expect(regionsOf(both, measured).regions).toEqual([
+      { ref: 'comp:A', x: 50, y: 50, w: 5, h: 5 },
+      { ref: 'comp:C', x: 5, y: 6, w: 7, h: 8 },
+    ]);
+  });
   it('graph の regions は screen の座標から、範囲に収めたビューポートの座標に直して切り詰める', () => {
     // 幅 8192 は 4096 に収まる（半分）。高さも同じ比で
     const r = regionsOf(

@@ -1,0 +1,16 @@
+# 静的解析で取れない結線の補い（docs/13 §3.5、v2: は docs/19 §3.1）。stack-atlas init --skill が置いた雛形。
+# v2: の補いは reason が必須。番号の参照（call_1 など）には expect（name・type）を付けるか、意味の参照で書く。
+nodes: []
+edges: []
+
+v2:
+  wires: []
+  # - from: { call: { in: "fn:getRaces", http: "GET /races" } }
+  #   to: "endpoint:GET /races#in/path"
+  #   via: http
+  #   reason: "ラッパーの引数がテンプレートで、アダプタがパスを読めない"
+  retarget: []
+  links: []
+  variants: []
+  when: []
+  items: []
