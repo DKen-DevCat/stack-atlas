@@ -2,9 +2,9 @@
 // 箱・口・項目・links・線・レシピ（net/http・認証・SQL・chi / gin）・自前の importer（replace・vendor・解けない外部）・
 // 閉包（host）を確かめる。go が無い環境では go を使う所を飛ばす（STACK_ATLAS_REQUIRE_GO=1 なら失敗にする。D51）
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ItemV2 } from '@stack-atlas/schema';
@@ -18,6 +18,7 @@ import {
 import {
   createGoTypesExtractor,
   extractor,
+  helperCacheDir,
   helperEnv,
   runHelper,
   type HelperOutput,
@@ -486,7 +487,13 @@ describe('go-types: go が無いとき（D51）', () => {
     expect(env['GOOS']).toBeUndefined();
     expect(env['GOARCH']).toBeUndefined();
     expect(env['GOCACHE']).toBeUndefined();
-    // HOME も GOCACHE も無いときは OS の一時ディレクトリに
-    expect(helperEnv({})['GOCACHE']).toBe(join(tmpdir(), 'stack-atlas-go-cache'));
+    // HOME も GOCACHE も無いときは利用者ごとのディレクトリ（0700・持ち主は自分）の gocache に。
+    // 2026-11-09 変更（8-2b レビュー S6）: 以前は共有の固定の名前 `<tmpdir>/stack-atlas-go-cache`（他の利用者が先に作れた）
+    const cache = helperEnv({})['GOCACHE']!;
+    expect(cache).toBe(join(helperCacheDir({}), 'gocache'));
+    expect(cache).not.toBe(join(tmpdir(), 'stack-atlas-go-cache'));
+    const st = statSync(dirname(cache));
+    expect(st.mode & 0o077).toBe(0);
+    if (typeof process.getuid === 'function') expect(st.uid).toBe(process.getuid());
   });
 });

@@ -7,15 +7,25 @@ package main
 //   - `json.NewEncoder(w).Encode(x)` → out/<変数名>（式なら out/response。map のリテラルはキーと値の式の型で展開）
 //   - `w.WriteHeader(n)` → out/status
 //   - 認証の middleware（Authorization を見て 401 を返す関数）で mux 全体を包む → その mux の全部のルートに meta.auth = "login"
+//   - 接頭辞: `mux.Handle("/api/", http.StripPrefix("/api", sub))` の sub、chi の `r.Mount("/api", sub)`（sub は変数か、
+//     ルーターを返す関数の呼び出し）、Group / Route。接頭辞はルーターの親子で持ち、全部を読んでから付ける（登録の順に
+//     よらない）。定数でない接頭辞・決められないルーターは警告（2026-11-09 8-2b レビュー C8）
 // chi / echo / gin / fiber は外部のモジュールなので型が無い。AST と import パスでルートの登録（とリクエストの struct・
-// JSON の応答）だけを読む。
+// JSON の応答）だけを読む。gorilla/mux の PathPrefix は読まない。
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"go/types"
 	"regexp"
 	"strings"
+)
+
+// 正規表現はパッケージで 1 回だけ作る（呼び出しごとに作らない。8-2b レビュー C10）
+var (
+	versionSeg  = regexp.MustCompile(`^v\d+$`)
+	routeMethod = regexp.MustCompile(`^(` + methodWords + `|ANY|ALL)$`)
 )
 
 var frameworkPaths = []struct{ prefix, name string }{
@@ -52,7 +62,7 @@ func frameworks(f *ast.File) map[string]string {
 		} else {
 			parts := strings.Split(path, "/")
 			name = parts[len(parts)-1]
-			if regexp.MustCompile(`^v\d+$`).MatchString(name) && len(parts) > 1 {
+			if versionSeg.MatchString(name) && len(parts) > 1 {
 				name = parts[len(parts)-2]
 			}
 		}
@@ -288,21 +298,21 @@ func (a *analyzer) scanHTTP(b *Box, call *ast.CallExpr, fws map[string]string) b
 	switch full {
 	case "(net/url.Values).Get":
 		if sel != nil && len(call.Args) == 1 && (b.handler || a.queryFromURL(b, sel.X)) {
-			if k, ok := constString(info, call.Args[0]); ok {
+			if k, ok := a.constString(info, call.Args[0]); ok {
 				b.recipes[call] = src{from: "in/" + b.reqChild("query", k, false), exact: true}
 				return true
 			}
 		}
 	case "(*net/http.Request).PathValue":
 		if len(call.Args) == 1 {
-			if k, ok := constString(info, call.Args[0]); ok {
+			if k, ok := a.constString(info, call.Args[0]); ok {
 				b.recipes[call] = src{from: "in/" + b.reqChild("path", k, false), exact: true}
 				return true
 			}
 		}
 	case "(*net/http.Request).FormValue", "(*net/http.Request).PostFormValue":
 		if len(call.Args) == 1 {
-			if k, ok := constString(info, call.Args[0]); ok {
+			if k, ok := a.constString(info, call.Args[0]); ok {
 				b.recipes[call] = src{from: "in/" + b.reqChild("query", k, true), exact: true}
 				return true
 			}
@@ -328,7 +338,7 @@ func (a *analyzer) scanHTTP(b *Box, call *ast.CallExpr, fws map[string]string) b
 	}
 	// chi.URLParam(r, "id")
 	if pk, ok := sel.X.(*ast.Ident); ok && fwPkg(info, pk, fws) == "chi" && sel.Sel.Name == "URLParam" && len(call.Args) == 2 {
-		if k, ok := constString(info, call.Args[1]); ok {
+		if k, ok := a.constString(info, call.Args[1]); ok {
 			b.recipes[call] = src{from: "in/" + b.reqChild("path", k, false), exact: true}
 			return true
 		}
@@ -350,7 +360,7 @@ func (a *analyzer) scanHTTP(b *Box, call *ast.CallExpr, fws map[string]string) b
 		if len(call.Args) <= i {
 			return "", false
 		}
-		return constString(info, call.Args[i])
+		return a.constString(info, call.Args[i])
 	}
 	switch {
 	case name == "Param" || name == "Params":
@@ -474,7 +484,7 @@ func (a *analyzer) addEncode(b *Box, x ast.Expr, pos token.Pos) {
 }
 
 // mapLiteralKeys: map のリテラル（文字列のキー）のキー → 値の式
-func mapLiteralKeys(info *types.Info, e ast.Expr) (map[string]ast.Expr, []string) {
+func (a *analyzer) mapLiteralKeys(info *types.Info, e ast.Expr) (map[string]ast.Expr, []string) {
 	cl, ok := unparen(e).(*ast.CompositeLit)
 	if !ok {
 		return nil, nil
@@ -493,7 +503,7 @@ func mapLiteralKeys(info *types.Info, e ast.Expr) (map[string]ast.Expr, []string
 		if !ok {
 			return nil, nil
 		}
-		k, ok := constString(info, kv.Key)
+		k, ok := a.constString(info, kv.Key)
 		if !ok {
 			return nil, nil
 		}
@@ -577,17 +587,18 @@ func (a *analyzer) scanRoute(b *Box, call *ast.CallExpr, fws map[string]string) 
 			return false
 		}
 		a.routes = append(a.routes, &routeReg{
-			method: method, path: path, framework: fw, handler: hb, router: router, wrappers: ws,
+			method: method, raw: path, fw: fw != "net/http", framework: fw, handler: hb, router: router, wrappers: ws,
 			file: a.l.rel(pos.Filename), line: pos.Line,
 		})
 		return true
 	}
+	where := fmt.Sprintf("%s:%d", a.l.rel(pos.Filename), pos.Line)
 	switch full {
 	case "(*net/http.ServeMux).HandleFunc", "(*net/http.ServeMux).Handle", "net/http.HandleFunc", "net/http.Handle":
 		if len(call.Args) != 2 {
 			return false
 		}
-		pat, ok := constString(info, call.Args[0])
+		pat, ok := a.constString(info, call.Args[0])
 		if !ok {
 			return false
 		}
@@ -599,7 +610,11 @@ func (a *analyzer) scanRoute(b *Box, call *ast.CallExpr, fws map[string]string) 
 		if sel != nil && strings.HasPrefix(full, "(") {
 			router = identObj(info, sel.X)
 		}
-		return add(method, path, "net/http", call.Args[1], router)
+		if add(method, path, "net/http", call.Args[1], router) {
+			return true
+		}
+		// handler でなければ、サブの mux（`http.StripPrefix("/api", sub)` か mux そのもの）
+		return a.mountHTTP(b, call.Args[1], router, where)
 	}
 	if sel == nil || len(fws) == 0 {
 		return false
@@ -623,16 +638,34 @@ func (a *analyzer) scanRoute(b *Box, call *ast.CallExpr, fws map[string]string) 
 	}
 	name := sel.Sel.Name
 	upper := strings.ToUpper(name)
-	prefix := a.routerPrefix[router]
 	str := func(i int) (string, bool) {
 		if len(call.Args) <= i {
 			return "", false
 		}
-		return constString(info, call.Args[i])
+		return a.constString(info, call.Args[i])
 	}
 	switch {
 	case name == "Group" || name == "Route":
 		return false // 接頭辞は代入（scanAssign）とクロージャの引数で読む
+	case name == "Mount" && len(call.Args) == 2:
+		// chi / fiber: `r.Mount("/api", sub)`。sub はルーターの変数か、ルーターを返す関数の呼び出し。handler なら
+		// その下の全部（`/api/*`）
+		p, ok := str(0)
+		if !ok {
+			a.warn(fmt.Sprintf("go-types: %s の Mount の接頭辞が定数でないので、そのルートに接頭辞を付けられません", where))
+		}
+		if add("ANY", joinPath(p, "/*"), fw, call.Args[1], router) {
+			return true
+		}
+		subs := a.routerVars(b, call.Args[1], 0)
+		if len(subs) == 0 {
+			a.warn(fmt.Sprintf("go-types: %s の Mount したルーターを決められないので、その中のルートに接頭辞 %s を付けられません", where, p))
+			return true
+		}
+		for _, sub := range subs {
+			a.mount(sub, router, p)
+		}
+		return true
 	case name == "Use":
 		for _, arg := range call.Args {
 			if mw := a.funcRef(info, arg); mw != nil {
@@ -644,7 +677,7 @@ func (a *analyzer) scanRoute(b *Box, call *ast.CallExpr, fws map[string]string) 
 			}
 		}
 		return true
-	case regexp.MustCompile(`^(` + methodWords + `|ANY|ALL)$`).MatchString(upper):
+	case routeMethod.MatchString(upper):
 		p, ok := str(0)
 		if !ok || !strings.HasPrefix(p, "/") || len(call.Args) < 2 {
 			return false
@@ -653,7 +686,7 @@ func (a *analyzer) scanRoute(b *Box, call *ast.CallExpr, fws map[string]string) 
 		if method == "ALL" {
 			method = "ANY"
 		}
-		path := frameworkPath(joinPath(prefix, p))
+		path := p
 		// handler: echo は 2 番目（後ろは middleware）、gin / fiber は最後、それ以外（chi・混在）は 2 番目か最後
 		switch fw {
 		case "echo":
@@ -672,10 +705,10 @@ func (a *analyzer) scanRoute(b *Box, call *ast.CallExpr, fws map[string]string) 
 			if fw == "gin" {
 				h = call.Args[len(call.Args)-1]
 			}
-			return add(strings.ToUpper(m), frameworkPath(joinPath(prefix, p)), fw, h, router)
+			return add(strings.ToUpper(m), p, fw, h, router)
 		}
 		if p, ok := str(0); ok && strings.HasPrefix(p, "/") && len(call.Args) >= 2 {
-			return add("ANY", frameworkPath(joinPath(prefix, p)), fw, call.Args[1], router)
+			return add("ANY", p, fw, call.Args[1], router)
 		}
 	}
 	return false
@@ -695,13 +728,14 @@ func (a *analyzer) scanRouterAssign(b *Box, lhs types.Object, rhs ast.Expr, fws 
 	if !ok || sel.Sel.Name != "Group" || len(call.Args) == 0 {
 		return
 	}
-	p, ok := constString(b.info, call.Args[0])
+	p, ok := a.constString(b.info, call.Args[0])
 	if !ok {
-		return
+		pos := a.l.fset.Position(call.Pos())
+		a.warn(fmt.Sprintf("go-types: %s:%d の Group の接頭辞が定数でないので、そのルートに接頭辞を付けられません", a.l.rel(pos.Filename), pos.Line))
 	}
 	parent := identObj(b.info, sel.X)
 	a.routerParent[lhs] = parent
-	a.routerPrefix[lhs] = joinPath(a.routerPrefix[parent], p)
+	a.routerPrefix[lhs] = p
 	if fw := a.routerFw[parent]; fw != "" {
 		a.routerFw[lhs] = fw
 	}
@@ -760,9 +794,10 @@ func (a *analyzer) scanChiRoute(b *Box, call *ast.CallExpr, fws map[string]strin
 		if len(call.Args) != 2 {
 			return
 		}
-		p, ok := constString(b.info, call.Args[0])
+		p, ok := a.constString(b.info, call.Args[0])
 		if !ok {
-			return
+			pos := a.l.fset.Position(call.Pos())
+			a.warn(fmt.Sprintf("go-types: %s:%d の Route の接頭辞が定数でないので、そのルートに接頭辞を付けられません", a.l.rel(pos.Filename), pos.Line))
 		}
 		prefix = p
 		fl, _ = call.Args[1].(*ast.FuncLit)
@@ -779,6 +814,148 @@ func (a *analyzer) scanChiRoute(b *Box, call *ast.CallExpr, fws map[string]strin
 		return
 	}
 	a.routerParent[obj] = parent
-	a.routerPrefix[obj] = joinPath(a.routerPrefix[parent], prefix)
+	a.routerPrefix[obj] = prefix
 	a.routerFw[obj] = "chi"
+}
+
+// mount: サブのルーター sub を parent の下の接頭辞 prefix に置く（先に置いたものを残す）
+func (a *analyzer) mount(sub, parent types.Object, prefix string) {
+	if sub == nil || sub == parent {
+		return
+	}
+	if _, done := a.routerParent[sub]; done {
+		return
+	}
+	a.routerParent[sub] = parent
+	a.routerPrefix[sub] = prefix
+}
+
+// routerVars: ルーターを指す式 → ルーターの変数。変数そのもの、ルーターを返す（モジュールの中の）関数の呼び出し
+// （その関数の return の変数）、それを包む呼び出し（middleware）の引数
+func (a *analyzer) routerVars(b *Box, e ast.Expr, depth int) []types.Object {
+	if depth > 3 || e == nil {
+		return nil
+	}
+	switch x := unparen(e).(type) {
+	case *ast.Ident:
+		if o := identObj(b.info, x); o != nil {
+			if _, isVar := o.(*types.Var); isVar {
+				return []types.Object{o}
+			}
+		}
+	case *ast.UnaryExpr:
+		return a.routerVars(b, x.X, depth+1)
+	case *ast.CallExpr:
+		if callee := a.boxOfFunc(calleeFunc(b.info, x)); callee != nil && callee != b {
+			var out []types.Object
+			walkReturns(callee.decl.Body, func(r *ast.ReturnStmt) {
+				if len(r.Results) == 1 {
+					out = append(out, a.routerVars(callee, r.Results[0], depth+1)...)
+				}
+			})
+			if len(out) > 0 {
+				return out
+			}
+		}
+		for _, arg := range x.Args {
+			if out := a.routerVars(b, arg, depth+1); len(out) > 0 {
+				return out
+			}
+		}
+	}
+	return nil
+}
+
+// mountHTTP: net/http の Handle に渡したものが handler でないとき。`http.StripPrefix("/api", sub)` は sub の
+// ルートに接頭辞 /api、mux そのもの（`mux.Handle("/api/", sub)`）は接頭辞無しで親子にする（認証の middleware を
+// 受け継ぐ）。扱ったら true
+func (a *analyzer) mountHTTP(b *Box, e ast.Expr, router types.Object, where string) bool {
+	info := b.info
+	prefix := ""
+	inner := unparen(e)
+	if call, ok := inner.(*ast.CallExpr); ok && methodFull(info, call) == "net/http.StripPrefix" && len(call.Args) == 2 {
+		p, ok := a.constString(info, call.Args[0])
+		if !ok {
+			a.warn(fmt.Sprintf("go-types: %s の StripPrefix の接頭辞が定数でないので、その中のルートに接頭辞を付けられません", where))
+		}
+		prefix = p
+		inner = unparen(call.Args[1])
+	} else if !a.isMux(info, inner) {
+		return false
+	}
+	subs := a.routerVars(b, inner, 0)
+	var muxes []types.Object
+	for _, o := range subs {
+		if a.isMuxObj(o) {
+			muxes = append(muxes, o)
+		}
+	}
+	if len(muxes) == 0 {
+		if prefix != "" {
+			a.warn(fmt.Sprintf("go-types: %s の StripPrefix の中の mux を決められないので、その中のルートに接頭辞 %s を付けられません", where, prefix))
+		}
+		return false
+	}
+	for _, o := range muxes {
+		a.mount(o, router, prefix)
+	}
+	return true
+}
+
+// isMux / isMuxObj: *http.ServeMux か、フレームワークのルーターの変数
+func (a *analyzer) isMux(info *types.Info, e ast.Expr) bool {
+	tv, ok := info.Types[e]
+	if ok && tv.Type != nil {
+		if t, _ := deref(tv.Type); isNamed(t, "net/http", "ServeMux") {
+			return true
+		}
+	}
+	if o := identObj(info, e); o != nil {
+		return a.routerFw[o] != ""
+	}
+	return false
+}
+
+func (a *analyzer) isMuxObj(o types.Object) bool {
+	if a.routerFw[o] != "" {
+		return true
+	}
+	if v, ok := o.(*types.Var); ok {
+		t, _ := deref(v.Type())
+		return isNamed(t, "net/http", "ServeMux")
+	}
+	return false
+}
+
+// fullPrefix: ルーターの接頭辞（親を辿って連ねる。循環と深さに上限）
+func (a *analyzer) fullPrefix(o types.Object) string {
+	var segs []string
+	seen := map[types.Object]bool{}
+	for i := 0; o != nil && i < 16 && !seen[o]; i++ {
+		seen[o] = true
+		if p := a.routerPrefix[o]; p != "" {
+			segs = append(segs, p)
+		}
+		next, ok := a.routerParent[o]
+		if !ok {
+			break
+		}
+		o = next
+	}
+	prefix := ""
+	for i := len(segs) - 1; i >= 0; i-- {
+		prefix = joinPath(prefix, segs[i])
+	}
+	return prefix
+}
+
+// finishRoutes: ルートのパス = ルーターの接頭辞 + 登録したパス（全部の関数を読んでから。Mount が後でも付く）
+func (a *analyzer) finishRoutes() {
+	for _, r := range a.routes {
+		path := joinPath(a.fullPrefix(r.router), r.raw)
+		if r.fw {
+			path = frameworkPath(path)
+		}
+		r.path = path
+	}
 }

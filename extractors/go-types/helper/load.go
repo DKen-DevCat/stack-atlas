@@ -60,6 +60,8 @@ type Pkg struct {
 	state int // 0: 未検査、1: 検査中、2: 済み
 	// 型の検査のエラー（モジュールの中だけ数える）
 	TypeErrors int
+	// 定数の名前 → 文字列の長さの見積もり（constlen.go。標準ライブラリは nil）
+	consts map[string]int64
 }
 
 type loader struct {
@@ -70,6 +72,8 @@ type loader struct {
 	replaces  []replaceRule
 	vendor    bool
 	goroot    string
+	// GOROOT/src の実体（シンボリックリンクを解いたもの）。標準ライブラリはこの中だけ読む
+	gorootSrc string
 	ctx       build.Context
 	lim       limits
 
@@ -113,6 +117,9 @@ func newLoader(root string, lim limits) (*loader, error) {
 		sem:      make(chan struct{}, runtime.NumCPU()),
 		warned:   map[string]bool{},
 		external: map[string]bool{},
+	}
+	if src, err := filepath.EvalSymlinks(filepath.Join(l.goroot, "src")); err == nil {
+		l.gorootSrc = src
 	}
 	if err := l.readGoMod(); err != nil {
 		return nil, err
@@ -232,8 +239,37 @@ func hasPathPrefix(path, prefix string) (string, bool) {
 	return "", false
 }
 
+// validImportPath: import パスとして読んでよいか（空の段・`.`・`..`・絶対パス・バックスラッシュ・NUL を断る。
+// 2026-11-09 8-2b レビュー S5: `import "x/../../<絶対パス>"` が標準ライブラリの解決で GOROOT の外を読んでいた）
+func validImportPath(path string) bool {
+	if path == "" || strings.HasPrefix(path, "/") || strings.ContainsAny(path, "\\\x00") || filepath.IsAbs(path) {
+		return false
+	}
+	for _, seg := range strings.Split(path, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+// stdDir: 標準ライブラリのディレクトリ（実体が GOROOT/src の中にあるものだけ）
+func (l *loader) stdDir(d string) (string, bool) {
+	if !isDir(d) {
+		return "", false
+	}
+	real, err := filepath.EvalSymlinks(d)
+	if err != nil || l.gorootSrc == "" || !strings.HasPrefix(real, l.gorootSrc+string(filepath.Separator)) {
+		return "", false
+	}
+	return real, true
+}
+
 // resolve: import パス → (ディレクトリ, 種類)。from は import する側（標準ライブラリの vendor の解決に使う）
 func (l *loader) resolve(path string, from *Pkg) (string, string, error) {
+	if !validImportPath(path) {
+		return "", "", fmt.Errorf("外部のモジュール %q は解析しません（import パスとして正しくない）", path)
+	}
 	if rest, ok := hasPathPrefix(path, l.module); ok {
 		return l.safeDir(filepath.Join(l.root, filepath.FromSlash(rest)), path, kindModule)
 	}
@@ -244,12 +280,12 @@ func (l *loader) resolve(path string, from *Pkg) (string, string, error) {
 	}
 	first := strings.SplitN(path, "/", 2)[0]
 	if from != nil && from.Kind == kindStd {
-		if d := filepath.Join(l.goroot, "src", "vendor", filepath.FromSlash(path)); isDir(d) {
+		if d, ok := l.stdDir(filepath.Join(l.goroot, "src", "vendor", filepath.FromSlash(path))); ok {
 			return d, kindStd, nil
 		}
 	}
 	if !strings.Contains(first, ".") {
-		if d := filepath.Join(l.goroot, "src", filepath.FromSlash(path)); isDir(d) {
+		if d, ok := l.stdDir(filepath.Join(l.goroot, "src", filepath.FromSlash(path))); ok {
 			return d, kindStd, nil
 		}
 	}
@@ -527,6 +563,21 @@ func (l *loader) check(p *Pkg) (*types.Package, error) {
 	}
 	p.state = 1
 	full := p.Kind == kindModule
+	if p.Kind != kindStd {
+		// 依存を先に検査する（定数の文字列の見積もりに import 先の表が要る。constlen.go）。結果は go/types が
+		// import の順に検査するのと同じ（1 パッケージ 1 回、メモ）
+		keys := make([]string, 0, len(p.deps))
+		for _, k := range p.deps {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if dep := l.pkgs[k]; dep != nil && dep.state == 0 {
+				l.check(dep)
+			}
+		}
+		l.boundConsts(p)
+	}
 	conf := types.Config{
 		Importer:         pkgImporter{l, p},
 		FakeImportC:      true,

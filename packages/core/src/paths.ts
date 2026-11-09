@@ -35,6 +35,35 @@ export function pathMatches(routePath: string, clientPath: string): boolean {
   return rs.length === cs.length;
 }
 
+/** 前もって分けた route のパス（照合ごとに split・正規表現をしない。合流で endpoint × handler を回すため） */
+export interface RouteSegments {
+  segs: string[];
+  /** 0: リテラル、1: パラメータ、2: greedy */
+  kinds: number[];
+}
+
+/** route のパスを分ける（pathMatches と同じ規則） */
+export function routeSegments(routePath: string): RouteSegments {
+  const segs = routePath.split('/').filter(Boolean);
+  return { segs, kinds: segs.map((s) => (GREEDY.test(s) ? 2 : PARAM.test(s) ? 1 : 0)) };
+}
+
+/** クライアントのパスを分ける */
+export const pathSegments = (clientPath: string) => clientPath.split('/').filter(Boolean);
+
+/** pathMatches の分けたもの版 */
+export function segmentsMatch(route: RouteSegments, client: readonly string[]): boolean {
+  const { segs, kinds } = route;
+  for (let i = 0; i < segs.length; i++) {
+    if (kinds[i] === 2) return client.length > i;
+    const c = client[i];
+    if (c === undefined) return false;
+    if (kinds[i] === 1) continue;
+    if (segs[i] !== c) return false;
+  }
+  return segs.length === client.length;
+}
+
 /** メソッドが合うか（route の ANY はどれにも合う） */
 export function methodMatches(routeMethod: string, clientMethod: string): boolean {
   return routeMethod === 'ANY' || routeMethod === clientMethod;

@@ -33,6 +33,7 @@ import { gitCommit, gitRemote } from './git.js';
 import { assignLayers } from './layers.js';
 import { silentLogger } from './logger.js';
 import { mergePartialGraphs } from './merge.js';
+import { disambiguateV2 } from './v2-parts.js';
 import {
   cleanupV2,
   coverageV2,
@@ -173,6 +174,8 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
 
   // 1. 抽出（抽出器の順 × repo の宣言順。後続は先行の結果を upstream で読める）
   let merged: PartialGraph = { nodes: [], edges: [] };
+  /** 言語アダプタの箱 id → 持ち主（`<抽出器>@<repo>`。衝突の検出） */
+  const v2Owners = new Map<string, string>();
   for (const ex of opts.extractors) {
     const report: ExtractorReport = {
       name: ex.name,
@@ -202,6 +205,16 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
           continue;
         }
         const part = prefixRepoFiles(await ex.extract(ctx, merged), ctx);
+        // 言語アダプタの箱 id の衝突（別のアダプタ・別の repo が先に出した id）は、後の方を file で修飾する（C6）
+        if (part.v2 && (ex.v2Role ?? 'language') === 'language') {
+          const d = disambiguateV2(part.v2, v2Owners, `${ex.name}@${ctx.repoName}`);
+          part.v2 = d.part;
+          for (const r of d.renamed) {
+            const message = `v2: 箱 id ${r.from} が ${r.other} と ${label} で重なったので、${label} の方を ${r.to} にしました`;
+            log.warn(message);
+            issues.push({ level: 'warning', path: `v2:node:${r.to}`, message });
+          }
+        }
         const stamped: PartialGraph = {
           ...part,
           nodes: part.nodes.map((n) => addExtractorName(clone(n), ex.name)),

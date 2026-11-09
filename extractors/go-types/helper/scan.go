@@ -72,9 +72,11 @@ func (a *analyzer) scan(b *Box) {
 			}
 		case *ast.SelectorExpr, *ast.Ident:
 			e := x.(ast.Expr)
-			// SQL・Authorization（定数の文字列）
-			if s, ok := constString(info, e); ok {
-				a.scanConst(b, e, s, stack)
+			// SQL・Authorization（定数の文字列。長すぎるものは読まない）
+			if isConstString(info, e) {
+				if s, ok := a.constString(info, e); ok {
+					a.scanConst(b, e, s, stack)
+				}
 				return false
 			}
 			// 関数・メソッドの値の参照（呼び出しでない）
@@ -88,8 +90,17 @@ func (a *analyzer) scan(b *Box) {
 				b.refs = append(b.refs, t)
 			}
 		case *ast.BasicLit, *ast.BinaryExpr:
-			if s, ok := constString(info, x.(ast.Expr)); ok {
-				a.scanConst(b, x.(ast.Expr), s, stack)
+			// 定数の文字列は 1 回だけ見る（中の `+` を見直さない）
+			if isConstString(info, x.(ast.Expr)) {
+				if s, ok := a.constString(info, x.(ast.Expr)); ok {
+					a.scanConst(b, x.(ast.Expr), s, stack)
+				}
+				return false
+			}
+			if lit, ok := x.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+				if s, ok := a.constString(info, lit); ok {
+					a.scanConst(b, lit, s, stack)
+				}
 				return false
 			}
 		}
@@ -99,11 +110,11 @@ func (a *analyzer) scan(b *Box) {
 
 // scanConst: 定数の文字列。SQL なら sqlUse、`Authorization` なら認証の印
 func (a *analyzer) scanConst(b *Box, e ast.Expr, s string, stack []ast.Node) {
-	if strings.EqualFold(strings.TrimSpace(s), "authorization") {
+	if len(s) < 32 && strings.EqualFold(strings.TrimSpace(s), "authorization") {
 		b.authHdr = true
 		return
 	}
-	st := parseSQL(s)
+	st := a.sqlOf(b.info, e, s)
 	if st == nil {
 		return
 	}
@@ -301,16 +312,16 @@ func (a *analyzer) finishRecipes(b *Box) {
 		}
 	}
 	// Encode
-	used := map[string]bool{}
+	used := idSet{}
 	for _, x := range b.out {
-		used[x.ID] = true
+		used[x.ID] = 1
 	}
 	for _, ev := range b.encodes {
 		ev.id = uniqueID(ev.id, used)
 		t := b.info.Types[ev.expr].Type
 		var keys map[string]ast.Expr
 		var order []string
-		keys, order = mapLiteralKeys(b.info, ev.expr)
+		keys, order = a.mapLiteralKeys(b.info, ev.expr)
 		if keys == nil {
 			if id, ok := unparen(ev.expr).(*ast.Ident); ok {
 				obj := b.info.Uses[id]
@@ -321,7 +332,7 @@ func (a *analyzer) finishRecipes(b *Box) {
 					}
 				}
 				if len(defs) == 1 && defs[0].expr != nil {
-					keys, order = mapLiteralKeys(b.info, defs[0].expr)
+					keys, order = a.mapLiteralKeys(b.info, defs[0].expr)
 				}
 			}
 		}
@@ -333,7 +344,7 @@ func (a *analyzer) finishRecipes(b *Box) {
 		var it *Item
 		if keys != nil {
 			it = &Item{ID: ev.id, Name: name, Type: typeString(t, here), WireType: "object"}
-			kused := map[string]bool{}
+			kused := idSet{}
 			for _, k := range order {
 				if !b.budget.take() {
 					break
@@ -383,7 +394,7 @@ func (a *analyzer) finishRecipes(b *Box) {
 		}
 		b.budget.take()
 		it := &Item{ID: u.itemID, Name: name, Type: st.display, WireType: "object"}
-		cused := map[string]bool{}
+		cused := idSet{}
 		if st.op == "insert" || st.op == "update" {
 			for _, c := range st.write {
 				if b.budget.take() {
@@ -393,7 +404,7 @@ func (a *analyzer) finishRecipes(b *Box) {
 		} else {
 			for _, w := range st.where {
 				if b.budget.take() {
-					it.Children = append(it.Children, sqlColItem(uniqueID(w.col, cused), w.col, st.table, w.col, w.cast))
+					it.Children = append(it.Children, sqlColItem(uniqueID(w.col, cused), w.col, w.table, w.col, w.cast))
 				}
 			}
 		}
@@ -406,23 +417,36 @@ func (a *analyzer) finishRecipes(b *Box) {
 			if rows > 1 {
 				u.rowID = "row_" + itoa(k+1)
 			}
+			rowSQL := map[string]any{"table": st.table, "query": u.itemID}
+			if len(st.tables) > 1 {
+				// JOIN した行: カラムごとのテーブル（typeRef）で、合流の照合はそのテーブルのカラムだけ（8-2b レビュー C2）
+				rowSQL["tables"] = st.tables
+			}
 			row := &Item{ID: u.rowID, Name: strings.ToUpper(st.op) + " の 1 行", Type: "record", WireType: "object",
-				Meta: map[string]any{"sql": map[string]any{"table": st.table, "query": u.itemID}}}
+				Meta: map[string]any{"sql": rowSQL}}
 			if st.op == "select" {
 				row.Name = "SELECT の 1 行"
 			} else {
 				row.Name = "RETURNING の 1 行"
 			}
-			rused := map[string]bool{}
+			rused := idSet{}
 			for _, c := range st.read {
 				if c.star {
-					row.Meta["sql"].(map[string]any)["star"] = true
+					// スキーマで広げられなかった `*`: 印と位置（TS の側がマイグレーションで広げる。Scan はここから先を
+					// 位置で写さない。8-2b レビュー C5）
+					if _, ok := rowSQL["star"]; !ok {
+						rowSQL["star"] = true
+						rowSQL["starAt"] = len(row.Children)
+						if c.table != "" && c.table != st.table {
+							rowSQL["starTable"] = c.table
+						}
+					}
 					continue
 				}
 				if !b.budget.take() {
 					break
 				}
-				ci := sqlColItem(uniqueID(c.id, rused), c.name, st.table, c.column, c.cast)
+				ci := sqlColItem(uniqueID(c.id, rused), c.name, c.table, c.column, c.cast)
 				if c.expr != "" {
 					ci.Meta["_sql"].(map[string]any)["expr"] = c.expr
 					if c.cast == "" && strings.HasPrefix(strings.ToLower(c.expr), "count(") {
@@ -457,14 +481,28 @@ func (a *analyzer) finishRecipes(b *Box) {
 			continue
 		}
 		row := b.inItem(use.rowID)
-		for i, d := range sc.dests {
-			if row == nil || i >= len(row.Children) {
-				break
+		if row == nil {
+			continue
+		}
+		// 広げられなかった `*` から先は、引数の順とカラムの順が合わない: 行の全体から crude（8-2b レビュー C5）
+		starAt := -1
+		if m, ok := row.Meta["sql"].(map[string]any); ok {
+			if at, ok := m["starAt"].(int); ok {
+				starAt = at
 			}
+		}
+		for i, d := range sc.dests {
 			e := unparen(d).(*ast.UnaryExpr).X
 			obj, sub := a.lhsPath(b.info, e)
 			if obj == nil {
 				continue
+			}
+			if starAt >= 0 && i >= starAt {
+				b.assigns = append(b.assigns, assign{obj: obj, sub: sub, fixed: []src{{from: "in/" + use.rowID, exact: false}}, index: -1})
+				continue
+			}
+			if i >= len(row.Children) {
+				break
 			}
 			b.assigns = append(b.assigns, assign{obj: obj, sub: sub, fixed: []src{{from: "in/" + use.rowID + "." + row.Children[i].ID, exact: true}}, index: -1})
 		}
@@ -488,7 +526,7 @@ func (a *analyzer) buildCalls(b *Box) {
 	info := b.info
 	for _, ev := range b.calls {
 		callee := ev.callee
-		used := map[string]bool{}
+		used := idSet{}
 		for _, p := range callee.params {
 			if p.index >= len(ev.call.Args) {
 				continue

@@ -30,7 +30,8 @@
  *   **実際に参照しているもの**へ付け替える（2026-11-09 レビュー C1・C6）。参照の手がかりは、アダプタの refs（箱ごとの
  *   参照先）と、HTTP の線なら呼び出しの項目の `meta.http`（endpoint に合うもの、無ければ合流できなかった呼び出し）。
  *   テーブルへの線（via sql）は、そのテーブルを SQL（`meta.sql`）で使う中の関数の箱（8-2b）。
- *   決められなければ中の全部へ付け替え、その数を `undetermined` に数える（サマリに出す）。合流で結んだ箱の対
+ *   決められなければ中の全部へ付け替え、その数を `undetermined` に数える（サマリに出す。中が 1 つだけの group は
+ *   決められた側に数える。8-2b レビュー）。合流で結んだ箱の対
  *   （JoinReport.pairs）は細かい線があるものとして数える
  * - group になった v1 の箱を消す。アダプタの箱の `_` は、どの線にも指されていなければ消す
  * - 残った `_`（呼び出しでない参照・合流の相手がまだ箱の単位の所）には crude の links を足す。起動の項目 → `out/_`、
@@ -564,6 +565,8 @@ export function cleanupV2(state: MergedV2, opts: CleanupV2Options = {}): Cleanup
       const callerBox = w.reply ? b : a;
       const ends = (box: string, members: string[] | undefined, other: string) => {
         if (!members) return { list: [box], determined: true };
+        // 中が 1 つだけなら、付け替え先はそれしか無い（決められた側に数える。2026-11-09 8-2b レビュー）
+        if (members.length === 1) return { list: members, determined: true };
         const hit = referrers(members, other, box === callerBox, w);
         return hit ? { list: hit, determined: true } : { list: members, determined: false };
       };

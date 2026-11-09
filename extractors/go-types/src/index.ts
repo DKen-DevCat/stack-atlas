@@ -33,7 +33,14 @@ import {
 } from '@stack-atlas/extractor-sql';
 import { GoMissingError, runHelper, type RunHelperOptions } from './run.js';
 
-export { GoMissingError, HELPER_DIR, helperEnv, runHelper } from './run.js';
+export {
+  GoMissingError,
+  HELPER_DIR,
+  ensureHelper,
+  helperCacheDir,
+  helperEnv,
+  runHelper,
+} from './run.js';
 
 export const NAME = 'go-types';
 
@@ -151,38 +158,88 @@ const itemsWalk = (items: ItemV2[], visit: (it: ItemV2) => void) => {
   }
 };
 
-/** SQL のカラムの項目（helper の `_sql` の印）に型を埋める */
+/** 項目 id の文字集合（docs/16 §3） */
+const itemId = (name: string) => name.replace(/[^A-Za-z0-9_$-]/g, '_') || '_';
+
+type SqlColumnDef = SqlTableWithDefs['defs'][number];
+
+/** テーブル → カラムの表（小文字の名前 → 定義。項目ごとに defs を探さない。8-2b レビュー S3） */
+function columnIndex() {
+  const memo = new Map<SqlTableWithDefs, Map<string, SqlColumnDef>>();
+  return (t: SqlTableWithDefs) => {
+    let m = memo.get(t);
+    if (!m) {
+      m = new Map();
+      for (const c of t.defs) if (!m.has(c.name.toLowerCase())) m.set(c.name.toLowerCase(), c);
+      memo.set(t, m);
+    }
+    return m;
+  };
+}
+
+/** helper の行の印（meta.sql） */
+interface RowSql {
+  table?: string;
+  star?: boolean;
+  /** 広げられなかった `*` の位置（その前の子の数） */
+  starAt?: number;
+  /** `t.*` のテーブル（行の table と違うとき） */
+  starTable?: string;
+}
+
+/**
+ * SQL のカラムの項目（helper の `_sql` の印）に型を埋める。helper が広げられなかった `*` は、マイグレーションのカラムで
+ * その位置に広げる（他の子があっても。1 つの `*` につき maxItems まで）。別名（`name AS user_name`）は元のカラムを
+ * `meta.sql.column` に残す（合流の照合はこれで組にする。8-2b レビュー C1・C5）
+ */
 export function fillSqlColumns(
   boxes: HelperBox[],
   tables: Map<string, SqlTableWithDefs>,
-): { filled: number; unknownTables: string[] } {
+  maxItems: number = DEFAULT_MAX_ITEMS,
+): { filled: number; unknownTables: string[]; truncatedStars: number } {
   const byName = new Map([...tables.values()].map((t) => [t.table.toLowerCase(), t]));
+  const colsOf = columnIndex();
   let filled = 0;
+  let truncatedStars = 0;
   const unknown = new Set<string>();
   for (const b of boxes) {
     for (const p of b.ports) {
-      // SELECT * の 1 行: テーブルの全部のカラム
+      // SELECT * の 1 行: テーブルのカラムを `*` の位置に
       for (const it of p.items) {
-        const sql = it.meta?.['sql'] as { table?: string; star?: boolean } | undefined;
-        if (!sql?.star || !sql.table || it.children?.length) continue;
-        const t = byName.get(sql.table.toLowerCase());
-        if (t)
-          it.children = t.defs.map((c) => ({
-            id: c.name.replace(/[^A-Za-z0-9_$-]/g, '_') || '_',
+        const sql = it.meta?.['sql'] as RowSql | undefined;
+        if (!sql?.star || !sql.table) continue;
+        const name = sql.starTable ?? sql.table;
+        const t = byName.get(name.toLowerCase());
+        if (t) {
+          const kids = it.children ?? [];
+          const used = new Set(kids.map((c) => c.id));
+          const uniq = (base: string) => {
+            let id = base;
+            for (let k = 2; used.has(id); k++) id = `${base}_${k}`;
+            used.add(id);
+            return id;
+          };
+          if (t.defs.length > maxItems) truncatedStars++;
+          const added: ItemV2[] = t.defs.slice(0, maxItems).map((c) => ({
+            id: uniq(itemId(c.name)),
             name: c.name,
             type: 'column',
-            meta: { _sql: { table: sql.table, column: c.name } },
+            meta: { _sql: { table: t.table, column: c.name } },
           }));
+          const at = Math.min(Math.max(0, sql.starAt ?? 0), kids.length);
+          it.children = [...kids.slice(0, at), ...added, ...kids.slice(at)];
+          delete sql.star;
+        }
+        delete sql.starAt;
+        delete sql.starTable;
       }
       itemsWalk(p.items, (it) => {
         const mark = it.meta?.['_sql'] as
           { table: string; column?: string; cast?: string; expr?: string } | undefined;
         if (!mark) return;
-        const t = byName.get(mark.table.toLowerCase());
-        const col = mark.column
-          ? t?.defs.find((c) => c.name.toLowerCase() === mark.column!.toLowerCase())
-          : undefined;
-        if (!t) unknown.add(mark.table);
+        const t = mark.table ? byName.get(mark.table.toLowerCase()) : undefined;
+        const col = mark.column && t ? colsOf(t).get(mark.column.toLowerCase()) : undefined;
+        if (mark.table && !t) unknown.add(mark.table);
         if (mark.cast) {
           it.type = mark.cast;
           it.wireType = sqlWireType(mark.cast);
@@ -199,12 +256,23 @@ export function fillSqlColumns(
         const rest: Record<string, unknown> = { ...it.meta };
         delete rest['_sql'];
         if (mark.expr) rest['expr'] = mark.expr;
+        else if (mark.column && itemId(mark.column).toLowerCase() !== it.id.toLowerCase())
+          rest['sql'] = { column: mark.column };
         if (Object.keys(rest).length) it.meta = rest;
         else delete it.meta;
       });
     }
   }
-  return { filled, unknownTables: [...unknown].sort() };
+  return { filled, unknownTables: [...unknown].sort(), truncatedStars };
+}
+
+/** helper に渡す SQL のスキーマ（テーブル → カラム。定義の順） */
+export function sqlSchema(tables: Map<string, SqlTableWithDefs>): {
+  tables: Record<string, string[]>;
+} {
+  const out: Record<string, string[]> = {};
+  for (const t of tables.values()) out[t.table] = t.defs.map((c) => c.name);
+  return { tables: out };
 }
 
 /**
@@ -251,7 +319,9 @@ export function toPartialV2(
     let host: string | undefined;
     if (reach.length === 1 && infra.length === 1) host = infra[0];
     else if (reach.length > 1) {
-      if (infra.length) meta['hosts'] = infra;
+      // 複数の入口から使う関数: host を空にして meta.hosts。入口のインフラが分からなくても空の配列を書く（mergeV2 が
+      // group の host を受け継がせない。8-2b レビュー C7）
+      meta['hosts'] = infra;
       multiHost++;
     }
     const node: PartialNodeV2 = {
@@ -300,14 +370,22 @@ export function createGoTypesExtractor(opts: GoTypesOptions = {}): Extractor {
       const depth = ctx.config.adapters?.depth ?? DEFAULT_DEPTH;
       const maxItems = ctx.config.adapters?.maxItems ?? DEFAULT_MAX_ITEMS;
       const entries = entryDirs(ctx);
+      // SQL のテーブル（sql 抽出器と同じマイグレーション）。helper にも渡す（`*` を広げ、WHERE のカラムを絞る）
+      const sqlCfg = ctx.config.sql;
+      const sqlRoot = sqlCfg?.repo ? ctx.repos[sqlCfg.repo] : ctx.root;
+      const tables = sqlRoot
+        ? readTables(sqlRoot, sqlCfg?.migrations ?? DEFAULT_MIGRATIONS, (m) => ctx.log.warn(m))
+        : new Map<string, SqlTableWithDefs>();
       const args = ['-root', ctx.root, '-depth', String(depth), '-max-items', String(maxItems)];
       for (const e of entries) args.push('-entry', e);
+      args.push('-schema-stdin');
       const timeoutEnv = Number(env['STACK_ATLAS_GO_TIMEOUT_MS']);
       let raw: string;
       try {
         raw = await runHelper(args, {
           ...opts,
           env,
+          input: JSON.stringify(sqlSchema(tables)),
           ...(opts.timeoutMs === undefined && timeoutEnv > 0 ? { timeoutMs: timeoutEnv } : {}),
         });
       } catch (e) {
@@ -339,13 +417,12 @@ export function createGoTypesExtractor(opts: GoTypesOptions = {}): Extractor {
           ctx.log.warn(
             `go-types: ${b.id} の項目が上限（${maxItems}）を超えたので、子の展開を打ち切りました（config の adapters.maxItems）`,
           );
-      // SQL のカラムの型（sql 抽出器と同じマイグレーション）
-      const sqlCfg = ctx.config.sql;
-      const sqlRoot = sqlCfg?.repo ? ctx.repos[sqlCfg.repo] : ctx.root;
-      const tables = sqlRoot
-        ? readTables(sqlRoot, sqlCfg?.migrations ?? DEFAULT_MIGRATIONS)
-        : new Map<string, SqlTableWithDefs>();
-      const sql = fillSqlColumns(out.boxes, tables);
+      // SQL のカラムの型
+      const sql = fillSqlColumns(out.boxes, tables, maxItems);
+      if (sql.truncatedStars)
+        ctx.log.warn(
+          `go-types: SELECT * の ${sql.truncatedStars} か所で、カラムが上限（${maxItems}）を超えたので打ち切りました（config の adapters.maxItems）`,
+        );
       if (sql.unknownTables.length)
         ctx.log.info(
           `go-types: SQL のテーブル ${sql.unknownTables.join(', ')} がマイグレーションにありません（カラムの型は unknown）`,

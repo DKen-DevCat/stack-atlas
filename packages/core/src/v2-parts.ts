@@ -135,6 +135,67 @@ export function mergeNamedTypes(a: readonly NamedType[], b: readonly NamedType[]
   return out;
 }
 
+/** 言語アダプタの箱 id の衝突で付け替えたもの */
+export interface RenamedBoxV2 {
+  from: string;
+  to: string;
+  /** 先に同じ id を出した持ち主（`<抽出器>@<repo>`） */
+  other: string;
+}
+
+/**
+ * 言語アダプタの箱 id の衝突（2026-11-09 8-2b レビュー C6）: 先に別の持ち主（別の言語アダプタか、同じアダプタの別の
+ * repo）が出した箱と同じ id の箱を、後の方だけ `<種類>:<file>~<名前>`（TS の衝突の退避と同じ形。file が無ければ
+ * `~2` …）に付け替える。part の線・refs・groups の参照も付け替える。owners（箱 id → 持ち主）に part の箱を足す。
+ * 黙って mergePartialV2 で混ぜると、無関係な箱（TS の `fn:api.list` と Go の根のパッケージ api の list）の口が混ざる
+ */
+export function disambiguateV2(
+  part: PartialGraphV2,
+  owners: Map<string, string>,
+  owner: string,
+): { part: PartialGraphV2; renamed: RenamedBoxV2[] } {
+  const renamed: RenamedBoxV2[] = [];
+  const map = new Map<string, string>();
+  const taken = new Set([...owners.keys(), ...part.nodes.map((n) => n.id)]);
+  for (const n of part.nodes) {
+    const other = owners.get(n.id);
+    if (other === undefined || other === owner || map.has(n.id)) continue;
+    const colon = n.id.indexOf(':');
+    const kind = n.id.slice(0, colon + 1);
+    const rest = n.id.slice(colon + 1);
+    const base = n.file ? `${kind}${n.file}~${rest}` : `${kind}${rest}~2`;
+    let id = base;
+    for (let k = 2; taken.has(id); k++) id = `${base}_${k}`;
+    taken.add(id);
+    map.set(n.id, id);
+    renamed.push({ from: n.id, to: id, other });
+  }
+  let out = part;
+  if (map.size) {
+    const box = (ref: string) => {
+      const hash = ref.indexOf('#');
+      const b = hash < 0 ? ref : ref.slice(0, hash);
+      const to = map.get(b);
+      return to === undefined ? ref : to + ref.slice(b.length);
+    };
+    out = {
+      ...part,
+      nodes: part.nodes.map((n) => (map.has(n.id) ? { ...n, id: map.get(n.id)! } : n)),
+      wires: part.wires.map((w) => ({ ...w, from: box(w.from), to: box(w.to) })),
+    };
+    if (part.refs)
+      out.refs = Object.fromEntries(
+        Object.entries(part.refs).map(([k, list]) => [map.get(k) ?? k, list.map(box)]),
+      );
+    if (part.groups)
+      out.groups = Object.fromEntries(
+        Object.entries(part.groups).map(([k, v]) => [map.get(k) ?? k, v]),
+      );
+  }
+  for (const n of out.nodes) if (!owners.has(n.id)) owners.set(n.id, owner);
+  return { part: out, renamed };
+}
+
 /**
  * v2 の部分グラフの和（箱は id、線は (from, to)、groups はキーで、先に出たものを残す。型は id で、契約が言語アダプタに
  * 勝つ（D65）。refs は箱ごとの和）

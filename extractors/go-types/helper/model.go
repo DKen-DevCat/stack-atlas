@@ -52,14 +52,28 @@ func itemID(name string) string {
 	return s
 }
 
-// uniqueID: 同じ口・同じ親の中で重ならない id
-func uniqueID(base string, used map[string]bool) string {
+// idSet は口・親の中で使った id（値 1）と、重なった名前ごとに次に試す番号（キー "\x00"+id。id には出ない文字）
+type idSet map[string]int
+
+// uniqueID: 同じ口・同じ親の中で重ならない id（`a`・`a_2`・`a_3` …）。次に試す番号を覚えるので、同じ名前が n 回
+// 重なっても O(n)（2026-11-09 8-2b レビュー: `SELECT a, a, a, …` で番号を 2 から数え直して O(n²) だった）
+func uniqueID(base string, used idSet) string {
 	id := itemID(base)
-	for k := 2; used[id]; k++ {
-		id = itemID(base) + "_" + itoa(k)
+	if used[id] == 0 {
+		used[id] = 1
+		return id
 	}
-	used[id] = true
-	return id
+	k := used["\x00"+id]
+	if k < 2 {
+		k = 2
+	}
+	for used[id+"_"+itoa(k)] != 0 {
+		k++
+	}
+	used["\x00"+id] = k + 1
+	nid := id + "_" + itoa(k)
+	used[nid] = 1
+	return nid
 }
 
 func itoa(n int) string {
@@ -102,17 +116,150 @@ type typer struct {
 	depth int
 }
 
-// typeString: 表示用の型（同じパッケージは修飾しない、他はパッケージ名で）
+// typeString: 表示用の型（同じパッケージは修飾しない、他はパッケージ名で）。長い型（無名の struct の入れ子など）は
+// 短くする（2026-11-09 8-2b レビュー S2a: `struct{ A, B struct{ A, B … } }` の入れ子は、同じ型を何度も書き出すので
+// types.TypeString の結果が深さに対して倍々になる。深さ 20 で 89MB）
 func typeString(t types.Type, here *types.Package) string {
 	if b, ok := t.(*types.Basic); ok && b.Kind() == types.Invalid {
 		return "unknown" // 解けない外部の型
 	}
-	return types.TypeString(t, func(p *types.Package) string {
+	qf := func(p *types.Package) string {
 		if p == here {
 			return ""
 		}
 		return p.Name()
-	})
+	}
+	return boundedTypeString(t, qf, 0)
+}
+
+// maxTypeString は表示用の型の文字数の上限（見積もり）。超える型は中を `…` にする
+const maxTypeString = 256
+
+// typeSizes: 型 → 書き出したときの文字数の見積もり（同じ型の値は 1 回だけ数える。上限で止める）
+var typeSizes = map[types.Type]int{}
+
+// typeSize: types.TypeString の長さの見積もり（上から押さえる。上限 maxTypeString+1 で打ち切る）
+func typeSize(t types.Type, depth int) int {
+	const over = maxTypeString + 1
+	if t == nil {
+		return 0
+	}
+	if depth > 32 {
+		return over
+	}
+	if n, ok := typeSizes[t]; ok {
+		return n
+	}
+	add := func(n, m int) int {
+		if n+m > over {
+			return over
+		}
+		return n + m
+	}
+	n := 0
+	switch u := t.(type) {
+	case *types.Basic:
+		n = len(u.Name())
+	case *types.Named:
+		n = len(u.Obj().Name()) + 1
+		if p := u.Obj().Pkg(); p != nil {
+			n += len(p.Name())
+		}
+		if args := u.TypeArgs(); args != nil {
+			for i := 0; i < args.Len(); i++ {
+				n = add(n, typeSize(args.At(i), depth+1)+2)
+			}
+		}
+	case *types.TypeParam:
+		n = len(u.Obj().Name())
+	case *types.Pointer:
+		n = add(1, typeSize(u.Elem(), depth+1))
+	case *types.Slice:
+		n = add(2, typeSize(u.Elem(), depth+1))
+	case *types.Array:
+		n = add(22, typeSize(u.Elem(), depth+1))
+	case *types.Chan:
+		n = add(7, typeSize(u.Elem(), depth+1))
+	case *types.Map:
+		n = add(add(5, typeSize(u.Key(), depth+1)), typeSize(u.Elem(), depth+1))
+	case *types.Struct:
+		n = 8
+		for i := 0; i < u.NumFields() && n < over; i++ {
+			f := u.Field(i)
+			n = add(n, len(f.Name())+len(u.Tag(i))+5)
+			n = add(n, typeSize(f.Type(), depth+1))
+		}
+	case *types.Tuple:
+		n = 2
+		for i := 0; i < u.Len() && n < over; i++ {
+			n = add(n, len(u.At(i).Name())+2)
+			n = add(n, typeSize(u.At(i).Type(), depth+1))
+		}
+	case *types.Signature:
+		n = add(add(6, typeSize(u.Params(), depth+1)), typeSize(u.Results(), depth+1))
+		if tp := u.TypeParams(); tp != nil {
+			for i := 0; i < tp.Len(); i++ {
+				n = add(n, typeSize(tp.At(i).Constraint(), depth+1)+len(tp.At(i).Obj().Name())+2)
+			}
+		}
+	case *types.Interface:
+		n = 11
+		for i := 0; i < u.NumExplicitMethods() && n < over; i++ {
+			m := u.ExplicitMethod(i)
+			n = add(n, len(m.Name())+2)
+			n = add(n, typeSize(m.Type(), depth+1))
+		}
+		for i := 0; i < u.NumEmbeddeds() && n < over; i++ {
+			n = add(n, typeSize(u.EmbeddedType(i), depth+1)+2)
+		}
+	case *types.Union:
+		for i := 0; i < u.Len() && n < over; i++ {
+			n = add(n, typeSize(u.Term(i).Type(), depth+1)+4)
+		}
+	default:
+		n = 64 // 別名など（名前で書く）
+	}
+	typeSizes[t] = n
+	return n
+}
+
+// boundedTypeString: 見積もりが上限を超えなければ types.TypeString、超えれば外側の形だけ書いて中を `…` にする
+func boundedTypeString(t types.Type, qf types.Qualifier, depth int) string {
+	if typeSize(t, 0) <= maxTypeString {
+		return types.TypeString(t, qf)
+	}
+	if depth > 4 {
+		return "…"
+	}
+	switch u := t.(type) {
+	case *types.Pointer:
+		return "*" + boundedTypeString(u.Elem(), qf, depth+1)
+	case *types.Slice:
+		return "[]" + boundedTypeString(u.Elem(), qf, depth+1)
+	case *types.Array:
+		return "[" + itoa(int(u.Len())) + "]" + boundedTypeString(u.Elem(), qf, depth+1)
+	case *types.Chan:
+		return "chan " + boundedTypeString(u.Elem(), qf, depth+1)
+	case *types.Map:
+		return "map[" + boundedTypeString(u.Key(), qf, depth+1) + "]" + boundedTypeString(u.Elem(), qf, depth+1)
+	case *types.Struct:
+		return "struct{…}"
+	case *types.Signature:
+		return "func(…)"
+	case *types.Interface:
+		return "interface{…}"
+	case *types.Tuple:
+		return "(…)"
+	case *types.Named:
+		name := u.Obj().Name()
+		if p := u.Obj().Pkg(); p != nil {
+			if q := qf(p); q != "" {
+				name = q + "." + name
+			}
+		}
+		return name + "[…]"
+	}
+	return "…"
 }
 
 func namedOf(t types.Type) *types.Named {
@@ -365,7 +512,7 @@ func (ty *typer) children(t types.Type, depth int, owner string, b *budget, here
 		return nil
 	}
 	var out []*Item
-	used := map[string]bool{}
+	used := idSet{}
 	for _, jf := range jsonFields(s, map[*types.Struct]bool{}) {
 		if !b.take() {
 			break

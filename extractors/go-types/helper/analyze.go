@@ -30,6 +30,7 @@ type options struct {
 	depth    int
 	maxItems int
 	entries  []string
+	schema   sqlSchema
 }
 
 // Port は v2 の口
@@ -203,15 +204,24 @@ type analyzer struct {
 	routerFw     map[types.Object]string
 	wraps        []wrapCall
 	warnings     []Warning
+	warned       map[string]bool
+	// SQL のスキーマ（-schema-stdin。無ければ nil）と、定数ごとの SQL（1 回だけ読む。S2b）
+	cat     *sqlCatalog
+	sqlMemo map[types.Object]*sqlStmt
+	// パッケージ（import パス）→ 定数の名前 → 文字列の長さの見積もり（constlen.go）
+	constsByPath map[string]map[string]int64
 }
 
 type routeReg struct {
 	method, path, framework string
-	handler                 *Box
-	router                  types.Object
-	wrappers                []*Box
-	file                    string
-	line                    int
+	// ルーターの中のパス（接頭辞を付ける前。fw はフレームワークの書き方 `:id` / `*` を直す）
+	raw      string
+	fw       bool
+	handler  *Box
+	router   types.Object
+	wrappers []*Box
+	file     string
+	line     int
 }
 
 type wrapCall struct {
@@ -232,12 +242,48 @@ func newAnalyzer(l *loader, opt options) *analyzer {
 		routerPrefix: map[types.Object]string{},
 		routerUse:    map[types.Object][]*Box{},
 		routerFw:     map[types.Object]string{},
+		warned:       map[string]bool{},
+		cat:          newCatalog(opt.schema),
+		sqlMemo:      map[types.Object]*sqlStmt{},
+		constsByPath: map[string]map[string]int64{},
 	}
 	a.ty = &typer{a: a, depth: opt.depth}
 	for _, p := range l.pkgs {
 		a.kindOf[p.Path] = p.Kind
+		if p.consts != nil {
+			a.constsByPath[p.Path] = p.consts
+		}
 	}
 	return a
+}
+
+// warn: 解析の警告（同じ文は 1 回）
+func (a *analyzer) warn(msg string) {
+	if a.warned[msg] {
+		return
+	}
+	a.warned[msg] = true
+	a.warnings = append(a.warnings, Warning{Level: "warn", Message: msg})
+}
+
+// sqlOf: 定数の文字列の SQL。定数の名前で参照したものは宣言ごとに 1 回だけ読む（8-2b レビュー S2b）
+func (a *analyzer) sqlOf(info *types.Info, e ast.Expr, s string) *sqlStmt {
+	var key types.Object
+	switch x := unparen(e).(type) {
+	case *ast.Ident:
+		key = info.Uses[x]
+	case *ast.SelectorExpr:
+		key = info.Uses[x.Sel]
+	}
+	if c, ok := key.(*types.Const); ok {
+		if st, done := a.sqlMemo[c]; done {
+			return st
+		}
+		st := parseSQL(s, a.cat)
+		a.sqlMemo[c] = st
+		return st
+	}
+	return parseSQL(s, a.cat)
 }
 
 func (a *analyzer) analyzablePkg(path string) bool {
@@ -283,6 +329,7 @@ func (a *analyzer) run() Output {
 	for _, b := range a.boxes {
 		a.scan(b)
 	}
+	a.finishRoutes()
 	a.resolveAuth()
 	for _, b := range a.boxes {
 		a.finishRecipes(b)
@@ -531,7 +578,7 @@ var callItem = func() *Item { return &Item{ID: "call", Name: "()", Type: "void"}
 func (a *analyzer) ports(b *Box) {
 	here := b.pkg.Types
 	params := b.sig.Params()
-	used := map[string]bool{}
+	used := idSet{}
 	fwParams := a.fwParamObjs(b.file, b.info, b.decl.Type)
 	for i := 0; i < params.Len(); i++ {
 		v := params.At(i)
@@ -598,7 +645,7 @@ func (a *analyzer) resultItem(sig *types.Signature, here *types.Package, bud *bu
 	case len(vals) > 1:
 		var parts []string
 		var kids []*Item
-		used := map[string]bool{}
+		used := idSet{}
 		for j, v := range vals {
 			parts = append(parts, typeString(v.Type(), here))
 			n := v.Name()
@@ -714,7 +761,9 @@ func methodFull(info *types.Info, call *ast.CallExpr) string {
 	return fullName(fn)
 }
 
-func constString(info *types.Info, e ast.Expr) (string, bool) {
+// constString: 定数の文字列。連結（名前を挟んだものも）は平らにする前に長さを見積もり、上限（maxConstString）を超えれば
+// 定数の文字列として扱わない（8-2b レビュー S2b: constant.StringVal が倍々の連結を平らにして GB に）
+func (a *analyzer) constString(info *types.Info, e ast.Expr) (string, bool) {
 	tv, ok := info.Types[e]
 	if !ok || tv.Value == nil || tv.Value.Kind() != constant.String {
 		if lit, ok := e.(*ast.BasicLit); ok && lit.Kind == token.STRING {
@@ -723,7 +772,16 @@ func constString(info *types.Info, e ast.Expr) (string, bool) {
 		}
 		return "", false
 	}
+	if _, lit := unparen(e).(*ast.BasicLit); !lit && a.constLen(info, e) > maxConstString {
+		return "", false
+	}
 	return constant.StringVal(tv.Value), true
+}
+
+// isConstString: 式が定数の文字列か（平らにしない）
+func isConstString(info *types.Info, e ast.Expr) bool {
+	tv, ok := info.Types[e]
+	return ok && tv.Value != nil && tv.Value.Kind() == constant.String
 }
 
 func constInt(info *types.Info, e ast.Expr) (int64, bool) {

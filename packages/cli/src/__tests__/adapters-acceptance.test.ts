@@ -253,10 +253,12 @@ describe('8-2a 受け入れ: fixture-poly の TS の側が手で組んだ例と�
     expect(a.join.table).toEqual({ matched: hasGo ? 8 : 0, unmatched: [] });
     // group にした v1 の箱: TS のファイルの箱 4 ＋ Go のパッケージの箱 9（internal/domain は type なので types[]）
     expect(a.groups).toBe(hasGo ? 13 : 4);
-    // 付け替え先を決められない線（中の全部へ付け替えたもの）: Go の入口のパッケージ（cmd/*。中は main 1 つ）に付いた
-    // インフラ・利用者・Scheduler の線と、overrides の notify → push_subscriptions（main は SQL を使わない。往復で 2）。
-    // C6 の refs は go-types も出す（pkgRefs。型だけの import の push も参照している関数へ）
-    expect(a.undetermined).toBe(hasGo ? 11 : 0);
+    // 付け替え先を決められない線（中の全部へ付け替えたもの）。C6 の refs は go-types も出す（pkgRefs。型だけの import の
+    // push も参照している関数へ）。
+    // 2026-11-09 変更（8-2b レビュー）: 中が 1 つだけの group は付け替え先が決まっているものとして数える（11 → 0）。
+    // 以前の 11 は全部、Go の入口のパッケージ（cmd/*。中は main 1 つ）に付いたインフラ・利用者・Scheduler の線と、
+    // overrides の notify → push_subscriptions（main は SQL を使わない。往復で 2）だった
+    expect(a.undetermined).toBe(0);
     expect(a.broken).toBe(hasGo ? 4 : 2);
     const c = a.coverage;
     expect(c.wires).toBe(c.itemWires + c.boxWires);

@@ -311,7 +311,7 @@ func (a *analyzer) buildLinks(b *Box) {
 							}
 						}
 					} else if isMap {
-						if k, ok := constString(info, kv.Key); ok {
+						if k, ok := a.constString(info, kv.Key); ok {
 							sub = itemID(k)
 						}
 					}

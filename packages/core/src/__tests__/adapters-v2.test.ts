@@ -1517,7 +1517,7 @@ describe('掃除と型（8-2b）', () => {
     const wires = cleaned.graph.wires.map((w) => `${w.from} → ${w.to}`);
     expect(wires).toEqual(
       expect.arrayContaining([
-        // notify の中に SQL で subs を使う関数は無い → 中の全部（main）へ付け替え、決められない線として数える
+        // notify の中に SQL で subs を使う関数は無い → 中の全部（main）へ付け替える
         'fn:cmd/notify.main#out/_ → schema:subs#key/_',
         'schema:subs#read/_ → fn:cmd/notify.main#in/_',
         // 合流の線（B → other）がある
@@ -1526,7 +1526,8 @@ describe('掃除と型（8-2b）', () => {
     );
     // store → other の箱の単位の線は合流の線で置き換わり、A へは付け替えない
     expect(wires.some((w) => w.startsWith('fn:internal/store.A'))).toBe(false);
-    expect(cleaned.undetermined).toBe(2);
+    // 2026-11-09 変更（8-2b レビュー）: 中が main 1 つだけの group は付け替え先が決まっている（以前は 2 = 行きと戻り）
+    expect(cleaned.undetermined).toBe(0);
   });
 
   it('D65: 同じ id の型は契約（openapi・sql）が言語アダプタ（typescript・go）に勝ち、負けた側の宣言は copies に', () => {

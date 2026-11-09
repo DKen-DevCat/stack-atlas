@@ -55,7 +55,7 @@ ts-types / go-types（v2 の部分グラフ）───────────�
 
 ### 3.3 `go-types`（Go）
 
-- `extractors/go-types/helper/main.go`（標準ライブラリだけ。`go.mod` も同梱し外部依存なし、go 行は低く `go 1.21`）を helper のディレクトリで `go run` し、解析対象のモジュールのパスを引数で渡して JSON を受け取る。環境は **`GOFLAGS=-mod=readonly GOPROXY=off GOWORK=off GOTOOLCHAIN=local CGO_ENABLED=0`**（解析対象の go.mod / go.sum を書き換えず、ネットワークもツールチェーンの取得もしない。§7 #7）。`go` が無いときは警告して何もしない（既存の `go` 抽出器の箱の単位が残る）
+- `extractors/go-types/helper/main.go`（標準ライブラリだけ。`go.mod` も同梱し外部依存なし、go 行は低く `go 1.21`）を helper のディレクトリで `go run` し（8-2b のレビューで、1 回 `go build` した実行ファイルを直接動かす形に変えた。§9.6 の 1）、解析対象のモジュールのパスを引数で渡して JSON を受け取る。環境は **`GOFLAGS=-mod=readonly GOPROXY=off GOWORK=off GOTOOLCHAIN=local CGO_ENABLED=0`**（解析対象の go.mod / go.sum を書き換えず、ネットワークもツールチェーンの取得もしない。§7 #7）。`go` が無いときは警告して何もしない（既存の `go` 抽出器の箱の単位が残る）
 - 型は `go/parser` ＋ `go/types` と**自前の `ImporterFrom`**: モジュール内・`replace => ./dir`・vendor のパッケージは go/parser と go/types で再帰的に読む（メモと循環ガード、ファイルは `build.Context{GOOS: "linux"}.MatchFile` で選ぶ）。標準ライブラリは共有の source importer 1 つで解く。それ以外（外部モジュール）は即エラーを返し、go/types に偽のパッケージとして扱わせて検査を続ける。外部の型の項目は `wireType: unknown`。chi / echo / gin のレシピは型ではなく AST と import パスで判定する（§7 #8）
 - **箱**: 関数とメソッド（`fn:<パッケージ相対パス>.<関数>`、メソッドは `.<型>.<メソッド>`）。`cmd/*` の `main` は入口（`meta.entry`）
 - **口と項目**: 引数・戻り値の struct を json タグの名前で展開（タグが無ければ Go の名前）、`error` は `err` 口。呼び出しは TS と同じ `call_n` / `ret_n`
@@ -199,7 +199,7 @@ docs/15 §7 の見積り（項目 90%・線 80%）との比較: 項目の型が�
 
 ### 9.1 できたもの
 
-- `extractors/go-types`（新規）: 標準ライブラリだけの helper（`helper/`、go 1.21、依存なし）を `go run`。自前の ImporterFrom、型の表、レシピ（net/http・認証・SQL・chi / gin / echo / fiber）、host の閉包、`refs`（関数ごとに参照するモジュール内のパッケージ）。go が無ければ警告して空（`STACK_ATLAS_REQUIRE_GO=1` なら失敗。CI は必須）
+- `extractors/go-types`（新規）: 標準ライブラリだけの helper（`helper/`、go 1.21、依存なし）を `go run`（レビューで `go build` した実行ファイルに。§9.6 の 1）。自前の ImporterFrom、型の表、レシピ（net/http・認証・SQL・chi / gin / echo / fiber）、host の閉包、`refs`（関数ごとに参照するモジュール内のパッケージ）。go が無ければ警告して空（`STACK_ATLAS_REQUIRE_GO=1` なら失敗。CI は必須）
 - `extractors/sql`: table の 3 口（key / write / read）とカラムの項目（D66 の照合のため `row` の親）。契約（`v2Role: contract`）
 - core の合流: サーバー側（`req/<役割>` → handler の役割の項目、応答 → `res/body`、`WriteHeader` → `res/status`、login の分岐）と table（WHERE → `key/<col>`、INSERT / UPDATE → `write/row`、`read/row` → 関数の `in/row`）、D59（必須の役割の欠け）、OpenAPI の無いときの直接の合流
 - ts-types: export したオブジェクトリテラルのメソッドを関数の箱に（`fn:api.getRaces`）
@@ -215,7 +215,7 @@ docs/15 §7 の見積り（項目 90%・線 80%）との比較: 項目の型が�
 | 合流: クライアント側 | 5（必須の役割の欠け 1） | 6（handler へ直接。3 メソッド × @server / @browser） |
 | 合流: サーバー側 | 7（handler の無い endpoint 1 = GET /transactions、login 7） | 0 |
 | 合流: table | 8 | 0 |
-| group / 置き換えた線 / 付け替え先を決められない線 | 13 / 66 / 11 | 2 / 32 / 0 |
+| group / 置き換えた線 / 付け替え先を決められない線 | 13 / 66 / 0（2026-11-09 変更（8-2b レビュー）: 中が 1 つの group は決められた側に数える。以前は 11） | 2 / 32 / 0 |
 
 docs/15 §7 の見積り（項目 90%・線 80%）に対して、fixture-poly は 89% / 74%。残りの箱の単位の線はインフラ（Terraform）と、中が `main` 1 つの `cmd/*` の group。
 
@@ -270,3 +270,44 @@ fixture-poly の broken は 4 本（受け入れテストで固定）:
 - `route:/push` をクリックすると、型だけの参照の `_` の線（D53）で `push.Send` が光る
 - fixture-repo の `post(path, body)` ラッパーの呼び出しは `path` の子しか出ない（既知の動詞の扱い）
 - build の抽出器ごとの行で、ts-types・go-types は v2 だけを出すので「ノード 0」と出る（見た目だけ）
+
+### 9.6 レビューの指摘で決めたこと（セキュリティ 6 件・コードレビュー 10 件、2026-11-09）
+
+セキュリティ（実測は §9.7）:
+
+1. **helper の動かし方**（S1・S6）: `go run` をやめ、1 回 `go build` した実行ファイルを直接動かす（`go run` は時間の上限で `go` だけが止まり、helper が ppid=1 で動き続けていた。標準出力の上限も同じ）。置き場は利用者ごとのキャッシュ（`$XDG_CACHE_HOME`・`~/Library/Caches`・`~/.cache` の `stack-atlas/go-helper`、無ければ `<tmpdir>/stack-atlas-go-<uid>`、それも駄目なら mkdtemp）で、0700・持ち主が自分・シンボリックリンクでないことを確かめる。実行ファイルの名前は helper のソースと go のバージョン・GOROOT・OS・アーキテクチャのハッシュ（`stack-atlas-go-helper-<hash>`）。時間と出力の上限は実行ファイルに掛けて SIGKILL、helper 自身も `-timeout` で止まる（最後の守り。終了コード 3）。動かすときは GOROOT を今の go のものにする。ビルドは cwd が helper のディレクトリ、環境は D48 のまま、上限は 120 秒（timeoutMs がそれより長ければそちら）。HOME も GOCACHE も無いときの GOCACHE は同じディレクトリの `gocache`（共有の固定の名前 `<tmpdir>/stack-atlas-go-cache` をやめた）
+2. **型の文字列**（S2a）: 書き出す長さを型の値ごとに 1 回だけ見積もり（無名の struct の入れ子は同じ型を何度も書くので倍々になる）、256 文字を超える型は外側の形だけ書く（`struct{…}`・`*struct{…}`・`map[…]…`・`func(…)`）。短い型は types.TypeString のまま
+3. **定数の文字列の連結**（S2b）: go/constant は連結を木のまま持ち、constant.StringVal で平らにする。**go/types も `len(A)`・比較・添字で平らにする**（見つかったこと。constString を直すだけでは足りない）ので、型の検査の前に AST で長さを上から見積もり（名前を挟んだものも、名前で。依存を先に検査して import 先の表を使う）、64KB を超える `+` の両辺を空の文字列に置き換えてから検査する（実行しないので値は使わない。警告する）。解析の側も平らにする前に同じ見積もりで断る。SQL として読むのは 64KB まで、定数の名前で参照した SQL は宣言ごとに 1 回だけ読む。残る量: 64KB 以下の別々の定数を多数持つソースは、その合計まで平らにする（時間の上限が最後の守り）
+4. **SQL の計算量**（S2c）: 式の項目の文字列は strings.Builder、`uniqueID` は名前ごとに次の番号を覚える（`SELECT a, a, …` で番号を 2 から数え直す O(n²) もあった。見つかったこと）
+5. **sql 抽出器**（S3）: 型の括弧は `[^()]*` を内側から繰り返して消し、256 文字を超える型は unknown（カラムの型の文字列も 256 文字で切って `…`）。readTables・PRIMARY KEY・ADD COLUMN のカラムの照合は名前の表。行番号は前から数え、閉じない `(` の CREATE TABLE の後はその末尾から次を探す（どちらも O(n × 表の数) だった。見つかったこと）。1 ファイル 5MB を超えるマイグレーションは警告して読まない。go-types の fillSqlColumns も名前の表
+6. **合流の上限**（S4）: 1 つの endpoint・呼び出しに同じ具体性で合う相手（handler・endpoint）が 8 を超えたら結ばず、数と最初の 3 つだけを 1 回警告する（8 以下は従来どおり全部と結んで警告）。警告の文に並べるのは 20 件まで（残りは数）。handler のルートと endpoint のパスは前もって分け、具体性も 1 回だけ計算する
+7. **import パス**（S5）: 空の段・`.`・`..`・絶対パス・バックスラッシュ・NUL を含む import パスは断る（外部のモジュールと同じ扱い）。標準ライブラリは、シンボリックリンクを解いた実体が GOROOT/src の中にあるものだけ読む
+
+コードレビュー（10 件とも実在を確かめた。テストで固定）:
+
+8. **SQL のスキーマを helper に渡す**（C2・C4・C5 の土台）: go-types は先にマイグレーションを読み（sql 抽出器の readTables）、テーブル → カラム（定義の順）を標準入力で helper に渡す（`-schema-stdin`。32MB まで）。helper は FROM・JOIN・`UPDATE … FROM`・`DELETE … USING` のテーブルと別名を読み、カラムのテーブルを修飾（別名）→ 1 つだけのテーブル → スキーマでそのカラムを持つ 1 つ、の順に解く
+9. **別名**（C1）: `name AS user_name` の項目は id が別名、元のカラムを `meta.sql.column` に残す（型もそのカラムから）。table の線の照合は子をカラムの名前で組にする（path は送る側の子の id）
+10. **JOIN**（C2）: カラムごとのテーブルを typeRef（`table:<表>`）に、行の `meta.sql.tables` に文のテーブル。読む線（`table#read/row → fn#in/row`）は、JOIN した行ならそのテーブルのカラムだけを比べる（決められなかったカラムも比べない）。別のテーブルの WHERE のカラムは最初のテーブルの key に結ばない。2 つ目以降のテーブルと線を引かないのは §9.4 の 6 のまま
+11. **大文字小文字**（C3）: table の線の子は大文字小文字を区別せずに組にする（引用符の無い識別子は畳まれる。引用符で区別した Postgres の `"UserID"` と `userid` も同じとみなす近似）
+12. **WHERE のカラムの候補**（C4）: 副問い合わせ（`(SELECT …)`）の中のカラムとプレースホルダは外の述語のものにしない。型付きのリテラル（`interval '1 day'`）・`CAST(x AS 型)`・`extract(epoch FROM x)` の欄・`current_date` などを除く。スキーマがテーブルを知っていてカラムが無ければ候補にしない（`interval` は前からキーワードで、副問い合わせのテーブル名・カラムが実際の幻のカラムだった）
+13. **`*`**（C5）: `*`・`t.*` はスキーマで広げてから Scan を引数の順に写す。広げられなければ行の `meta.sql.star` と位置（`starAt`）を残し、そこから先の Scan の引数は行の全体から crude。TS の側（fillSqlColumns）も、他の子があってもその位置に広げる（1 つの `*` につき adapters.maxItems まで。超えたら警告）
+14. **箱 id の衝突**（C6）: 言語アダプタの部分グラフを足すとき、別の持ち主（別の言語アダプタか、同じアダプタの別の repo）が先に出した id の箱は、後の方を `<種類>:<file>~<名前>`（TS の衝突の退避と同じ形。file が無ければ `~2`）にし、その部分グラフの線・refs・groups の参照も付け替えて警告する。契約（openapi・sql）は今までどおり id で合わせる
+15. **複数の入口**（C7）: 2 つ以上の入口から届く関数は、入口のインフラが分からなくても `meta.hosts` を空の配列で書く（mergeV2 が group の host を受け継がせない）
+16. **接頭辞**（C8）: chi / fiber の `Mount("/p", sub)`（sub はルーターの変数か、ルーターを返すモジュールの中の関数の呼び出し。handler なら `/p/*`）と、net/http の `mux.Handle("/p/", http.StripPrefix("/p", sub))`（sub の mux のルートに `/p`。StripPrefix の無いサブの mux も親子にして認証を受け継ぐ）。接頭辞はルーターの親子で持ち、全部の関数を読んでから付ける（登録の順によらない）。定数でない接頭辞・決められないルーターは警告。gorilla/mux の PathPrefix は未対応
+17. **直接の合流の警告**（C9）: OpenAPI の無い直接の合流でも、複数の handler と結ぶときは joinHandlers と同じ警告。8 を超えれば 6 と同じく結ばない
+18. **正規表現**（C10）: helper の正規表現はパッケージで 1 回だけ作る（関数の中で MustCompile しないことをテストで固定）
+19. **付け替え先**（§9.4 の補足）: 中が 1 つだけの group は、付け替え先が決まっているものとして数える。fixture-poly の付け替え先を決められない線は 11 → 0（11 は全部、中が main 1 つの `cmd/*` の group に付いた線だった）。ほかの数（§9.2）は変わらない
+
+### 9.7 敵対的な入力の実測（2026-11-09、darwin/arm64・go 1.27.3・Node 22。セキュリティのレビューの入力）
+
+| 入力 | もと | 直した後 |
+|---|---|---|
+| 無名の struct の入れ子（深さ 20 / 22） | 1.5 秒・出力 89MB / 7.3 秒・出力 357MB（標準出力の上限を超える） | 0.06 秒・2KB / 0.3 秒・2KB |
+| 倍々の定数（16 文字 × 2^24、`Println(A24)`） | 3.0 秒・1.1GB | 0.16 秒・72MB |
+| 倍々の定数（16 文字 × 2^26、`len(A26)`。go/types が平らにする） | 16.0 秒・1.5GB | 0.14 秒・72MB |
+| SQL の式 `a+a+…`（10 万項） | 5.0 秒（CPU 24 秒） | 0.16 秒（64KB を超えるので SQL にしない） |
+| sqlWireType（閉じない `(` × 10 万） | 15.8 秒 | 1ms 未満 |
+| readTables（4 万カラム） | 20.9 秒 | 0.1 秒 |
+| 合流（`/{x}` の handler 2000 × endpoint 2000） | メモリが尽きる | 1.6 秒・線 0・警告 1 件（133 文字） |
+| `go run` の時間の上限 | helper が ppid=1 で残る | 実行ファイルを SIGKILL（残らない） |
+

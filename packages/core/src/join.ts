@@ -36,7 +36,9 @@
  *   `query_n → table#key/_`（表の全体を読む。口の単位）。INSERT / UPDATE: `insert_n` / `update_n → table#write/row`
  *   （親 1 本）。UPDATE の WHERE は項目が無い（`meta.sql.where` だけ）ので線にしない。SELECT / RETURNING の 1 行:
  *   `table#read/row → fn#in/<meta.sql.row>`（via sql、reply。行の項目の `meta.sql.query` がその SQL の項目）
- * - JOIN した 2 つ目以降のテーブル（`meta.sql.tables`）は結ばない（行のカラムがどのテーブルのものか分からない）
+ * - JOIN した 2 つ目以降のテーブル（`meta.sql.tables`）は結ばない。そのテーブルのカラム（typeRef が `table:<その表>`）は
+ *   最初のテーブルの key に結ばず、読む線の照合（broken-v2）でも比べない（8-2b レビュー C2）
+ * - 1 つの endpoint・呼び出しに MAX_JOIN_MATCHES を超える相手が同じ具体性で合うときは結ばない（数だけ警告。S4）
  *
  * OpenAPI が無いときの endpoint の合成（§3.4 の route の行）と event の合流は後回し。
  */
@@ -53,12 +55,39 @@ import {
   isRoutePathTooLong,
   methodMatches,
   normalizeRoutePath,
-  pathMatches,
+  pathSegments,
   pickMostSpecific,
+  routeSegments,
+  routeSpecificity,
+  segmentsMatch,
   MAX_ROUTE_PATH,
+  type RouteSegments,
 } from './paths.js';
 import { isPlainObject } from './util.js';
 import { UNDERSCORE, underscoreItem, wireKey } from './v2-parts.js';
+
+/**
+ * 1 つの endpoint・呼び出しに同じ具体性で合う相手（handler・endpoint）の上限。超えたら結ばず、数だけを 1 回警告する
+ * （2026-11-09 8-2b レビュー S4・C9: `/{x}` の handler が N 個あると endpoint × handler の線と警告の文が N² になり、
+ * N = 2000 でメモリが尽きた）
+ */
+export const MAX_JOIN_MATCHES = 8;
+
+/** 警告の文に並べる数の上限 */
+const MAX_LISTED = 20;
+
+/** 並びを警告の文にする（MAX_LISTED を超える分は数だけ） */
+export const listText = (xs: readonly string[], sep = ' / ') =>
+  xs.length > MAX_LISTED
+    ? `${xs.slice(0, MAX_LISTED).join(sep)} ほか ${xs.length - MAX_LISTED} 件`
+    : xs.join(sep);
+
+/** 相手が多すぎて結ばなかったものの警告（1 回だけ。数と最初の 3 つ） */
+const crowdedIssue = (what: string, other: string, ids: string[]): ValidationIssue => ({
+  level: 'warning',
+  path: 'v2:join',
+  message: `${other}が ${MAX_JOIN_MATCHES} を超えて同じ具体性で合う${what} ${ids.length} 件は結びません（${ids.slice(0, 3).join(', ')}${ids.length > 3 ? ' ほか' : ''}。ルートを具体的にするか、host・deploy で絞れます）`,
+});
 
 /** HTTP の役割（呼び出しの子の meta.http と endpoint の in の項目 id） */
 export const HTTP_ROLES = ['path', 'query', 'body'] as const;
@@ -146,6 +175,8 @@ interface EndpointRef {
   path: string;
   /** 正規化したパス（照合ごとに正規化し直さない） */
   norm: string;
+  /** 分けたパス（照合ごとに split しない） */
+  segs: RouteSegments;
 }
 
 /** endpoint の method と path（meta.api、無ければ id の `endpoint:<METHOD> <path>`） */
@@ -248,11 +279,13 @@ function endpointRefs(graph: GraphV2, tooLong: string[]): EndpointRef[] {
       tooLong.push(n.id.slice(0, 80));
       continue;
     }
+    const norm = normalizeRoutePath(r.path);
     endpoints.push({
       node: n,
       routeKey: `${r.method} ${r.path}`,
       ...r,
-      norm: normalizeRoutePath(r.path),
+      norm,
+      segs: routeSegments(norm),
     });
   }
   return endpoints;
@@ -279,6 +312,8 @@ export function joinEndpoints(graph: GraphV2, opts: { warnUnmatched?: boolean } 
   };
   /** 長すぎて照合しなかったパス（1 回だけ警告する） */
   const tooLong: string[] = [];
+  /** endpoint が多すぎて結ばなかった呼び出し */
+  const crowded: string[] = [];
   const endpoints = endpointRefs(graph, tooLong);
   const add = wireAdder(graph, result.wires);
 
@@ -294,13 +329,18 @@ export function joinEndpoints(graph: GraphV2, opts: { warnUnmatched?: boolean } 
           continue;
         }
         const norm = normalizeRoutePath(call.path);
+        const client = pathSegments(norm);
         const eps = pickMostSpecific(
           endpoints.filter(
-            (e) => methodMatches(e.method, call.method) && pathMatches(e.norm, norm),
+            (e) => methodMatches(e.method, call.method) && segmentsMatch(e.segs, client),
           ),
         );
         if (!eps.length) {
           result.unmatchedCalls.push({ node: n, portId: port.id, item: it, ...call, norm });
+          continue;
+        }
+        if (eps.length > MAX_JOIN_MATCHES) {
+          crowded.push(`${n.id}#${port.id}/${it.id}`);
           continue;
         }
         result.matched++;
@@ -357,21 +397,28 @@ export function joinEndpoints(graph: GraphV2, opts: { warnUnmatched?: boolean } 
     }
   }
   if (tooLong.length) result.issues.push(tooLongIssue(tooLong, 'endpoint・HTTP 呼び出し'));
+  if (crowded.length) result.issues.push(crowdedIssue(' HTTP 呼び出し', 'endpoint ', crowded));
   result.unmatched = result.unmatchedCalls.map((c) => `${c.node.id} ${c.method} ${c.path}`);
   if (result.unmatched.length && opts.warnUnmatched !== false) {
     result.issues.push({
       level: 'warning',
       path: 'v2:join',
-      message: `endpoint と結べない HTTP 呼び出し: ${result.unmatched.join(' / ')}（overrides.yaml で補う）`,
+      message: `endpoint と結べない HTTP 呼び出し: ${listText(result.unmatched)}（overrides.yaml で補う）`,
     });
   }
   return result;
 }
 
-/** ルートを持つ handler（endpoint でない箱） */
+/** ルートを持つ handler（endpoint でない箱）。ルートは分けたパスと具体性を前もって持つ */
 interface HandlerRef {
   node: NodeV2;
-  routes: Array<{ method: string; path: string; norm: string }>;
+  routes: Array<{
+    method: string;
+    path: string;
+    norm: string;
+    segs: RouteSegments;
+    spec: number[];
+  }>;
 }
 
 /**
@@ -391,7 +438,19 @@ function handlerRefs(graph: GraphV2, tooLong: string[], skip?: ReadonlySet<strin
     if (routes.length)
       out.push({
         node: n,
-        routes: routes.map((r) => ({ ...r, norm: normalizeRoutePath(r.path) })),
+        routes: routes.map((r) => {
+          const norm = normalizeRoutePath(r.path);
+          return {
+            ...r,
+            norm,
+            segs: routeSegments(norm),
+            spec: routeSpecificity({
+              routeKey: `${r.method} ${r.path}`,
+              method: r.method,
+              path: norm,
+            }),
+          };
+        }),
       });
   }
   return out;
@@ -406,6 +465,11 @@ const hostsOf = (n: NodeV2): string[] => {
   ];
 };
 
+const cmpSpec = (a: number[], b: number[]) => {
+  for (let i = 0; i < a.length; i++) if (a[i]! !== b[i]!) return a[i]! - b[i]!;
+  return 0;
+};
+
 /** 合う handler（最も具体的なもの。複数なら endpoint を受け持つインフラと host が合うものを優先） */
 function matchHandlers(
   handlers: HandlerRef[],
@@ -413,18 +477,15 @@ function matchHandlers(
   norm: string,
   hosts: readonly string[] | undefined,
 ): Array<{ h: HandlerRef; route: { method: string; path: string } }> {
-  const cands = handlers.flatMap((h) =>
-    h.routes
-      .filter((r) => methodMatches(r.method, method) && pathMatches(r.norm, norm))
-      .map((r) => ({
-        h,
-        route: r,
-        routeKey: `${r.method} ${r.path}`,
-        method: r.method,
-        path: r.norm,
-      })),
-  );
-  let best = pickMostSpecific(cands);
+  const client = pathSegments(norm);
+  let best: Array<{ h: HandlerRef; route: HandlerRef['routes'][number] }> = [];
+  for (const h of handlers)
+    for (const r of h.routes) {
+      if (!methodMatches(r.method, method) || !segmentsMatch(r.segs, client)) continue;
+      const c = best.length ? cmpSpec(r.spec, best[0]!.route.spec) : 1;
+      if (c > 0) best = [{ h, route: r }];
+      else if (c === 0) best.push({ h, route: r });
+    }
   // 同じ handler の複数のルートが合っても 1 つ
   const byNode = new Map<string, (typeof best)[number]>();
   for (const c of best) if (!byNode.has(c.h.node.id)) byNode.set(c.h.node.id, c);
@@ -572,18 +633,21 @@ export function joinHandlers(
   const add = wireAdder(graph, out.wires);
   /** 結んだ handler のルート（`<箱> <METHOD path>`） */
   const usedRoutes = new Set<string>();
+  /** handler が多すぎて結ばなかった endpoint */
+  const crowded: string[] = [];
   for (const ep of endpoints) {
     const hits = matchHandlers(handlers, ep.method, ep.norm, opts.endpointHosts?.get(ep.node.id));
     if (!hits.length) {
       if (handlers.length) out.server.withoutHandler.push(ep.node.id);
       continue;
     }
-    if (hits.length > 1)
-      out.issues.push({
-        level: 'warning',
-        path: `v2:join:${ep.node.id}`,
-        message: `${ep.node.id} に合う handler が ${hits.length} つあります（${hits.map((x) => x.h.node.id).join(', ')}）。全部と結びます（host か deploy で絞れます）`,
-      });
+    if (hits.length > MAX_JOIN_MATCHES) {
+      // 結ばない（数だけ警告）。ルートは OpenAPI に無いものとしては数えない
+      crowded.push(ep.node.id);
+      for (const { h, route } of hits) usedRoutes.add(`${h.node.id} ${route.method} ${route.path}`);
+      continue;
+    }
+    if (hits.length > 1) out.issues.push(ambiguousIssue(ep.node.id, hits));
     for (const { h, route } of hits) {
       usedRoutes.add(`${h.node.id} ${route.method} ${route.path}`);
       out.server.matched++;
@@ -606,13 +670,23 @@ export function joinHandlers(
   // endpoint の長すぎるパスはクライアント側（joinEndpoints）で警告済み。ここは handler のルートだけ
   const routesTooLong = tooLong.filter((x) => !x.startsWith('endpoint:'));
   if (routesTooLong.length) out.issues.push(tooLongIssue(routesTooLong, 'handler のルート'));
+  if (crowded.length) out.issues.push(crowdedIssue(' endpoint', 'handler ', crowded));
   if (out.server.unmatched.length)
     out.issues.push({
       level: 'warning',
       path: 'v2:join',
-      message: `endpoint（OpenAPI）に無い handler のルート: ${out.server.unmatched.join(' / ')}`,
+      message: `endpoint（OpenAPI）に無い handler のルート: ${listText(out.server.unmatched)}`,
     });
   return out;
+}
+
+/** 合う handler が複数（上限以下）: 全部と結んで警告する（joinHandlers と joinDirect で同じ文） */
+function ambiguousIssue(from: string, hits: ReadonlyArray<{ h: HandlerRef }>): ValidationIssue {
+  return {
+    level: 'warning',
+    path: `v2:join:${from}`,
+    message: `${from} に合う handler が ${hits.length} つあります（${hits.map((x) => x.h.node.id).join(', ')}）。全部と結びます（host か deploy で絞れます）`,
+  };
 }
 
 /**
@@ -626,10 +700,13 @@ function joinDirect(
   add: (w: WireV2) => boolean,
   pairs: Set<string>,
   skip?: ReadonlySet<string>,
-): HttpCall[] {
-  if (!calls.length) return calls;
+): { left: HttpCall[]; issues: ValidationIssue[] } {
+  const issues: ValidationIssue[] = [];
+  if (!calls.length) return { left: calls, issues };
   const handlers = handlerRefs(graph, [], skip);
   const left: HttpCall[] = [];
+  /** handler が多すぎて結ばなかった呼び出し */
+  const crowded: string[] = [];
   for (const c of calls) {
     const hits = matchHandlers(handlers, c.method, c.norm, undefined);
     if (!hits.length) {
@@ -637,6 +714,13 @@ function joinDirect(
       continue;
     }
     const from = `${c.node.id}#${c.portId}/${c.item.id}`;
+    if (hits.length > MAX_JOIN_MATCHES) {
+      crowded.push(from);
+      left.push(c);
+      continue;
+    }
+    // 複数の handler と結ぶときは joinHandlers と同じ警告（8-2b レビュー C9）
+    if (hits.length > 1) issues.push(ambiguousIssue(from, hits));
     const k = /^call_(\d+)$/.exec(c.item.id)?.[1];
     const ret = k ? topItem(c.node, 'in', `ret_${k}`) : undefined;
     let any = false;
@@ -680,7 +764,8 @@ function joinDirect(
     }
     if (!any) left.push(c);
   }
-  return left;
+  if (crowded.length) issues.push(crowdedIssue(' HTTP 呼び出し', 'handler ', crowded));
+  return { left, issues };
 }
 
 /** table の箱（`meta.sql.table` か id の `schema:<名前>`）を名前で引く表（小文字） */
@@ -780,7 +865,10 @@ export function joinTables(
         const keys = (it.children ?? []).filter((c) => c.id !== UNDERSCORE);
         const keyPort = portItems(t, 'key');
         let any = false;
+        const own = (tableName(t) ?? '').toLowerCase();
         for (const c of keys) {
+          // JOIN した別のテーブルのカラム（typeRef がそのテーブル）は、このテーブルの key に結ばない（8-2b レビュー C2）
+          if (c.typeRef?.startsWith('table:') && c.typeRef.slice(6).toLowerCase() !== own) continue;
           const k =
             keyPort.find((x) => x.id === c.id) ??
             keyPort.find((x) => x.name.toLowerCase() === c.name.toLowerCase());
@@ -822,7 +910,7 @@ export function joinTables(
     out.issues.push({
       level: 'warning',
       path: 'v2:join',
-      message: `table と結べない SQL（テーブルがマイグレーションに無いか、table の箱に口が無い）: ${out.table.unmatched.join(' / ')}`,
+      message: `table と結べない SQL（テーブルがマイグレーションに無いか、table の箱に口が無い）: ${listText(out.table.unmatched)}`,
     });
   return out;
 }
@@ -834,22 +922,23 @@ export function joinAll(graph: GraphV2, opts: JoinOptions = {}): JoinReport {
   const client = joinEndpoints(graph, { warnUnmatched: false });
   const pairs = new Set<string>();
   const directWires: WireV2[] = [];
-  const left = joinDirect(
+  const direct = joinDirect(
     graph,
     client.unmatchedCalls,
     wireAdder(graph, directWires),
     pairs,
     opts.skip,
   );
+  const left = direct.left;
   const server = joinHandlers(graph, opts);
   const table = joinTables(graph);
-  const issues = [...client.issues, ...server.issues, ...table.issues];
+  const issues = [...client.issues, ...direct.issues, ...server.issues, ...table.issues];
   const unmatched = left.map((c) => `${c.node.id} ${c.method} ${c.path}`);
   if (unmatched.length)
     issues.push({
       level: 'warning',
       path: 'v2:join',
-      message: `endpoint・handler と結べない HTTP 呼び出し: ${unmatched.join(' / ')}（overrides.yaml で補う）`,
+      message: `endpoint・handler と結べない HTTP 呼び出し: ${listText(unmatched)}（overrides.yaml で補う）`,
     });
   for (const p of [...server.pairs, ...table.pairs]) pairs.add(p);
   return {

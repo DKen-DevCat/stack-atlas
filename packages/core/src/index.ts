@@ -113,6 +113,8 @@ export {
 } from './merge-v2.js';
 export {
   mergePartialV2,
+  disambiguateV2,
+  type RenamedBoxV2,
   mergeItemLists,
   mergePortLists,
   mergeLinkLists,
@@ -141,6 +143,7 @@ export {
   usesTable,
   HTTP_ROLES,
   LOGIN_VARIANT,
+  MAX_JOIN_MATCHES,
   type HttpCall,
   type HttpRole,
   type JoinOptions,

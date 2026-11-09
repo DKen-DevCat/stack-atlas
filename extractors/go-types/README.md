@@ -1,14 +1,17 @@
 # @stack-atlas/extractor-go-types
 
 Go の**言語アダプタ**（Phase 8-2b。設計は `docs/17-design-adapters.md` §3.3・§7）。リポジトリに置いた標準ライブラリだけの Go プログラム
-（`helper/`、`go.mod` は `go 1.21`・外部依存なし）を `go run .` で動かし、`go/parser` と `go/types` で読んだ関数の単位の箱・口・項目・links と、
+（`helper/`、`go.mod` は `go 1.21`・外部依存なし）を 1 回 `go build` して実行ファイルを動かし、`go/parser` と `go/types` で読んだ関数の単位の箱・口・項目・links と、
 同じ言語の中の線（呼び出し・戻り）を `PartialGraph.v2` に出す。v1 の nodes / edges は出さない（`go` 抽出器が出す）。npm も Go も依存を足さない。
 
 ## 動かし方と安全の約束
 
-- `go run . -root <モジュールの根> -entry <入口> -depth <n> -max-items <n>` を helper のディレクトリで、シェルを通さずに（引数の配列で）動かす。
-  環境は `GOFLAGS=-mod=readonly GOPROXY=off GOWORK=off GOTOOLCHAIN=local CGO_ENABLED=0`（解析対象の go.mod / go.sum を書き換えず、
-  ネットワークもツールチェーンの取得もしない。D48）。GOOS / GOARCH は外す。HOME も GOCACHE も無いときは GOCACHE を OS の一時ディレクトリに
+- helper のディレクトリで `go build` した実行ファイル（利用者ごとのキャッシュ `stack-atlas/go-helper/stack-atlas-go-helper-<hash>`。
+  0700・持ち主が自分のディレクトリだけ使う。hash は helper のソースと go のバージョン・GOROOT）を、
+  `-timeout <ms>ms -root <モジュールの根> -entry <入口> -depth <n> -max-items <n> -schema-stdin` でシェルを通さずに（引数の配列で）動かす。
+  標準入力には SQL のスキーマ（マイグレーションのテーブル → カラム）を渡す。ビルドの環境は
+  `GOFLAGS=-mod=readonly GOPROXY=off GOWORK=off GOTOOLCHAIN=local CGO_ENABLED=0`（ネットワークもツールチェーンの取得もしない。D48）。
+  GOOS / GOARCH は外す。HOME も GOCACHE も無いときは GOCACHE を同じ利用者ごとのディレクトリの `gocache` に（docs/17 §9.6 の 1）
 - 解析対象のコードは実行しない。対象に `go build` / `go test` / `go generate` / `go list` を走らせない（モジュールの中のパッケージに
   `go/build` の Import も使わない）
 - import は自前の `types.ImporterFrom`: モジュールの中・`replace => ./dir`（モジュールの根の中だけ）・`vendor/` は go/parser と go/types で
@@ -16,7 +19,9 @@ Go の**言語アダプタ**（Phase 8-2b。設計は `docs/17-design-adapters.m
   GOROOT のソースから同じ読み込み器で読む（宣言だけ。全体で 1 つを共有）。それ以外の外部モジュールは即エラーを返し、go/types に偽の
   パッケージとして扱わせて検査を続ける（その型の項目は `wireType: unknown`。info で一覧を出す）
 - シンボリックリンクでモジュールの根の外へは出ない（ファイルもディレクトリも）。読むファイルは数 5000・合計 64 MiB・1 ファイル 2 MiB まで
-- 時間の上限は既定 120 秒（`STACK_ATLAS_GO_TIMEOUT_MS`）、標準出力は 64 MiB まで
+- 時間の上限は既定 120 秒（`STACK_ATLAS_GO_TIMEOUT_MS`）、標準出力は 64 MiB まで。超えたら実行ファイルを SIGKILL（helper 自身も
+  `-timeout` で止まる）。import パスの `.` / `..` は断り、標準ライブラリは GOROOT/src の中だけ読む。64KB を超える定数の文字列の連結は
+  型の検査の前に空にする（docs/17 §9.6）
 - `go` が無い（か helper の go 行より古い）ときは警告して何も出さない（Go はパッケージの箱の単位のまま。D51）。`STACK_ATLAS_REQUIRE_GO=1` なら失敗にする
 
 ## 箱と id

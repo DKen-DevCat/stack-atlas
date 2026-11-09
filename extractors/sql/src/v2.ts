@@ -20,12 +20,19 @@ const itemId = (name: string) => name.replace(/[^A-Za-z0-9_$-]/g, '_') || '_';
  * double precision / float → number、text / varchar / char / uuid → string、boolean → boolean、timestamp / timestamptz /
  * date / time → datetime、bytea / blob → bytes、json / jsonb → object、配列（`text[]`・`ARRAY`）→ array、ほか unknown
  */
+/** 型の文字列の上限（これより長いものは unknown。正規表現の手間を押さえる） */
+export const MAX_SQL_TYPE = 256;
+
 export function sqlWireType(type: string): WireType {
-  const t = type
-    .toLowerCase()
-    .replace(/\(.*?\)/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  if (type.length > MAX_SQL_TYPE) return 'unknown';
+  // 括弧の中（`numeric(10,2)`・`varchar(255)`）を内側から消す。`/\(.*?\)/` は閉じない `(` が続くと O(n²) だった
+  // （2026-11-09 8-2b レビュー S3。100KB で 15.8 秒）。`[^()]*` は線形で、入れ子の段の数だけ繰り返す
+  let t = type.toLowerCase();
+  for (let prev = ''; prev !== t;) {
+    prev = t;
+    t = t.replace(/\([^()]*\)/g, '');
+  }
+  t = t.replace(/\s+/g, ' ').trim();
   if (!t) return 'unknown';
   if (/\[\s*\]$/.test(t) || /\barray\b/.test(t)) return 'array';
   const base = t.replace(/\s+unsigned$/, '');
