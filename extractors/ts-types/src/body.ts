@@ -2,12 +2,16 @@
  * 箱の口・項目・links と、同じ言語の中の線（docs/17 §3.2・§7 #2・#3、docs/16 §5）。
  *
  * 口と項目:
- * - in: 引数（分割代入の props・引数はフィールドに展開）。引数の無い関数は `call`（name `()`、type void）、props の無い
+ * - in: 引数（分割代入の props・引数はフィールドに展開。repo の外で宣言されたプロパティ — React の DOM の属性など — と
+ *   上限で切ったものは不透明な 1 項目 `props` にまとめる。2026-11-09 レビュー C3）。引数の無い関数は `call`（name `()`、type void）、props の無い
  *   部品は `props`、画面は `html`（配信の線が着く）。呼び出しの戻りは `ret_<n>`（`checker.getResolvedSignature` の
  *   戻り型。Promise は剥がす）
  * - out: 呼び出しごとに `call_<n>`（子は呼び先の引数名。分割代入の引数はフィールド）、部品の描画は `render_<n>`
  *   （子は渡す props）、関数・hook の戻り値は `return`。番号は出現位置の順
- * - HTTP の呼び出し（fetch・既知の動詞・api-link のラッパー検出・api.callers。パスがリテラルか定数のテンプレート）:
+ * - HTTP の呼び出し（パスがリテラルか定数のテンプレート）は、クライアントの呼び出しだけ（2026-11-09 レビュー C4）:
+ *   `fetch`、api.callers、api-link が検出したラッパー（呼び先の宣言が repo の中）、api-link のクライアントファイルの
+ *   中の既知の動詞（get・post など）。パスより後ろの引数に関数（ハンドラ）を渡すもの（`app.get('/x', handler)`）は
+ *   サーバーのルートの登録なので呼び出しにしない。
  *   `call_<n>` に `meta.http = { method, path }`、子に `meta.http`（`path` / `query` / `body`）。path の子は呼び先の
  *   引数名、body は `JSON.stringify(x)` を剥がした x の型、query はパスの `?k=${v}` の v。子の optional は実引数から
  *   決める（呼び先の `init?` を写さない）。endpoint への線は合流の段（core の join.ts）が引く
@@ -31,15 +35,17 @@ import {
   httpCallInfo,
   passesParam,
   type ConstResolver,
+  type HttpCallInfo,
   type Wrapper,
 } from '@stack-atlas/extractor-api-link';
 import { localDeclarations } from '@stack-atlas/extractor-ts-imports';
+import { itemId, UNDERSCORE, underscoreItem } from '@stack-atlas/core';
 import type { Box } from './boxes.js';
 import {
   countItems,
-  itemId,
   makeItem,
   namedRef,
+  splitProps,
   stripNullish,
   typeText,
   uniqueId,
@@ -50,13 +56,6 @@ import {
 
 /** 呼び出しの合成項目・起動の項目の id */
 export const ACTIVATION_IDS = ['call', 'props', 'html'] as const;
-const UNDERSCORE = '_';
-const underscoreItem = (): ItemV2 => ({
-  id: UNDERSCORE,
-  name: '値',
-  type: 'unknown',
-  wireType: 'unknown',
-});
 
 const CALL_ITEM: ItemV2 = { id: 'call', name: '()', type: 'void' };
 const PROPS_ITEM: ItemV2 = { id: 'props', name: 'props', type: '{}', wireType: 'object' };
@@ -100,6 +99,8 @@ export interface BoxState {
   params: Map<ts.Symbol, { path: string } | { props: Map<string, string> }>;
   /** call の式（生のノード）→ 番号 */
   callOf: Map<ts.Node, number>;
+  /** 不透明にまとめた引数の項目 id（`props`。起動の項目ではなくデータの項目として扱う） */
+  opaque: Set<string>;
 }
 
 export interface BuildContext {
@@ -111,6 +112,10 @@ export interface BuildContext {
   /** ts-imports のノード id → kind */
   v1Kind: (id: string) => string | undefined;
   wrappers: ReadonlyMap<string, Wrapper>;
+  /** api.callers（名前で HTTP の呼び出しとみなす） */
+  callers: ReadonlySet<string>;
+  /** api-link のクライアントファイル（絶対パス。既知の動詞 get・post などを HTTP の呼び出しとみなすファイル） */
+  clientFiles: ReadonlySet<string>;
   resolverOf(sf: SourceFile): ConstResolver;
   wires: WireV2[];
   maxItems: number;
@@ -147,6 +152,7 @@ export function buildPorts(box: Box, env: TypeEnv, maxItems: number): BoxState {
     renders: [],
     params: new Map(),
     callOf: new Map(),
+    opaque: new Set(),
   };
   const fn = box.fn;
   const params = (
@@ -158,12 +164,22 @@ export function buildPorts(box: Box, env: TypeEnv, maxItems: number): BoxState {
     budget.left--;
     addItem(box.inItems, box.inIds, it);
   };
-  /** 分割代入・props のオブジェクトをフィールドに展開して in に置く */
+  /**
+   * 分割代入・props のオブジェクトをフィールドに展開して in に置く。repo の外で宣言されたプロパティと、項目の上限に
+   * 着いてから後のプロパティは、引数ごと不透明な 1 項目（`props`。子を置かない）にまとめる（C3）
+   */
   const fields = (p: ts.ParameterDeclaration) => {
     const t = stripNullish(env, c.getTypeAtLocation(p)).t;
     const owner = namedRef(env, t);
     const ids = new Map<string, string>();
-    for (const prop of c.getPropertiesOfType(t)) {
+    const { own, external } = splitProps(env, t);
+    const rest = [...external];
+    for (const prop of own) {
+      if (budget.left <= 0) {
+        budget.truncated = true;
+        rest.push(prop);
+        continue;
+      }
       const d = prop.valueDeclaration ?? prop.declarations?.[0];
       const pt = d ? c.getTypeOfSymbolAtLocation(prop, d) : c.getTypeOfSymbol(prop);
       const id = uniqueId(prop.getName(), new Set(box.inIds));
@@ -176,18 +192,39 @@ export function buildPorts(box: Box, env: TypeEnv, maxItems: number): BoxState {
         }),
       );
     }
-    if (ts.isObjectBindingPattern(p.name)) bindPattern(p.name, '', ids);
+    let opaque: string | undefined;
+    if (rest.length) {
+      opaque = uniqueId('props', new Set(box.inIds));
+      add({
+        id: opaque,
+        name: ts.isIdentifier(p.name) ? p.name.text : 'props',
+        type: typeText(env, t),
+        wireType: 'object',
+      });
+      for (const prop of rest) ids.set(prop.getName(), opaque);
+      st.opaque.add(opaque);
+    }
+    if (ts.isObjectBindingPattern(p.name)) bindPattern(p.name, '', ids, opaque);
     else {
       const sym = c.getSymbolAtLocation(p.name);
       if (sym) st.params.set(sym, { props: ids });
     }
     return ids.size;
   };
-  /** 分割代入の名前 → in のパス */
-  const bindPattern = (pat: ts.ObjectBindingPattern, prefix: string, ids?: Map<string, string>) => {
+  /** 分割代入の名前 → in のパス（`...rest` は不透明な項目があればそれ） */
+  const bindPattern = (
+    pat: ts.ObjectBindingPattern,
+    prefix: string,
+    ids?: Map<string, string>,
+    opaque?: string,
+  ) => {
     for (const el of pat.elements) {
       const key = (el.propertyName ?? el.name).getText();
-      const seg = prefix ? itemId(key) : (ids?.get(key) ?? itemId(key));
+      const seg = prefix
+        ? itemId(key)
+        : el.dotDotDotToken && opaque
+          ? opaque
+          : (ids?.get(key) ?? itemId(key));
       const path = prefix ? `${prefix}.${seg}` : seg;
       if (ts.isObjectBindingPattern(el.name)) bindPattern(el.name, path);
       else if (ts.isIdentifier(el.name)) {
@@ -247,6 +284,35 @@ const calleeName = (call: CallExpression) => {
   if (Node.isPropertyAccessExpression(e)) return e.getName();
   return e.getText().slice(0, 30);
 };
+
+/** 式が関数（アロー関数・関数式、関数の型の値。ルートの登録のハンドラなど）か */
+function isFunctionValue(env: TypeEnv, n: Node): boolean {
+  const x = strip(n);
+  if (Node.isArrowFunction(x) || Node.isFunctionExpression(x)) return true;
+  const t = env.checker.getTypeAtLocation(x.compilerNode);
+  return t.getCallSignatures().length > 0;
+}
+
+/**
+ * HTTP の呼び出しがクライアントの呼び出しか（C4）: パスより後ろの引数に関数を渡すもの（`app.get('/x', handler)`・
+ * `router.post('/x', (req, res) => …)`）はサーバーのルートの登録。`fetch` と api.callers は名前で、api-link が検出した
+ * ラッパーは呼び先の宣言が repo の中にあるとき、既知の動詞（get・post・request など）は api-link のクライアントファイルの
+ * 中だけ
+ */
+function isClientCall(st: BoxState, ctx: BuildContext, call: CallExpression, info: HttpCallInfo) {
+  const args = call.getArguments();
+  if (args.some((a, i) => i > info.pathIndex && isFunctionValue(st.env, a))) return false;
+  if (info.callee === 'fetch' || ctx.callers.has(info.callee)) return true;
+  if (ctx.wrappers.has(info.callee)) {
+    const e = call.getExpression();
+    const d = declOf(
+      st.env,
+      (Node.isPropertyAccessExpression(e) ? e.getNameNode() : e).compilerNode,
+    );
+    if (d && st.env.inRepo(d.getSourceFile().fileName)) return true;
+  }
+  return ctx.clientFiles.has(st.box.abs);
+}
 
 /** ラッパーの中で引数をそのままパスとして渡している呼び出し（呼び出しではなく中継） */
 function isRelay(call: CallExpression, pathIndex: number, box: Box): boolean {
@@ -371,7 +437,12 @@ export function buildCalls(st: BoxState, ctx: BuildContext): void {
       const callee = calleeBox(st, ctx, n.getExpression());
       const info = httpCallInfo(n, ctx.wrappers, resolve);
       const http =
-        info && !('unreadable' in info) && !isRelay(n, info.pathIndex, box) ? info : undefined;
+        info &&
+        !('unreadable' in info) &&
+        isClientCall(st, ctx, n, info) &&
+        !isRelay(n, info.pathIndex, box)
+          ? info
+          : undefined;
       const boxCall =
         callee && callee !== box && callee.kind !== 'component' && callee.kind !== 'screen';
       if (!boxCall && !http) return;
@@ -381,7 +452,10 @@ export function buildCalls(st: BoxState, ctx: BuildContext): void {
       st.calls.push(ev);
       const e = n.getExpression();
       skipIdents.add((Node.isPropertyAccessExpression(e) ? e.getNameNode() : e).compilerNode);
-      if (boxCall) calledBoxes.add(callee.id);
+      if (boxCall) {
+        calledBoxes.add(callee.id);
+        box.refs.add(callee.id);
+      }
       buildCall(st, ctx, ev, http ?? undefined, resolve);
       return;
     }
@@ -394,6 +468,7 @@ export function buildCalls(st: BoxState, ctx: BuildContext): void {
       const ev: RenderEvent = { k, node: n, callee, attrs: [] };
       st.renders.push(ev);
       calledBoxes.add(callee.id);
+      box.refs.add(callee.id);
       buildRender(st, ctx, ev);
     }
   });
@@ -412,9 +487,16 @@ export function buildCalls(st: BoxState, ctx: BuildContext): void {
     root.forEachDescendant((id) => {
       if (!Node.isIdentifier(id) || skipIdents.has(id.compilerNode)) return;
       const parent = id.getParent();
-      if (parent && (Node.isTypeReference(parent) || Node.isImportSpecifier(parent))) return;
+      if (parent && Node.isImportSpecifier(parent)) return;
+      /** 型の参照（`Today` の注釈など）は線にしないが、refs（掃除の付け替え先の手がかり）には入れる */
+      const typeOnly = !!parent && Node.isTypeReference(parent);
       const d = declOf(env, id.compilerNode);
       if (!d) return;
+      if (typeOnly) {
+        const t = ctx.boxByKey.get(rawKey(d))?.id ?? ctx.v1ByKey.get(rawKey(d));
+        if (t && t !== box.id && !t.includes('#')) box.refs.add(t);
+        return;
+      }
       // 同じファイルの非 export のトップレベル宣言は中へ
       if (d.getSourceFile() === box.sf.compilerNode) {
         let top: ts.Node | undefined = d;
@@ -427,6 +509,7 @@ export function buildCalls(st: BoxState, ctx: BuildContext): void {
       const target = ctx.boxByKey.get(key)?.id ?? ctx.v1ByKey.get(key);
       // `#` を含む v1 の id（ts-imports の衝突の退避）は v2 に入らない（upgrade が落とす）
       if (!target || target === box.id || target.includes('#')) return;
+      box.refs.add(target);
       const kind = ctx.boxByKey.get(key)?.kind ?? ctx.v1Kind(target);
       if (!kind || kind === 'type' || kind === 'schema') return;
       refs.add(target);
@@ -484,9 +567,17 @@ function buildCall(
       if (decl && ts.isObjectBindingPattern(decl.name)) {
         const pt = stripNullish(env, c.getTypeOfSymbolAtLocation(p, decl)).t;
         const at = stripNullish(env, argType(arg)).t;
-        for (const prop of c.getPropertiesOfType(pt)) {
+        // 呼び先が不透明な props にまとめたプロパティ（repo の外の宣言・上限で切ったもの）は、引数ごと 1 つにする（C3）
+        const { own, external } = splitProps(env, pt);
+        let opaque = external.some((x) => c.getPropertyOfType(at, x.getName()));
+        for (const prop of own) {
           const sp = c.getPropertyOfType(at, prop.getName());
           if (!sp) continue;
+          if (budget.left <= 0) {
+            budget.truncated = true;
+            opaque = true;
+            break;
+          }
           const sent = c.getTypeOfSymbolAtLocation(sp, arg.compilerNode);
           const id = uniqueId(prop.getName(), used);
           const pe = propertyExpr(strip(arg), prop.getName());
@@ -495,6 +586,16 @@ function buildCall(
             item: slotItem(id, prop.getName(), sent),
             expr: pe ? { node: pe } : { base: arg, sub: prop.getName() },
             target: itemId(prop.getName()),
+          });
+        }
+        if (opaque) {
+          const id = uniqueId('props', used);
+          budget.left--;
+          slots.push({
+            id,
+            item: { id, name: 'props', type: typeText(env, at), wireType: 'object' },
+            expr: { node: arg },
+            target: 'props',
           });
         }
         return;
@@ -647,9 +748,18 @@ function buildRender(st: BoxState, ctx: BuildContext, ev: RenderEvent) {
           : makeItem(env, id, name, c.getTypeAtLocation(expr.compilerNode), { budget });
       attrs.push({ id, item, ...(expr ? { expr: { node: expr } } : {}), target: itemId(name) });
     } else if (Node.isJsxSpreadAttribute(a)) {
+      // `{...rest}`: repo の中で宣言されたプロパティは 1 つずつ、外のもの（DOM の属性など）と上限で切ったものは
+      // 不透明な 1 項目にまとめる（C3）
       const x = a.getExpression();
       const t = stripNullish(env, c.getTypeAtLocation(x.compilerNode)).t;
-      for (const p of c.getPropertiesOfType(t)) {
+      const { own, external } = splitProps(env, t);
+      let opaque = external.length > 0;
+      for (const p of own) {
+        if (budget.left <= 0) {
+          budget.truncated = true;
+          opaque = true;
+          break;
+        }
         const d = p.valueDeclaration ?? p.declarations?.[0];
         const pt = d ? c.getTypeOfSymbolAtLocation(p, d) : c.getTypeOfSymbol(p);
         const id = uniqueId(p.getName(), used);
@@ -659,6 +769,21 @@ function buildRender(st: BoxState, ctx: BuildContext, ev: RenderEvent) {
           item: makeItem(env, id, p.getName(), pt, { budget }),
           expr: { base: x, sub: p.getName() },
           target: itemId(p.getName()),
+        });
+      }
+      if (opaque) {
+        const id = uniqueId('props', used);
+        budget.left--;
+        attrs.push({
+          id,
+          item: {
+            id,
+            name: `{...${x.getText().slice(0, 30)}}`,
+            type: typeText(env, t),
+            wireType: 'object',
+          },
+          expr: { node: x },
+          target: 'props',
         });
       }
     }
@@ -691,8 +816,10 @@ function buildRender(st: BoxState, ctx: BuildContext, ev: RenderEvent) {
     ...(attrs.length ? { children: attrs.map((s) => s.item) } : {}),
   });
   let wired = false;
+  /** 受ける側の不透明な props（repo の外のプロパティをまとめたもの）。名前で当たらない属性はここへ */
+  const opaqueIn = ev.callee.inItems.find((x) => x.id === 'props');
   for (const s of attrs) {
-    const r = ev.callee.inItems.find((x) => x.id === s.target);
+    const r = ev.callee.inItems.find((x) => x.id === s.target) ?? opaqueIn;
     if (!r) continue;
     wireBetween(
       ctx,
@@ -1038,8 +1165,8 @@ export function buildLinks(st: BoxState): LinkV2[] {
   }
 
   // 起動の links（§7 #3）: データ由来の link が無い call_n / render_n / return へ
-  const activation = box.inItems.filter((x) =>
-    (ACTIVATION_IDS as readonly string[]).includes(x.id),
+  const activation = box.inItems.filter(
+    (x) => (ACTIVATION_IDS as readonly string[]).includes(x.id) && !st.opaque.has(x.id),
   );
   const starts = activation.length
     ? activation

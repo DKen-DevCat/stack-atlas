@@ -32,7 +32,7 @@
 | 項目 `items[].id` | 口の中で一意。入れ子は親の中で一意 | `[A-Za-z0-9_$-]+`（**`.` は使えない**。表示名 `name` は自由） |
 | 項目の参照 | `<nodeId>#<portId>/<itemId>(.<itemId>)*` | 例 `comp:TodayIsland#in/entries.amount` |
 | 箱の中の参照（`links`） | `<portId>/<itemId>(.<itemId>)*` | 例 `in/rows.created_at` |
-| 型 `types[].id` | `type:<名前>` か `table:<名前>` | 項目の `typeRef` が指す |
+| 型 `types[].id` | `type:<名前>` か `table:<名前>`。TS の型は ts-imports が `type:` の箱にした宣言ならその id（衝突の退避は `~`）、それ以外（export していない型など）は `type:<repo 相対ファイル>~<名前>`（複数 repo なら `<repo>/` 付き）。OpenAPI は `type:<名前>`（2026-11-09、8-2a のレビュー） | 項目の `typeRef` が指す |
 | 分岐の参照（`when` のキー） | `<variantId>` または `<nodeId>#<variantId>`（`.` ではなく `#`。箱 id に `.` が入るため） | 例 `hit`、`screen:/today#login` |
 
 項目の `id` に `.` を禁じるので、`query.date` のような名前は `id: "query_date", name: "query.date"` になる。言語アダプタは `name` を言語どおり、`id` を `[^A-Za-z0-9_$-]` → `_` に置換して作る（衝突したら `_2` を付ける）。index signature や配列要素は、配列の項目の**子**として書き、`[]` の段は作らない（`entries` の子が `amount`）。

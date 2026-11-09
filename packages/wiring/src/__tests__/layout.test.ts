@@ -1,4 +1,5 @@
-// 配線図のレイアウト（docs/15 §3.6、モック第 6 版の近似の移植）: 重ならない・直交・決定的・枠が囲む・線が重ならない
+// 配線図のレイアウト（docs/15 §3.6、docs/18 §3.1）: 重ならない・直交・決定的・枠が囲む・線が重ならない。
+// 数値の受け入れ条件（縦横比・高さ・交差など。docs/18 §4）は layout-accept.test.ts
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -13,7 +14,7 @@ import {
   BROKEN_CUT,
   type Rect,
   type WiringLayout,
-} from '../layout.js';
+} from '../layout/index.js';
 import { select } from '../select.js';
 import { defaultState } from '../variants.js';
 import { I, N, P, todayGraph, W } from './fixture.js';
@@ -159,37 +160,75 @@ describe.each(graphs)('layoutWiring: %s', (_name, make) => {
     }
   });
 
-  it('同じ通り道・同じ隙間を通る線は x / y を共有しない', () => {
-    const chanX = new Map<number, number[]>();
+  // 2026-11-09 変更（8-3a）: 線は通り道ごとに「縦の区間」を持ち、区間はトラックに左詰めで割り当てる（docs/18 §3.1 の 8）。
+  // 縦の区間が重ならない線は同じ x を分け合うので、「同じ通り道の線は x を共有しない」から「縦の区間が重なる線は x を
+  // 共有しない」に変えた。隙間（gaps）は通過点の束の段になり、段は線ごとに 1 つなので y は必ず違う
+  it('同じ通り道で縦の区間が重なる線は x を共有せず、x は通り道の中。同じ束の段は y を共有しない', () => {
+    const segs = new Map<number, { x: number; lo: number; hi: number; key: string }[]>();
+    const all = [
+      ...index.wires.map(
+        (w) => [w.key, layout.pins.get(w.from.ref)!, layout.pins.get(w.to.ref)!] as const,
+      ),
+    ];
+    for (const [key, a, b] of all) {
+      const p = layout.plans.get(key)!;
+      const ys = [a.y, ...p.ys, b.y];
+      p.chans.forEach((c, i) => {
+        const lo = Math.min(ys[i]!, ys[i + 1]!);
+        const hi = Math.max(ys[i]!, ys[i + 1]!);
+        const ch = layout.channels[c]!;
+        expect(p.xs[i]!, key).toBeGreaterThan(ch.x);
+        expect(p.xs[i]!, key).toBeLessThan(ch.x + ch.w);
+        if (hi > lo) segs.set(c, [...(segs.get(c) ?? []), { x: p.xs[i]!, lo, hi, key }]);
+      });
+    }
+    expect(segs.size).toBeGreaterThan(0);
+    for (const [c, list] of segs)
+      for (let i = 0; i < list.length; i++)
+        for (let j = i + 1; j < list.length; j++) {
+          const s1 = list[i]!;
+          const s2 = list[j]!;
+          if (s1.lo < s2.hi && s2.lo < s1.hi)
+            expect(s1.x, `通り道 ${c}: ${s1.key} と ${s2.key}`).not.toBe(s2.x);
+        }
     const gapY = new Map<string, number[]>();
-    for (const p of layout.plans.values()) {
-      p.chans.forEach((c, i) => chanX.set(c, [...(chanX.get(c) ?? []), p.xs[i]!]));
-      p.gaps.forEach((g, i) => gapY.set(g, [...(gapY.get(g) ?? []), p.ys[i]!]));
-    }
-    expect(chanX.size).toBeGreaterThan(0);
-    for (const [c, xs] of chanX) {
-      expect(new Set(xs).size, `通り道 ${c}`).toBe(xs.length);
-      const ch = layout.channels[c]!;
-      for (const x of xs) {
-        expect(x).toBeGreaterThan(ch.x);
-        expect(x).toBeLessThan(ch.x + ch.w);
-      }
-    }
-    for (const [g, ys] of gapY) expect(new Set(ys).size, `隙間 ${g}`).toBe(ys.length);
+    for (const p of layout.plans.values())
+      p.gaps.forEach((g, i) => {
+        const bundle = g.split(':').slice(0, 2).join(':');
+        gapY.set(bundle, [...(gapY.get(bundle) ?? []), p.ys[i]!]);
+      });
+    for (const [g, ys] of gapY) expect(new Set(ys).size, `束 ${g}`).toBe(ys.length);
   });
 
   it('同じ入力から同じ出力（決定的）', () => {
     expect(plain(layoutWiring(indexGraph(make())))).toBe(plain(layout));
   });
 
-  it('レーンは箱のあるものだけを固定の順に並べ、背景の帯は隙間なく続く', () => {
+  // 2026-11-09 変更（8-3a）: レーンは箱の多いときに複数の列に割る（docs/18 §3.1 の 4）。箱の x はレーンの x ではなく
+  // 自分の列の x（列の中では左に揃える）。レーンの背景は自分の列を全部含む
+  it('レーンは箱のあるものだけを固定の順に並べ、列はレーンの順に左から。背景の帯は自分の列を全部含み、隙間なく続く', () => {
     const order = ['user', 'browser', 'edge', 'build', 'server', 'data', 'external'];
     const ids = layout.lanes.map((l) => l.id);
     expect(ids).toEqual(order.filter((id) => ids.includes(id)));
+    expect(layout.columns.map((c) => c.lane)).toEqual(
+      [...layout.columns.map((c) => c.lane)].sort((a, b) => a - b),
+    );
     layout.lanes.forEach((l, i) => {
       expect(l.index).toBe(i);
       if (i > 0) expect(l.x0).toBe(layout.lanes[i - 1]!.x1);
-      for (const b of boxes) if (b.lane === i) expect(b.x).toBe(l.x);
+      expect(l.columns.length).toBeGreaterThan(0);
+      for (const c of l.columns) {
+        const col = layout.columns[c]!;
+        expect(col.lane).toBe(i);
+        expect(col.x).toBeGreaterThan(l.x0);
+        expect(col.x + col.w).toBeLessThan(l.x1);
+      }
+      for (const b of boxes)
+        if (b.lane === i) {
+          expect(l.columns).toContain(b.col);
+          expect(b.x).toBe(layout.columns[b.col]!.x);
+          expect(b.w).toBeLessThanOrEqual(layout.columns[b.col]!.w);
+        }
     });
     expect(layout.lanes[0]!.x0).toBe(0);
     expect(layout.lanes[layout.lanes.length - 1]!.x1).toBe(layout.width);
@@ -303,8 +342,11 @@ describe('経路の小道具', () => {
 describe('layoutWiring: 隙間と高さと迂回（2026-11-09 のレビュー指摘）', () => {
   const box = (l: WiringLayout, id: string) => l.boxes.get(id)!;
 
-  it('レーンのいちばん上の隙間を 7 本が通る: 線はレーンの名前より下、箱の上端より上に収まり、箱は上に詰めすぎない', () => {
-    // 自分を呼ぶ箱（out の 7 項目 → in の 7 項目）。線は箱の上の隙間（レーンの最初の隙間）を通る
+  // 2026-11-09 変更（8-3a）: 自分を呼ぶ線は、箱と同じ列の通過点（折り返し）を通る。通過点は 1 つの束で、箱の下に付く
+  // （以前は「レーンのいちばん上の隙間」を通った）。線どうしが間隔 8px で重ならないこと、箱を横切らないこと、
+  // 線がレーンの名前より下で図の中に収まることは同じ
+  it('自分を呼ぶ 7 本: 箱と同じ列の 1 つの束を通り、間隔 8px で重ならず、箱を横切らない', () => {
+    // 自分を呼ぶ箱（out の 7 項目 → in の 7 項目）
     const ins = Array.from({ length: 7 }, (_, j) => I(`i${j}`, 'int'));
     const outs = Array.from({ length: 7 }, (_, j) => I(`o${j}`, 'int'));
     const g: GraphV2 = {
@@ -315,16 +357,19 @@ describe('layoutWiring: 隙間と高さと迂回（2026-11-09 のレビュー指
     const l = layoutWiring(indexGraph(g));
     const b = box(l, 'fn:self');
     const ys: number[] = [];
+    const bundles = new Set<string>();
     for (const p of l.plans.values()) {
-      expect(p.gaps).toEqual(['0:0']);
+      expect(p.gaps).toHaveLength(1);
+      bundles.add(p.gaps[0]!.split(':').slice(0, 2).join(':'));
       ys.push(p.ys[0]!);
     }
+    expect(bundles.size).toBe(1);
     expect(ys).toHaveLength(7);
     for (const y of ys) {
       expect(y).toBeGreaterThan(l.titleY + 8);
-      expect(y).toBeLessThan(b.y);
+      expect(y < b.y || y > b.y + b.h).toBe(true);
+      expect(y).toBeLessThan(l.height);
     }
-    // 線どうしも重ならない（間隔 8px）
     const sorted = [...ys].sort((a, c) => a - c);
     for (let i = 1; i < sorted.length; i++)
       expect(sorted[i]! - sorted[i - 1]!).toBeGreaterThanOrEqual(8);
@@ -390,14 +435,14 @@ describe('layoutWiring: 隙間と高さと迂回（2026-11-09 のレビュー指
       wires: [W('actor:S#out/o14', 'fn:T#in/t0', 'http')],
     };
     const l = layoutWiring(indexGraph(g));
-    const ty = l.pins.get('fn:T#in/t0')!.y;
-    const b1 = box(l, 'comp:B1');
-    const b2 = box(l, 'cache:B2');
-    // 前提: T の入口の高さは B1 と B2 の両方に塞がれている
-    expect(ty).toBeGreaterThan(b1.y);
-    expect(ty).toBeLessThan(b1.y + b1.h);
-    expect(ty).toBeGreaterThan(b2.y);
-    expect(ty).toBeLessThan(b2.y + b2.h);
+    // 2026-11-09 変更（8-3a）: 途中の列には通過点を置くので、T の入口の高さが途中の箱に塞がれる配置にはならない
+    // （以前は「T の入口の高さが B1 と B2 の両方に塞がれている」ことを前提に確かめた）。途中の列ごとに通過点を通り、
+    // どの箱も横切らないことを確かめる
+    const plan = l.plans.get('w0')!;
+    const cols = (id: string) => box(l, id).col;
+    expect(plan.ys).toHaveLength(cols('fn:T') - cols('actor:S') - 1);
+    expect(cols('comp:B1')).toBeGreaterThan(cols('actor:S'));
+    expect(cols('cache:B2')).toBeLessThan(cols('fn:T'));
     const pts = l.routes.get('w0')!.points;
     for (const b of l.boxes.values()) expect(crossesBox(pts, b), b.id).toBe(false);
   });

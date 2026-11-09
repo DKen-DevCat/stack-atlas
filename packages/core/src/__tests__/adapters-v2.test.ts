@@ -9,13 +9,23 @@ import {
   type WireV2,
 } from '@stack-atlas/schema';
 import { describe, expect, it } from 'vitest';
-import { apiPathMatches, normalizeRoutePath, pathMatches, pickMostSpecific } from '../paths.js';
+import {
+  apiPathMatches,
+  MAX_ROUTE_PATH,
+  normalizeRoutePath,
+  pathMatches,
+  pickMostSpecific,
+  rewriteRoutePath,
+} from '../paths.js';
 import { mergePartialGraphs } from '../merge.js';
 import { prefixRepoFiles } from '../repo.js';
-import { cleanupV2, coverageV2, mergeV2 } from '../merge-v2.js';
+import { cleanupV2, coverageV2, mergeV2, removeOverrideWiresV2 } from '../merge-v2.js';
 import { joinEndpoints } from '../join.js';
 import { writeBroken } from '../broken-v2.js';
-import type { PartialGraphV2, PartialNodeV2 } from '../types.js';
+import { createMemoryLogger } from '../logger.js';
+import { buildGraph } from '../pipeline.js';
+import type { Extractor, PartialGraph, PartialGraphV2, PartialNodeV2 } from '../types.js';
+import { tmpRepo } from './helpers.js';
 
 const I = (id: string, type = 'string', extra: Partial<ItemV2> = {}): ItemV2 => ({
   id,
@@ -56,6 +66,86 @@ describe('パスの正規化（api-link から core へ。docs/17 §7 #5）', ()
     };
     expect(pickMostSpecific([r('GET /a/{x}'), r('GET /a/b')]).map((x) => x.routeKey)).toEqual([
       'GET /a/b',
+    ]);
+  });
+});
+
+describe('パスの正規化は線形（2026-11-09 レビュー S2）', () => {
+  /** `[` が多くて `]` が無い、`{` が多くて `}` が無い、`/` の長い並びなど（もとの正規表現は開きの位置ごとに末尾まで読み直す二次） */
+  const hostile = (n: number) => [
+    '['.repeat(n),
+    '[[...'.repeat(n / 5),
+    '[...'.repeat(n / 4),
+    '{'.repeat(n),
+    '{a...'.repeat(n / 5),
+    `${'/'.repeat(n)}x`,
+    `/a${'/:'.repeat(n / 2)}`,
+  ];
+  /** CPU 時間（並列に走る他のテストに待たされた分を含めない。perf.test と同じ） */
+  const cpuMs = (f: () => unknown) => {
+    const t0 = process.cpuUsage();
+    f();
+    const d = process.cpuUsage(t0);
+    return (d.user + d.system) / 1000;
+  };
+  it('100k 文字の悪意のある入力でも、正規表現の書き換え（上限なし）が 1 本あたり 100ms を大きく下回る', () => {
+    // もとの正規表現では 1 本あたり数十秒（20k 文字で `[` 0.9 秒・末尾の `/` 1 秒。二次）
+    for (const p of hostile(100_000))
+      expect(
+        cpuMs(() => rewriteRoutePath(p)),
+        p.slice(0, 10),
+      ).toBeLessThan(100);
+  });
+  it(`${MAX_ROUTE_PATH} 文字を超えるパスは正規化も照合もしない（そのまま返す・合わない）`, () => {
+    const long = `/a${'[x]'.repeat(1000)}`;
+    expect(long.length).toBeGreaterThan(MAX_ROUTE_PATH);
+    expect(normalizeRoutePath(long)).toBe(long);
+    expect(apiPathMatches('/a/{x}', long)).toBe(false);
+    expect(apiPathMatches(long, '/a/b')).toBe(false);
+  });
+  it('書き換えの規則は従来どおり（括弧の中に開き括弧があるものだけ内側を取る）', () => {
+    expect(normalizeRoutePath('/a/[[...rest]]/[...x]/[id]/{p...}/:q///')).toBe(
+      '/a/{rest+}/{x+}/{id}/{p+}/{q}',
+    );
+    expect(normalizeRoutePath('/a[b[c]')).toBe('/a[b{c}');
+    expect(normalizeRoutePath('/x/*')).toBe('/x/{proxy+}');
+    expect(normalizeRoutePath('///')).toBe('/');
+  });
+  it('joinEndpoints: 長すぎるパスの endpoint・呼び出しは照合せず 1 回だけ警告する', () => {
+    const long = `/a${'/b'.repeat(MAX_ROUTE_PATH)}`;
+    const g: GraphV2 = {
+      version: 2,
+      nodes: [
+        {
+          id: 'fn:a',
+          kind: 'fn',
+          name: 'a',
+          runtime: 'browser',
+          ports: [
+            P('out', 'out', [
+              I('call_1', 'x', { meta: { http: { method: 'GET', path: long } } }),
+              I('call_2', 'x', { meta: { http: { method: 'GET', path: `${long}/c` } } }),
+            ]),
+          ],
+        },
+        {
+          id: 'endpoint:GET /a',
+          kind: 'endpoint',
+          name: 'GET /a',
+          runtime: 'server',
+          meta: { api: { method: 'GET', path: long } },
+          ports: [P('in', 'in', [I('path')])],
+        },
+      ],
+      wires: [],
+    };
+    const r = joinEndpoints(g);
+    expect(r.matched).toBe(0);
+    expect(r.unmatched).toEqual([]);
+    expect(r.issues.map((i) => i.message)).toEqual([
+      expect.stringContaining(
+        `パスが長すぎる（${MAX_ROUTE_PATH} 文字を超える）ので照合しなかった endpoint・HTTP 呼び出し 3 件`,
+      ),
     ]);
   });
 });
@@ -272,6 +362,25 @@ describe('mergeV2 → join → cleanupV2（D50・D53）', () => {
     expect(upgraded.nodes.find((n) => n.id === 'route:/')!.ports[0]!.items).toHaveLength(1);
   });
 
+  it('分岐は v2-parts の mergeVariants で和にする（upgrade の分岐が先、同じ id は upgrade の値。2026-11-09 レビュー C9）', () => {
+    const { upgraded, part } = smallWorld();
+    part.nodes.push({
+      id: 'infra:cdn',
+      kind: 'cache',
+      name: 'cdn',
+      ports: [],
+      variants: [
+        { id: 'hit', name: 'HIT（アダプタ）', default: true },
+        { id: 'stale', name: 'stale', default: false },
+      ],
+    });
+    const cdn = mergeV2(upgraded, part).graph.nodes.find((n) => n.id === 'infra:cdn')!;
+    expect(cdn.variants).toEqual([
+      { id: 'hit', name: 'hit', default: false },
+      { id: 'stale', name: 'stale', default: false },
+    ]);
+  });
+
   it('v1 のファイルの箱は、export が全部関数の箱になっていれば group（中の関数の箱が host を受け継ぎ、group は v1 の箱 id）', () => {
     const { upgraded, part } = smallWorld();
     const state = mergeV2(upgraded, part);
@@ -388,7 +497,7 @@ describe('mergeV2 → join → cleanupV2（D50・D53）', () => {
     expect(g.project?.generator).toEqual({ v2: 'upgrade', adapters: ['ts-types', 'openapi'] });
   });
 
-  it('group の v1 の箱に付いた残りの線: 相手がアダプタの箱でなければ中の関数の箱へ付け替え、アダプタの箱なら消す', () => {
+  it('group の v1 の箱に付いた残りの線: 細かい線が無ければ相手がアダプタの箱でも消さず、中の関数の箱へ付け替える', () => {
     const { upgraded, part } = smallWorld();
     upgraded.wires.push(
       W('handler:api#out/_', 'lib:src/request.ts#in/_', 'call'), // アダプタでない箱から
@@ -400,10 +509,65 @@ describe('mergeV2 → join → cleanupV2（D50・D53）', () => {
       expect.arrayContaining([
         'handler:api#out/_ → fn:getToday#in/_',
         'handler:api#out/_ → fn:getAll#in/_',
+        // 2026-11-09 変更（8-2a レビュー C1）: 相手がアダプタの箱（route:/）でも、細かい線が無い対の線は消さない
+        // （消すと合流できなかった線・overrides で足した線が黙って消える）。手がかり（refs）が無いので中の全部へ
+        'fn:getToday#out/_ → route:/#in/_',
+        'fn:getAll#out/_ → route:/#in/_',
       ]),
     );
     expect(keys.some((k) => k.startsWith('lib:src/request.ts'))).toBe(false);
-    expect(cleaned.dropped).toBe(1);
+    // 2026-11-09 変更（8-2a レビュー C1・C6）: 以前は route:/ への線を消して dropped 1。今は消さず、付け替え先を
+    // 決められなかった線として 2 本（handler:api から・route:/ へ）を数える
+    expect(cleaned.dropped).toBe(0);
+    expect(cleaned.undetermined).toBe(2);
+    expect(validateGraphV2(g).errors).toEqual([]);
+  });
+
+  it('付け替えは実際に参照している中の関数の箱だけ（アダプタの refs。C6）', () => {
+    const { upgraded, part } = smallWorld();
+    upgraded.nodes.push(box('schema:Row', 'helper', { file: 'src/db.ts' }));
+    upgraded.wires.push(
+      W('lib:src/request.ts#out/_', 'schema:Row#in/_', 'call'),
+      W('schema:Row#out/_', 'lib:src/request.ts#in/_', 'return', { reply: true }),
+      W('route:/#out/_', 'lib:src/request.ts#in/_', 'call'),
+    );
+    part.refs = { 'fn:getAll': ['schema:Row'], 'route:/': ['fn:getToday'] };
+    const { g, cleaned } = run(upgraded, part);
+    const keys = g.wires.map((w) => `${w.from} → ${w.to}`);
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        'fn:getAll#out/_ → schema:Row#in/_',
+        'schema:Row#out/_ → fn:getAll#in/_',
+        'route:/#out/_ → fn:getToday#in/_',
+      ]),
+    );
+    for (const k of [
+      'fn:getToday#out/_ → schema:Row#in/_',
+      'schema:Row#out/_ → fn:getToday#in/_',
+      'route:/#out/_ → fn:getAll#in/_',
+    ])
+      expect(keys).not.toContain(k);
+    expect(cleaned.undetermined).toBe(0);
+    expect(validateGraphV2(g).errors).toEqual([]);
+  });
+
+  it('合流できなかった HTTP の呼び出し・overrides で足した線（v1 の箱 → endpoint）は消えず、呼び出しを持つ中の関数の箱へ（C1）', () => {
+    const { upgraded, part } = smallWorld();
+    // getToday の呼び出しのパスが endpoint と合わない（/today/v2）。api-link（か overrides の lib → endpoint）の
+    // 箱の単位の線だけが残る
+    const getToday = part.nodes.find((n) => n.id === 'fn:getToday')!;
+    getToday.ports[1]!.items[0]!.meta = { http: { method: 'GET', path: '/today/v2' } };
+    const { g, joined, cleaned } = run(upgraded, part);
+    expect(joined.unmatched).toEqual(['fn:getToday GET /today/v2']);
+    const keys = g.wires.map((w) => `${w.from} → ${w.to}`);
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        'fn:getToday#out/_ → endpoint:GET /today#in/_',
+        'endpoint:GET /today#out/_ → fn:getToday#in/_',
+      ]),
+    );
+    expect(keys.some((k) => k.startsWith('fn:getAll') && k.includes('endpoint'))).toBe(false);
+    expect(cleaned.undetermined).toBe(0);
     expect(validateGraphV2(g).errors).toEqual([]);
   });
 
@@ -419,6 +583,235 @@ describe('mergeV2 → join → cleanupV2（D50・D53）', () => {
     const { upgraded, part } = smallWorld();
     const state = mergeV2(upgraded, part, { removed: new Set(['fn:getAll']) });
     expect(state.graph.nodes.some((n) => n.id === 'fn:getAll')).toBe(false);
+  });
+
+  it('被覆 ②: 同じ file の部品・hook（v1 の箱の export でないもの）は group に入れない（2026-11-09 レビュー C5）', () => {
+    const { upgraded, part } = smallWorld();
+    part.nodes.push({
+      id: 'hook:useToday',
+      kind: 'hook',
+      name: 'useToday',
+      file: 'src/request.ts',
+      ports: [P('in', 'in', [I('call', 'void')])],
+      meta: { ts: { exportName: 'useToday' } },
+    });
+    const state = mergeV2(upgraded, part);
+    expect([...state.groups]).toEqual([['lib:src/request.ts', ['fn:getToday', 'fn:getAll']]]);
+    expect(state.graph.nodes.find((n) => n.id === 'hook:useToday')!.group).toBeUndefined();
+  });
+
+  it('overrides（C2）: remove の箱の @runtime の複製と、group になるはずだった中の関数の箱も消す。nodes の上書きはアダプタに勝つ', () => {
+    const { upgraded, part } = smallWorld();
+    // overrides を当てた v1 から作った upgrade: lib:src/request.ts は消え、comp:Island の名前は上書き済み
+    const removedV1 = upgraded.nodes.find((n) => n.id === 'lib:src/request.ts')!;
+    upgraded.nodes = upgraded.nodes.filter((n) => n.id !== 'lib:src/request.ts');
+    upgraded.wires = upgraded.wires.filter(
+      (w) => !w.from.startsWith('lib:src/request.ts') && !w.to.startsWith('lib:src/request.ts'),
+    );
+    upgraded.views = [];
+    upgraded.nodes.find((n) => n.id === 'comp:Island')!.name = '島';
+    upgraded.nodes.push(box('comp:Shared', 'component'));
+    part.nodes.push(
+      {
+        id: 'comp:Shared@browser',
+        kind: 'component',
+        name: 'Shared',
+        runtime: 'browser',
+        ports: [],
+        meta: { sharedOf: 'comp:Shared' },
+      },
+      {
+        id: 'comp:Shared@build',
+        kind: 'component',
+        name: 'Shared',
+        runtime: 'build',
+        ports: [],
+        meta: { sharedOf: 'comp:Shared' },
+      },
+    );
+    const state = mergeV2(upgraded, part, {
+      overrides: {
+        remove: ['lib:src/request.ts', 'comp:Shared'],
+        nodes: [{ id: 'comp:Island', name: '島' }],
+      },
+      removedNodes: [{ id: removedV1.id, file: removedV1.file!, meta: removedV1.meta! }],
+    });
+    const ids = state.graph.nodes.map((n) => n.id);
+    for (const id of ['fn:getToday', 'fn:getAll', 'comp:Shared@browser', 'comp:Shared@build'])
+      expect(ids, id).not.toContain(id);
+    expect(state.graph.wires.some((w) => w.to.startsWith('fn:getToday'))).toBe(false);
+    expect(state.graph.nodes.find((n) => n.id === 'comp:Island')!.name).toBe('島');
+    expect(state.removed).toEqual(
+      new Set([
+        'lib:src/request.ts',
+        'comp:Shared',
+        'comp:Shared@browser',
+        'comp:Shared@build',
+        'fn:getToday',
+        'fn:getAll',
+      ]),
+    );
+    const cleaned = cleanupV2(state);
+    expect(validateGraphV2(cleaned.graph).errors).toEqual([]);
+  });
+
+  it('overrides（C2）: remove の {from, to} は合流の後の線にも当たる（group の中の箱・戻りも）', () => {
+    const { upgraded, part } = smallWorld();
+    const state = mergeV2(upgraded, part);
+    joinEndpoints(state.graph);
+    const n = removeOverrideWiresV2(state, {
+      remove: [
+        { from: 'comp:Island', to: 'lib:src/request.ts', kind: 'uses' },
+        { from: 'lib:src/request.ts', to: 'endpoint:GET /today', kind: 'http' },
+      ],
+    });
+    const keys = state.graph.wires.map((w) => `${w.from} → ${w.to}`);
+    for (const k of [
+      'comp:Island#out/call_1 → fn:getToday#in/call',
+      'fn:getToday#out/return → comp:Island#in/ret_1',
+      'fn:getToday#out/call_1.url → endpoint:GET /today#in/path',
+      'endpoint:GET /today#out/body → fn:getToday#in/ret_1',
+      // upgrade の箱の単位の線も
+      'comp:Island#out/_ → lib:src/request.ts#in/_',
+      'lib:src/request.ts#out/_ → endpoint:GET /today#in/_',
+    ])
+      expect(keys).not.toContain(k);
+    expect(n).toBe(8);
+    // kind が合わない線は消さない（uses は render を含むが http は含まない）
+    expect(keys).toContain('route:/#out/render_1 → comp:Island#in/props');
+  });
+});
+
+describe('パイプラインの overrides と要約（2026-11-09 レビュー C2・C8・C10）', () => {
+  const stub = (name: string, out: PartialGraph, v2Role?: Extractor['v2Role']): Extractor => ({
+    name,
+    ...(v2Role ? { v2Role } : {}),
+    detect: async () => true,
+    extract: async () => out,
+  });
+  const fn = (
+    id: string,
+    file: string,
+    exportName: string,
+    extra: Partial<PartialNodeV2> = {},
+  ): PartialNodeV2 => ({
+    id,
+    kind: 'fn',
+    name: exportName,
+    file,
+    ports: [P('in', 'in', [I('call', 'void')]), P('out', 'out', [I('return', 'void')])],
+    meta: { ts: { exportName } },
+    ...extra,
+  });
+  it('overrides.yaml は 1 回だけ読み（警告も 1 回）、v2 にも当てる。言語アダプタと契約を分ける', async () => {
+    const root = tmpRepo({
+      'stack-atlas.config.yaml': 'project: { name: demo }\n',
+      'stack-atlas.overrides.yaml': [
+        'bogus: 1',
+        'remove:',
+        '  - lib:util',
+        '  - comp:Shared',
+        '  - { from: comp:Card, to: lib:api }',
+        'nodes:',
+        '  - { id: comp:Card, name: カード }',
+      ].join('\n'),
+    });
+    const log = createMemoryLogger();
+    const v1: PartialGraph = {
+      nodes: [
+        { id: 'lib:api', kind: 'lib', file: 'src/api.ts', meta: { ts: { exports: ['getA'] } } },
+        { id: 'lib:util', kind: 'lib', file: 'src/util.ts', meta: { ts: { exports: ['x', 'y'] } } },
+        { id: 'comp:Card', kind: 'component', file: 'src/Card.tsx' },
+        { id: 'comp:Shared', kind: 'component', file: 'src/Shared.tsx' },
+      ],
+      edges: [
+        { from: 'comp:Card', to: 'lib:api', kind: 'uses' },
+        { from: 'comp:Card', to: 'comp:Shared', kind: 'uses' },
+      ],
+    };
+    const lang: PartialGraph = {
+      nodes: [],
+      edges: [],
+      v2: {
+        nodes: [
+          fn('fn:getA', 'src/api.ts', 'getA'),
+          fn('fn:x', 'src/util.ts', 'x'),
+          fn('fn:y', 'src/util.ts', 'y'),
+          {
+            id: 'comp:Card',
+            kind: 'component',
+            name: 'Card',
+            file: 'src/Card.tsx',
+            ports: [P('in', 'in', [I('props', '{}')]), P('out', 'out', [I('call_1', 'void')])],
+          },
+          {
+            id: 'comp:Shared@browser',
+            kind: 'component',
+            name: 'Shared',
+            ports: [],
+            meta: { sharedOf: 'comp:Shared' },
+          },
+          {
+            id: 'comp:Shared@build',
+            kind: 'component',
+            name: 'Shared',
+            ports: [],
+            meta: { sharedOf: 'comp:Shared' },
+          },
+        ],
+        wires: [W('comp:Card#out/call_1', 'fn:getA#in/call', 'call')],
+      },
+    };
+    const contract: PartialGraph = {
+      nodes: [
+        { id: 'endpoint:GET /a', kind: 'endpoint', meta: { api: { method: 'GET', path: '/a' } } },
+      ],
+      edges: [],
+      v2: {
+        nodes: [
+          {
+            id: 'endpoint:GET /a',
+            kind: 'endpoint',
+            name: 'GET /a',
+            runtime: 'server',
+            ports: [
+              P('in', 'in', [I('path')]),
+              P('req', 'out', [I('path')]),
+              P('res', 'in', []),
+              P('out', 'out', []),
+            ],
+          },
+        ],
+        wires: [],
+      },
+    };
+    const res = await buildGraph({
+      root,
+      log,
+      commit: false,
+      extractors: [
+        stub('v1', v1),
+        stub('lang', lang, 'language'),
+        stub('contract', contract, 'contract'),
+      ],
+    });
+    // C8: 2 回読むと同じ警告が 2 回出ていた
+    expect(log.of('warn').filter((m) => m.includes('未知のキー "bogus"'))).toHaveLength(1);
+    const g = res.graphV2!;
+    const ids = g.nodes.map((n) => n.id);
+    // C2: remove の複製・group になるはずだった中の関数の箱
+    for (const id of ['comp:Shared@browser', 'comp:Shared@build', 'fn:x', 'fn:y'])
+      expect(ids, id).not.toContain(id);
+    // C2: remove の {from, to} はアダプタの線にも（comp:Card → lib:api の中の fn:getA）
+    expect(g.wires.some((w) => w.from.startsWith('comp:Card') && w.to.startsWith('fn:getA'))).toBe(
+      false,
+    );
+    // C2: nodes の上書きはアダプタの名前に勝つ
+    expect(g.nodes.find((n) => n.id === 'comp:Card')!.name).toBe('カード');
+    // C10: 言語アダプタと契約を分ける
+    expect(res.v2Adapters).toMatchObject({ adapters: ['lang'], contracts: ['contract'] });
+    expect(g.project?.generator).toMatchObject({ adapters: ['lang'], contracts: ['contract'] });
+    expect(res.issues.filter((i) => i.level === 'error')).toEqual([]);
   });
 });
 

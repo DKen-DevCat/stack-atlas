@@ -5,14 +5,18 @@
  * - `wireType` は対応表: number → number、string → string、boolean、bigint → integer、Date → datetime、
  *   Uint8Array / ArrayBuffer / Blob → bytes、配列・タプル → array、オブジェクト → object、any / unknown / 型引数 /
  *   関数 → unknown。void / undefined / null だけの型は書かない
- * - `typeRef` は名前付きの型（type alias・interface・class）の宣言が repo の中にあるとき `type:<名前>`（配列は要素、
- *   型引数 T は除く）。自分が名前付きでないプロパティの項目は、所属する型（親の型）を指す
+ * - `typeRef` は名前付きの型（type alias・interface・class・enum）の宣言が repo の中にあるとき、その宣言の型 id
+ *   （env.typeIdOf。ts-imports の `type:` の id。無ければ `type:<file>~<名前>`）。配列は要素、型引数 T は除く。
+ *   自分が名前付きでないプロパティの項目は、所属する型（親の型）を指す
  * - `optional` は `?`・既定値・`| undefined`、`nullable` は `| null`
  * - 子はプロパティ（配列は要素のプロパティ。`[]` の段は作らない）。repo の外で宣言された型（RequestInit・Promise・Date
  *   など）と index signature だけの型（Record）は展開しない（不透明）。深さは既定 2、1 箱の項目は既定 200 まで
  */
 import { ts } from 'ts-morph';
 import type { ItemV2, NamedType, WireType } from '@stack-atlas/schema';
+import { itemId } from '@stack-atlas/core';
+
+export { itemId };
 
 /** 1 箱の項目の残り（上限に着いたら子を作らない） */
 export interface Budget {
@@ -26,6 +30,8 @@ export interface TypeEnv {
   inRepo(fileName: string): boolean;
   /** 絶対パス → repo 相対パス */
   rel(fileName: string): string;
+  /** 名前付きの型の宣言 → typeRef の id（ts-imports の id。無ければ file で修飾。C7） */
+  typeIdOf(decls: readonly ts.Declaration[], name: string): string;
   depth: number;
   /** typeRef の宛先にした名前付きの型（types[] に出す） */
   named: Map<string, NamedType>;
@@ -33,9 +39,6 @@ export interface TypeEnv {
 
 const FORMAT =
   ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope;
-
-/** 項目 id の文字集合（docs/16 §3）。それ以外は _ に */
-export const itemId = (name: string) => name.replace(/[^A-Za-z0-9_$-]/g, '_') || '_';
 
 /** 同じ口・同じ親の中で重ならない id */
 export function uniqueId(base: string, used: Set<string>): string {
@@ -121,7 +124,7 @@ export function wireTypeOf(env: TypeEnv, t: ts.Type): WireType | undefined {
   return 'unknown';
 }
 
-/** 名前付きの型（repo の中の宣言）→ `type:<名前>`。配列は要素。型引数は除く */
+/** 名前付きの型（repo の中の宣言）→ 型 id（env.typeIdOf）。配列は要素。型引数は除く */
 export function namedRef(env: TypeEnv, t0: ts.Type): string | undefined {
   let t = stripNullish(env, t0).t;
   const el = elementOf(env, t);
@@ -140,7 +143,7 @@ export function namedRef(env: TypeEnv, t0: ts.Type): string | undefined {
     !ts.isEnumDeclaration(decl)
   )
     return undefined;
-  const id = `type:${name}`;
+  const id = env.typeIdOf(sym.declarations ?? [decl], name);
   if (!env.named.has(id)) {
     const sf = decl.getSourceFile();
     env.named.set(id, {
@@ -232,6 +235,22 @@ function childrenOf(
     );
   }
   return out;
+}
+
+/**
+ * 型のプロパティを、repo の中で宣言されたもの（項目にする）と外で宣言されたもの（node_modules・lib・stub。React の DOM の
+ * 属性など。項目にせず不透明な 1 項目にまとめる）に分ける（2026-11-09 レビュー C3）。宣言の無いプロパティ（mapped type
+ * など）は中とみなす（従来どおり項目にする）
+ */
+export function splitProps(env: TypeEnv, t: ts.Type): { own: ts.Symbol[]; external: ts.Symbol[] } {
+  const own: ts.Symbol[] = [];
+  const external: ts.Symbol[] = [];
+  for (const p of env.checker.getPropertiesOfType(t)) {
+    const d = p.valueDeclaration ?? p.declarations?.[0];
+    if (d && !env.inRepo(d.getSourceFile().fileName)) external.push(p);
+    else own.push(p);
+  }
+  return { own, external };
 }
 
 /** 1 箱の項目の数（入れ子を含む） */

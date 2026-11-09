@@ -35,14 +35,18 @@ export type PartialNodeV2 = Omit<NodeV2, 'runtime'> & { runtime?: Runtime };
  *   アダプタが勝ち、host・cache・screen は upgrade の値を残す）
  * - wires: 同じ言語の中の線（呼び出し・戻り・render）。言語をまたぐ線（HTTP・SQL）は合流の段（join.ts）が引く
  * - types: 項目の typeRef の宛先（同じ id が upgrade にあればそちらを残す）
- * - groups: v1 の箱 id → group 名。アダプタが「この v1 の箱は自分の関数の箱で置き換わる」と明示するもの。
+ * - groups: 関数の箱 id → 置き換える v1 の箱 id。アダプタが「この v1 の箱は自分の関数の箱で置き換わる」と明示するもの。
  *   無くても mergeV2 が file と meta.go.pkg の被覆で判定する（D53）。明示したものは被覆に関係なく group にする
+ * - refs: 箱 id → その箱（の宣言）が参照する箱・v1 の箱の id（呼び出し・描画・呼び出しでない参照。型の参照も）。
+ *   graph.json には出さない。掃除で、group になった v1 の箱に残った箱の単位の線を、実際に参照している中の関数の箱へ
+ *   だけ付け替えるのに使う（2026-11-09 レビュー C6）
  */
 export interface PartialGraphV2 {
   nodes: PartialNodeV2[];
   wires: WireV2[];
   types?: NamedType[];
   groups?: Record<string, string>;
+  refs?: Record<string, string[]>;
 }
 
 /**
@@ -226,6 +230,13 @@ export interface RepoContext {
 export interface Extractor {
   /** "cdktf" など。meta.extractors に記録される */
   name: string;
+  /**
+   * v2 の部分グラフ（PartialGraph.v2）を出す抽出器の役割（docs/17 §2）。省略時は language。
+   * - language: 言語アダプタ（ts-types・go-types）。関数の単位の箱と、同じ言語の中の線
+   * - contract: 契約（openapi・sql）。合流点の箱（endpoint・table）と項目
+   * build の要約と `project.generator.adapters` / `contracts` を分けるのに使う
+   */
+  v2Role?: 'language' | 'contract';
   detect(ctx: RepoContext): Promise<boolean>;
   /**
    * @param upstream 先行する抽出器の結果をマージしたもの（読み取り専用）。

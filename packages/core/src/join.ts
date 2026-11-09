@@ -16,7 +16,14 @@
  * サーバー側（`meta.route` の handler）と table、OpenAPI の無いときの route の合流は 8-2b。
  */
 import type { GraphV2, ItemV2, NodeV2, ValidationIssue, WireV2 } from '@stack-atlas/schema';
-import { apiPathMatches, methodMatches, pickMostSpecific } from './paths.js';
+import {
+  isRoutePathTooLong,
+  methodMatches,
+  normalizeRoutePath,
+  pathMatches,
+  pickMostSpecific,
+  MAX_ROUTE_PATH,
+} from './paths.js';
 import { isPlainObject } from './util.js';
 import { UNDERSCORE, wireKey } from './v2-parts.js';
 
@@ -39,6 +46,8 @@ interface EndpointRef {
   routeKey: string;
   method: string;
   path: string;
+  /** 正規化したパス（照合ごとに正規化し直さない） */
+  norm: string;
 }
 
 /** endpoint の method と path（meta.api、無ければ id の `endpoint:<METHOD> <path>`） */
@@ -88,10 +97,22 @@ function replySource(ep: NodeV2): { id: string; label?: string } | undefined {
 export function joinEndpoints(graph: GraphV2): JoinResult {
   const result: JoinResult = { wires: [], matched: 0, unmatched: [], issues: [] };
   const endpoints: EndpointRef[] = [];
+  /** 長すぎて照合しなかったパス（1 回だけ警告する） */
+  const tooLong: string[] = [];
   for (const n of graph.nodes) {
     if (n.kind !== 'endpoint') continue;
     const r = endpointRoute(n);
-    if (r) endpoints.push({ node: n, routeKey: `${r.method} ${r.path}`, ...r });
+    if (!r) continue;
+    if (isRoutePathTooLong(r.path)) {
+      tooLong.push(n.id.slice(0, 80));
+      continue;
+    }
+    endpoints.push({
+      node: n,
+      routeKey: `${r.method} ${r.path}`,
+      ...r,
+      norm: normalizeRoutePath(r.path),
+    });
   }
   const seen = new Set(graph.wires.map(wireKey));
   const add = (w: WireV2) => {
@@ -108,9 +129,14 @@ export function joinEndpoints(graph: GraphV2): JoinResult {
       for (const it of port.items) {
         const call = httpCallOf(it);
         if (!call) continue;
+        if (isRoutePathTooLong(call.path)) {
+          tooLong.push(`${n.id}#${port.id}/${it.id}`);
+          continue;
+        }
+        const norm = normalizeRoutePath(call.path);
         const eps = pickMostSpecific(
           endpoints.filter(
-            (e) => methodMatches(e.method, call.method) && apiPathMatches(e.path, call.path),
+            (e) => methodMatches(e.method, call.method) && pathMatches(e.norm, norm),
           ),
         );
         if (!eps.length) {
@@ -153,6 +179,13 @@ export function joinEndpoints(graph: GraphV2): JoinResult {
         }
       }
     }
+  }
+  if (tooLong.length) {
+    result.issues.push({
+      level: 'warning',
+      path: 'v2:join',
+      message: `パスが長すぎる（${MAX_ROUTE_PATH} 文字を超える）ので照合しなかった endpoint・HTTP 呼び出し ${tooLong.length} 件: ${tooLong.slice(0, 5).join(' / ')}${tooLong.length > 5 ? ' ほか' : ''}`,
+    });
   }
   if (result.unmatched.length) {
     result.issues.push({

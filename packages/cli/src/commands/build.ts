@@ -139,11 +139,12 @@ export function formatBuildSummary(
 export function formatAdapterSummary(a: V2AdapterReport): string[] {
   const c = a.coverage;
   const lines = [
-    `言語アダプタ（${a.adapters.join(', ')}）: 項目 ${c.items}（unknown ${c.unknownItems}）、` +
+    `言語アダプタ（${a.adapters.join(', ') || 'なし'}）${a.contracts.length ? `・契約（${a.contracts.join(', ')}）` : ''}: 項目 ${c.items}（unknown ${c.unknownItems}）、` +
       `線 ${c.wires}（項目 ${c.itemWires} / 箱の単位 ${c.boxWires}、うち呼び出しでない参照 ${c.refWires}）、` +
       `links ${c.links}（exact ${c.exactLinks} / crude ${c.crudeLinks}）・不透明な箱 ${c.opaqueBoxes}`,
     `  合流: endpoint と結んだ HTTP の呼び出し ${a.joined}${a.unjoined.length ? `、結べない ${a.unjoined.length}` : ''}。` +
-      `group にした v1 の箱 ${a.groups}、項目の線で置き換えた箱の単位の線 ${a.replaced}、食い違いのある線 ${a.broken}`,
+      `group にした v1 の箱 ${a.groups}、項目の線で置き換えた箱の単位の線 ${a.replaced}` +
+      `${a.undetermined ? `、付け替え先を決められない線 ${a.undetermined}（group の中の全部へ）` : ''}、食い違いのある線 ${a.broken}`,
   ];
   return lines;
 }

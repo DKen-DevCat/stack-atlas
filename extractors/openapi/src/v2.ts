@@ -11,10 +11,14 @@
  *   最上位の項目は自分の型だけ（docs/16 §5 の例と同じ）
  * - 展開の深さは config の `adapters.depth`（既定 2）。`$ref` の循環は止める。`additionalProperties` だけの object・
  *   oneOf / anyOf は子を置かない（不透明。照合しない）
+ * - 1 つの操作の項目（request と response の合計。4 つの口への写しは数えない）は config の `adapters.maxItems`
+ *   （既定 200）まで。超えたら子の展開を打ち切り、`truncated` を立てる（抽出器が警告する。ts-types と同じ上限）
+ * - allOf のまとめは schema ごとに 1 回（結果を覚える）。同じ schema が allOf に何度出ても（菱形）1 回だけまとめる。
+ *   別々のプロパティが同じ schema を指すのはそれぞれ展開する（上限の中で）
  * - links は書かない（既定で `in → req` / `res → out` の恒等）
  */
 import type { ItemV2, NamedType, WireType } from '@stack-atlas/schema';
-import type { PartialNodeV2 } from '@stack-atlas/core';
+import { itemId, type PartialNodeV2 } from '@stack-atlas/core';
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -24,8 +28,10 @@ const COMPONENT_REF = /^#\/components\/(responses|requestBodies|parameters|heade
 const unescapePointer = (s: string) =>
   decodeURIComponent(s).replace(/~1/g, '/').replace(/~0/g, '~');
 
-/** 項目 id の文字集合（docs/16 §3）。それ以外は _ に */
-export const itemId = (name: string) => name.replace(/[^A-Za-z0-9_$-]/g, '_') || '_';
+export { itemId };
+
+/** 1 つの操作の項目の上限の既定（config の adapters.maxItems。ts-types と同じ） */
+export const DEFAULT_MAX_ITEMS = 200;
 
 export interface OperationItems {
   /** in / req の項目 */
@@ -34,11 +40,28 @@ export interface OperationItems {
   response: ItemV2[];
   /** 応答に使ったコード（最初の 2xx。合流の戻りの線のラベル `200 Today`） */
   status?: string;
+  /** 項目の上限（adapters.maxItems）に着いて子の展開を打ち切った */
+  truncated?: boolean;
+}
+
+/** allOf をまとめた結果（schema の値 → プロパティと required）。同じ spec の操作どうしで共有する */
+export type PropertiesMemo = Map<Obj, { props: Obj; required: Set<string> }>;
+
+export interface OperationItemsOptions {
+  /** 展開の深さ（adapters.depth。既定 2） */
+  depth?: number;
+  /** 1 つの操作の項目の上限（adapters.maxItems。既定 200） */
+  maxItems?: number;
+  /** allOf のまとめの結果（同じ spec の操作どうしで共有すると、まとめ直さない） */
+  memo?: PropertiesMemo;
 }
 
 interface Ctx {
   root: Obj;
   depth: number;
+  /** 残りの項目の数（操作ごと） */
+  budget: { left: number; truncated: boolean };
+  memo: PropertiesMemo;
 }
 
 /** schema の `$ref` を解く（名前と中身）。components の responses などは 1 段 */
@@ -105,24 +128,30 @@ function wireTypeOf(s: Obj): WireType {
   }
 }
 
-/** allOf を 1 つの properties / required にまとめる（$ref を解く） */
-function propertiesOf(s: Obj, root: Obj, seen: Set<string>): { props: Obj; required: Set<string> } {
+/**
+ * allOf を 1 つの properties / required にまとめる（$ref を解く）。schema ごとに 1 回だけまとめて覚える。
+ * 1 回のまとめの中で同じ schema は 1 度しか訪ねない（allOf の菱形 `S0 allOf [S1, S1]`・`S1 allOf [S2, S2]`… が
+ * 段ごとに倍にならない。循環も止まる。2026-11-09 レビュー S1）
+ */
+function propertiesOf(s: Obj, ctx: Ctx): { props: Obj; required: Set<string> } {
+  const hit = ctx.memo.get(s);
+  if (hit) return hit;
   const props: Obj = {};
   const required = new Set<string>();
+  const done = new Set<Obj>();
   const visit = (x: Obj) => {
+    if (done.has(x)) return;
+    done.add(x);
     if (isObj(x['properties'])) Object.assign(props, x['properties']);
     if (Array.isArray(x['required']))
       for (const r of x['required']) if (typeof r === 'string') required.add(r);
-    if (Array.isArray(x['allOf'])) {
-      for (const part of x['allOf']) {
-        const d = deref(part, root);
-        if (d.name && seen.has(d.name)) continue;
-        visit(d.schema);
-      }
-    }
+    if (Array.isArray(x['allOf']))
+      for (const part of x['allOf']) visit(deref(part, ctx.root).schema);
   };
   visit(s);
-  return { props, required };
+  const out = { props, required };
+  ctx.memo.set(s, out);
+  return out;
 }
 
 /**
@@ -137,6 +166,7 @@ function schemaItem(
   ownerRef: string | undefined,
   seen: Set<string>,
 ): ItemV2 {
+  ctx.budget.left--;
   const { name: refName, schema } = deref(raw, ctx.root);
   const wt = wireTypeOf(schema);
   const item: ItemV2 = {
@@ -166,10 +196,16 @@ function schemaItem(
     Array.isArray(target.schema['anyOf'])
   )
     return item;
-  const { props, required } = propertiesOf(target.schema, ctx.root, next);
+  const { props, required } = propertiesOf(target.schema, ctx);
   const children: ItemV2[] = [];
   const used = new Set<string>();
-  for (const [pn, ps] of Object.entries(props)) {
+  for (const pn in props) {
+    if (!Object.hasOwn(props, pn)) continue;
+    if (ctx.budget.left <= 0) {
+      ctx.budget.truncated = true;
+      break;
+    }
+    const ps = props[pn];
     let cid = itemId(pn);
     for (let k = 2; used.has(cid); k++) cid = `${itemId(pn)}_${k}`;
     used.add(cid);
@@ -220,17 +256,35 @@ function jsonSchema(content: unknown): unknown {
   return isObj(media) ? media['schema'] : undefined;
 }
 
-/** 操作の request / response の項目 */
+/** 操作の request / response の項目（上限は opts.maxItems。超えたら truncated） */
 export function operationItems(
   method: string,
   path: string,
   op: Obj,
   shared: unknown,
   root: Obj,
-  depth = 2,
+  opts: OperationItemsOptions = {},
 ): OperationItems {
-  const ctx: Ctx = { root, depth };
+  const depth = opts.depth ?? 2;
+  const ctx: Ctx = {
+    root,
+    depth,
+    budget: { left: opts.maxItems ?? DEFAULT_MAX_ITEMS, truncated: false },
+    memo: opts.memo ?? new Map(),
+  };
   const params = parametersOf(op, shared, root);
+  /** パラメータの項目（上限に着いたら残りは置かない） */
+  const paramItems = (list: Obj[], required: (p: Obj) => boolean) => {
+    const out: ItemV2[] = [];
+    for (const p of list) {
+      if (ctx.budget.left <= 0) {
+        ctx.budget.truncated = true;
+        break;
+      }
+      out.push(paramItem(p, required(p)));
+    }
+    return out;
+  };
   const paramItem = (p: Obj, required: boolean) => {
     const it = schemaItem(
       String(p['name']),
@@ -250,12 +304,17 @@ export function operationItems(
     type: 'string',
     wireType: 'string',
   };
-  const pathParams = params.filter((p) => p['in'] === 'path').map((p) => paramItem(p, true));
+  ctx.budget.left--;
+  const pathParams = paramItems(
+    params.filter((p) => p['in'] === 'path'),
+    () => true,
+  );
   if (pathParams.length) pathItem.children = pathParams;
   const request: ItemV2[] = [pathItem];
-  const query = params
-    .filter((p) => p['in'] === 'query')
-    .map((p) => paramItem(p, p['required'] === true));
+  const query = paramItems(
+    params.filter((p) => p['in'] === 'query'),
+    (p) => p['required'] === true,
+  );
   if (query.length)
     request.push({
       id: 'query',
@@ -297,7 +356,12 @@ export function operationItems(
       });
     }
   }
-  return { request, response, ...(code !== undefined ? { status: code } : {}) };
+  return {
+    request,
+    response,
+    ...(code !== undefined ? { status: code } : {}),
+    ...(ctx.budget.truncated ? { truncated: true } : {}),
+  };
 }
 
 /** endpoint の v2 の箱（4 つの口） */

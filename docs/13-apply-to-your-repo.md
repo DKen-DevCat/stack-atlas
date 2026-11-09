@@ -240,6 +240,8 @@ deploy:
 
 動く例は `examples/fixture-poly/stack-atlas.overrides.yaml`。`api-link` が結べなかった呼び出しは `build` の警告に出る（該当 client の endpoint を overrides の `edges` に書く）。
 
+v2（配線図）にも同じ overrides が効く: `remove` の箱 id はその `@<runtime>` の複製と、group になるはずだった中の関数の箱も消す。`{ from, to, kind }` の削除は合流の後に当て、複製・group の中の箱・戻りの線まで広げる（kind は v2 の via に読み替える）。`nodes` の上書き（kind・name・file など）は言語アダプタの値に勝つ。
+
 ### 3.6 フロー（`flows.yaml`）
 
 ```sh
