@@ -241,6 +241,49 @@ deploy:
 動く例は `examples/fixture-poly/stack-atlas.overrides.yaml`。`api-link` が結べなかった呼び出しは `build` の警告に出る（該当 client の endpoint を overrides の `edges` に書く）。
 
 v2（配線図）にも同じ overrides が効く: `remove` の箱 id はその `@<runtime>` の複製と、group になるはずだった中の関数の箱も消す。`{ from, to, kind }` の削除は合流の後に当て、複製・group の中の箱・戻りの線まで広げる（kind は v2 の via に読み替える）。`nodes` の上書き（kind・name・file など）は言語アダプタの値に勝つ。
+`remove` の箱 id が v1 にも v2（言語アダプタだけが出す `fn:` など）にも無ければ警告する（`build --strict` ではエラー。2026-11-09 8-4 で、v2 にだけある id でも「ありません」と出ていたのを直した）。
+
+#### v2 の補い（`v2:` の節。docs/19 §3.1。Phase 8-4）
+
+言語アダプタが自動で出せない所を、項目の単位で補う。**reason は必須**（無ければ警告、`build --strict` ではエラー）。補いで足した線・links・項目は既定で `confidence: crude`（線は `meta.confidence`）と `meta.by: "overrides"`・`reason` が付く。
+
+```yaml
+v2:
+  nodes:      # 箱のパッチ（runtime・host・group・kind・name・file・line・code・cache・screen）
+    - { id: "fn:internal/push.Send", host: "infra:lambda_api/notify", reason: "notify からしか呼ばれない" }
+  wires:      # 線を足す（via 必須）
+    - from: { call: { in: "fn:getRaces", http: "GET /races" }, path: path }
+      to: "endpoint:GET /races#in/path"
+      via: http
+      reason: "ラッパーの引数がテンプレートで、アダプタがパスを読めない"
+  retarget:   # 付け替え先を決められない線（report の undetermined）の行き先
+    - { group: "handler:cmd/notify", peer: "schema:push_subscriptions", to: ["fn:cmd/notify.main"], reason: "..." }
+  remove:     # 線を消す（項目の参照どうし、か箱 id どうし＝その向きの線を全部）
+    - { wire: { from: "fn:a", to: "fn:b" }, reason: "..." }
+  items:      # 子の無い・wireType unknown の項目に子を足す（アダプタの子がある項目には足せない）
+    - { at: "fn:handleCreate#in/body", expect: { type: "map[string]any" }, children: [{ id: amount, name: amount, type: int64, wireType: integer }], reason: "..." }
+  variants:   # 分岐（id で upsert）
+    - { node: "fn:getToday", id: date, name: "日付の指定", reason: "..." }
+  links:      # 箱の中の対応。links の無い箱は既定（全 in → 全 out）を書き出してから足す。置き換えは mode: replace
+    - { node: "fn:toTodayView", from: "in/today.entries", to: "out/return.rows", reason: "..." }
+  when:       # links（node と link）か線（wire）に条件
+    - { node: "fn:getToday", link: { from: "in/date", to: { call: { http: "GET /today" }, path: query } }, when: { date: true }, reason: "..." }
+```
+
+- **参照**: 文字列 `<箱>#<口>/<項目>`（links・when は箱の中の `<口>/<項目>`）。**番号の項目**（`call_1`・`ret_2`・`render_1`・`query_1`・`insert_1`・`update_1`）を含む参照には `expect`（指紋。番号の段の項目の `name`・`type`、呼び出しなら `http: "GET /x"`）が要る: `{ ref: "fn:a#out/call_1", expect: { name: "getRaces()" } }`。前に呼び出しが増えて番号がずれると「指紋が合わない」になる。番号を書かずに**意味で参照**もできる: `{ call: { in, to } }`（`in` の中で `to` を呼ぶ項目）、`{ call: { in, http: "GET /x" } }`、`{ ret: { in, from } }`。`path` で子へ下りる。候補がちょうど 1 つのときだけ解ける
+- **当てる段**: 段 A（合流の後・掃除の前）に `wires`・`remove`・`nodes`、`retarget` は掃除が使う。段 B（掃除の後）に `items` → `variants` → `links` → `when`。補った線は掃除の「細かい線があれば箱の単位の線を消す」に入る
+- 結果は補いごとに「効いた / 解けない / 指紋が合わない」（`build --dry-run --json` の `supplements`、build の要約）。解けない・指紋が合わない補いは `build --strict` でエラー
+
+#### 手書きの部分グラフ（`.stack-atlas/graph/*.v2.yaml`）
+
+アダプタの無い言語の handler（`meta.route` を書けば OpenAPI と自動で合流する）、外部 API の `external:` の箱、OpenAPI に無い webhook の endpoint など。形は `{ nodes, wires?, types? }`（graph.json v2 の箱・線・型。新しい箱は `runtime` 必須）。言語アダプタ `hand` として入る。言語アダプタ・契約と**同じ id の箱は、子の無い・unknown の項目に子を足すことだけ**が効く（アダプタが勝つ）。上限: 64 ファイル・1 ファイル 1MB・箱 2000・項目 20000、YAML の別名 100。シンボリックリンクは読まない。
+
+```yaml
+nodes:
+  - { id: "external:stripe", kind: external, name: Stripe, runtime: external, ports: [{ id: in, dir: in, items: [{ id: body, name: body, type: object }] }] }
+wires:
+  - { from: "fn:charge#out/call_1", to: "external:stripe#in/body", via: http }
+```
 
 ### 3.6 フロー（`flows.yaml`）
 
@@ -255,11 +298,30 @@ OpenAPI の `endpoint:` を経由するホップと、S3 に載った静的エ�
 graph.json（v2）では flows は **views** に置き換わる（docs/15 §3.9）: 各フローの最初の箱（型の `type:` は飛ばす）が `views[].start`、
 `tone: cache-hit` は経路上の cache の `hit: true` になり、ステップの文は捨てる（文は 3D の地図、つまり graph.v1.json だけで使う）。
 
+views は `.stack-atlas/views.yaml`（docs/16 §8 の形 `{ id, name, description?, start, variants? }`）でも書ける。同じ id なら flows.yaml 由来の view に勝つ。`start` が解けない view は落として報告し、`build --strict` ではエラー。雛形は `pnpm atlas init-views <repo>`（始点の候補: 画面・trigger・利用者。既存のファイルは上書きしない）。
+
+### 3.6b ハーネス（`init --skill`・`build --dry-run --json`・`build --strict`。docs/19）
+
+```sh
+pnpm atlas init --skill <repo>                 # <repo>/.claude/skills/stack-atlas/ に skill、雛形（設定・overrides・views.yaml・DECISIONS.md）
+pnpm atlas init --skill <repo> --update        # 手で変えていないファイルだけ更新。変えたものは隣に .new
+pnpm atlas build <repo> --dry-run --json       # 出力先に書かず、標準出力は報告の JSON だけ（ログは標準エラー）
+pnpm atlas build <repo> --strict               # 埋められる隙間があれば終了コード 1（CI の関門）
+pnpm atlas validate --strict <out>/graph.json  # graph.json の報告（project.generator.report）を読む補助
+pnpm atlas --version                           # skill の VERSION と比べる
+```
+
+- `--dry-run`: 抽出から strict の判定まで行い、出力先には書かない（screens は一時ディレクトリで測って消す。screenshots は強制的に無効）
+- `--json` の報告のキー: `checked`（動いた / 飛ばした抽出器。`go-types` の go が無ければ `skipped`）・`adapters` / `contracts`（自動率）・`unjoined`（結べない呼び出し・handler の無い endpoint・OpenAPI に無いルート・結べない SQL）・`undetermined`（`{ group, peer, via, candidates }`）・`opaque`・`estimates`・`screens`（route ごとの HTML の有無とカバー率）・`supplements`・`strict`・`issues`
+- `--strict` のエラー（埋められる隙間だけ。D69）: 結べない呼び出し・OpenAPI に無い handler のルート・結べない SQL、付け替え先を決められない線、screens を設定しているのに HTML の無い route、解けない・指紋が合わない・reason の無い補い、解けない views、v1 にも v2 にも無い `remove` の id、見つけたのに飛ばした言語アダプタ。**警告**: handler の無い endpoint（D86）・口の単位の線・不透明な箱・wireType unknown・typeRef の欠け・カバー率 0・broken・overrides で足した線の無い箱
+- `init --skill` は home と `/` を断り、`.claude`・`.claude/skills`・`stack-atlas/` の各段とファイルのどれかがシンボリックリンクなら何も書かない。既存のファイルは上書きしない
+- 部品の領域を HTML の `data-component` で測れないときは `.stack-atlas/screens/<slug>.regions.yaml`（`[{ ref: "comp:TotalCard", x, y, w, h }]`。`<slug>` は graph.json の `screen.html` の `screens/<slug>/index.html`）で補える。計測で取れる ref は使わず（計測が勝つ）、graph.json の regions に `source: "yaml"` で入る。カバー率は計測の分と別に数える
+
 ### 3.7 スクショ・メモ・CI
 
 - スクショ: 対象サイトを起動して `screenshots.baseUrl` を指す。動的ルートは `routes`、認証は `storageState`。部品の領域は対象アプリのルート要素に `data-component="Name"` を付ける（`docs/10-screenshots-guide.md`）。`--no-screenshots` を外すと撮る
 - メモ: `<設定のあるディレクトリ>/.stack-atlas/memos.json`（Git 管理）。`serve --repo <dir>` で書き戻す。共有・差分は `docs/11-sharing.md`
-- CI と配信: `docs/ci-example.yml`（`build --with-viewer` → 静的ホスティング。3D の地図の差分は `?graph=graph.v1.json&prev=prev/graph.v1.json`、
+- CI と配信: `docs/ci-example.yml`（`build --strict` を関門に → `build --with-viewer` → 静的ホスティング。screens を使うなら対象アプリの静的エクスポートを先に作る。3D の地図の差分は `?graph=graph.v1.json&prev=prev/graph.v1.json`、
   配線図（v2）の差分は `stack-atlas diff`。diff は v1 と v2 を混ぜても v1 の側を v2 に変換して比べる）
 
 ## 4. 詳細

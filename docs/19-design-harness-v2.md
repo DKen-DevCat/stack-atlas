@@ -209,3 +209,70 @@ frontmatter に Bash を広く許す `allowed-tools` は入れない（許可を
 13. init --skill のシンボリックリンク・home・更新・同梱・frontmatter → §3.6
 14. ドッグフードで答えが見えてしまう → repo の外にコピーし、そのディレクトリだけを渡す
 15. タスクの土台と大きさ → 8-2b ← 8-3a ← 8-3b ← 8-3c の上に積み、3 つに分けた
+
+## 8. 実装結果（8-4a・8-4b。2026-11-09）
+
+**結論**: 補い（overrides の `v2:`）・手書きの部分グラフ・views.yaml・数え直し・`strictIssues` を core に、`build --dry-run --json` / `build --strict` / `validate --strict` / `init-views` / `init --skill` / regions.yaml を CLI と screens に入れた。fixture-poly・fixture-repo は**補い無しで `build --strict` が通る**（エラー 0）。隙間を仕込んだ合成の世界（core のテスト）で strict の各規則が出て、補いの各種類で消えることを確かめた。8-4c（`harness/skill/` の本文・`examples/fixture-gaps/`・ドッグフード）は未着手で、`harness/skill/` は配布の形だけの仮の版（frontmatter・禁止事項・手順のあらまし・VERSION・雛形 4 つ）。
+
+### 8.1 できたもの
+
+| 場所 | 内容 |
+|---|---|
+| `packages/core/src/supplements.ts` | 補いの段 A（`wires`・`remove`・`nodes`、`retarget` の確かめ）と段 B（`items` → `variants` → `links` → `when`）、参照（文字列・`{ ref, expect }`・意味の参照 `call` / `ret`）と指紋、既定の links の実体化、補いごとの結果（applied / unresolved / mismatch・reason の欠け） |
+| `packages/core/src/hand-graph.ts` | `.stack-atlas/graph/*.v2.yaml`（言語アダプタ `hand`）。形の検査（validateGraphV2 の schema と箱の中の参照）、上限、アダプタと同じ id の箱は子の追加だけ |
+| `packages/core/src/views-yaml.ts` | `.stack-atlas/views.yaml`（同じ id は flows 由来に勝つ、解けない view は落として報告、group の v1 の箱は中の最初の箱） |
+| `packages/core/src/strict.ts` | 最後の graph から数え直した報告（`HarnessReport`。§3.2 の中身）、`strictIssues(result)`、graph.json の `project.generator.report`（`toGraphReport`） |
+| `packages/core/src/local-files.ts`・`fsafe.ts` | `.stack-atlas/` の補いのファイルを読む入口（どの段のリンクも辿らない・大きさの上限・YAML の別名 100）。fsafe は screens から core へ移し、`SafeOutput` に `create`（上書きしない）と `unsafe`（書く前にまとめて確かめる）を足した |
+| core のほか | `cleanupV2` に `retarget` と `undeterminedList`、overrides に `v2:`（形だけ確かめる）と remove の警告の直し、`PartialGraph.skipped`、`BuildIssue.data`、pipeline の段（§2 の図のとおり） |
+| schema | `project.generator.report`（`$defs/report`）、`links[].meta`、`screen.regions[].source`（v1・v2。`screenshot` / `yaml`）、型と docs/16・docs/03 |
+| go-types | go が無いときに `skipped`（理由）を返す |
+| screens・wiring | regions.yaml（`readRegionsYaml`。計測で取れない ref だけ `source: "yaml"`）、カバー率の issue に `data`（reachable・dom・yaml）。wiring の `regionsOf` が yaml の領域を ref ごとに合わせ、計測が勝つ（ビューアは `regionsOf` を使うので変更なし） |
+| CLI | `build --dry-run` / `--json` / `--strict`（出力は `commands/harness.ts`。build.ts の変更は最小）、`validate --strict`、`init-views`、`init --skill [--update]`、`--version`（skill の VERSION）。`harness/skill/` の仮の版 |
+
+### 8.2 数字
+
+| | 8-4 の前 | 8-4 の後 |
+|---|---|---|
+| `pnpm test` | 1126（skip 2） | 1165（skip 2）。core +20、cli +14、screens +2、schema +2、wiring +1 |
+
+strict の結果（補い無し）:
+
+| | エラー | 警告 |
+|---|---|---|
+| fixture-poly | 0 | 5: handler の無い endpoint 1（GET /transactions。D86）、口の単位の線 37、不透明な箱 6（インフラ 5 と `lib:consts`）、wireType unknown 61、broken 4 |
+| fixture-repo | 0 | 3: 口の単位の線 22、不透明な箱 4（インフラ）、wireType unknown 55 |
+
+undetermined は両方 0（中の箱が 1 つの group は 8-2b のレビューで既に決められた側に数えていた。8-4 で直す所は無かった）。
+
+### 8.3 決めたこと
+
+| # | 決定 | 理由 |
+|---|---|---|
+| D86 | handler の無い endpoint は report の `unjoined` に出すが、strict では**警告** | fixture-poly の GET /transactions は OpenAPI にあるが実装が無い（Go のルートに無い）。補いでは埋められない事実で、broken と同じく直すのはコードか契約の側（D69）。実装が別の所にあるなら手書きの部分グラフで handler（`meta.route`）を置けば自動で合流して消える。§4 の「fixture-poly は補い無しで通る」と §3.3 の 1 の食い違いをこれで解いた |
+| D87 | `build --strict` も、見つけたのに飛ばした言語アダプタ（`checked` の `skipped`）をエラーにする | D72 の理由（go の無い CI で検査が黙って弱まる）は build にも当てはまる。`validate --strict` と結果を揃える。CI の例は setup-go と `STACK_ATLAS_REQUIRE_GO=1` |
+| D88 | 番号の参照の指紋は**番号の段の項目**（`call_n` 自身の name・type・http）に当てる。links・when の箱の中の参照でも番号なら expect が要る。意味の参照は候補がちょうど 1 つのときだけ解ける | ずれるのは番号で、子の名前（`call_1.query`）はずれても同じ。§3.1 の when の例（`out/call_1.query`）は expect か意味の参照（`{ call: { http: "GET /today" }, path: query }`）で書く（docs/13 の例は後者） |
+| D89 | 段 B の順は items → variants → links → when。同じ links が既にあれば足さずに印（`meta.by`・reason）を付け、confidence は書いたときだけ置き換える | when が同じ段で足した links と分岐を指せるように。掃除が `_` に足す crude の links と同じ links を補うと「既にある」で何も起きず、補いの印も confidence も付かなかった（見つかったこと） |
+| D90 | 補いで足した線の確かさは `wires[].meta.confidence`（線に confidence のフィールドを足さない）。links には `meta` を足した | 線の schema を増やすとビューアと diff に波及する。links は箱の中の対応で、出どころを持てる場所が無かった |
+
+ほかに決めたこと（番号なし）:
+
+1. **hand は抽出器の列に入れない**: 抽出の後に pipeline が読む（`checked` には `hand` を出す）。アダプタと同じ id の箱を、disambiguateV2 の付け替え（後の方を `~` で修飾）ではなく「アダプタが勝ち、子だけ足す」で扱うため
+2. **補いの参照で group の v1 の箱は断る**（掃除で消えるので）。retarget は使われなければ解けない補い。`remove` は箱 id どうしも書ける（その向きの線を全部）
+3. **数え直し**: unjoined は合流の時点で結べなかったもの（`JoinReport` の文字列）のうち、補いの線がまだ無いもの。呼び出しは via http の行きの線、SQL は via sql の線、ルートは endpoint からか via http / event で入る線、handler の無い endpoint は `req` から出る線で解決。`v2Adapters.unjoined` も最後の graph から（合流の数 `join.client.unmatched` はそのまま）
+4. **報告**: graph.json には数と一覧の文字列（1 つの一覧 100 件まで）。dry-run の JSON は §3.2 の表のキーだけ（views の結果は `supplements` の kind `view`、手書きのファイルは kind `hand`）。dry-run では screenshots を読み込みの段で外すので `checked` に出ない
+5. **init --skill**: `--update` が無くても無いファイルは作る（既存は上書きしない）。manifest は skill の中の `manifest.json`（`{ version, files: { <相対パス>: sha256 } }`）。雛形は manifest に入れない（利用者が直すファイル）。雛形が既にあれば（リンクでも）触らず、置き場の `.stack-atlas` がリンクなら全体を断る。`stack-atlas --version` は skill の VERSION を出す（CLI の package.json は 0.0.0 のまま）
+6. **regions.yaml の座標**は screens の viewport（切り詰める）。HTML の data-component で解ける ref は使わない（info を出す）。カバー率 0 の警告は計測と yaml の両方が 0 のときだけ
+7. **ビューアは変えていない**: `regionsOf`（wiring）の中で合わせる。他の作業（8-3b の計測の直し）とぶつからないように
+8. fsafe は core へ移し、screens の `fsafe.ts` は再 export にした（screens の各ファイルの import を変えない。他の作業との衝突を小さく）
+
+### 8.4 見つかったこと
+
+- 掃除の `_` の crude の links と同じ links を補うと何も起きなかった → D89
+- `init-views` / `init-flows` は screens の書き出し先を渡さないので画面に HTML が付かない（strict は `build` でだけ判定するので影響なし）
+- docs/17 §8.3b の 8（v2 にだけある id の remove で v1 が「ありません」と警告）を直した: 警告は v1 にも v2 にも無い id だけ、文は「v1 にも v2 にもありません」
+
+### 8.5 残り（8-4c）
+
+- `harness/skill/` の本文（SKILL.md の手順、references/ の 8 つ）と、雛形を fixture-poly から作り直すこと
+- `examples/fixture-gaps/`（§4 の隙間）と正解表、ドッグフード
+- 8-4b のセキュリティレビュー（§5。init --skill・regions.yaml・`.stack-atlas/` の読み込み）は PR の前に 1 回
