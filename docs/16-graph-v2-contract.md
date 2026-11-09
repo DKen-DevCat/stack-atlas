@@ -105,6 +105,18 @@
 
 **endpoint（合流点）の 4 つの口**: OpenAPI の path / query / body のフィールドを `in`（クライアントから）と `req`（実装へ）の両方に同じ項目で置き、response を `res`（実装から）と `out`（クライアントへ）に置く。`links` は `in/x → req/x`、`res/y → out/y` の恒等（省略可。既定で生成）。
 
+endpoint の項目の決め方（8-2a の openapi 抽出器。2026-11-09）:
+
+| 対象 | 項目 |
+|---|---|
+| パスのパラメータ | `in/path`・`req/path` の子（`{date}` → `path.date`） |
+| クエリ | `in/query`・`req/query` の子 |
+| requestBody | `in/body`・`req/body`。`required` が無ければ optional（OpenAPI の既定） |
+| 2xx の応答 | JSON の schema があれば `res/body`・`out/body`、無ければ `res/status`・`out/status`（type は `201 Created` など、wireType は integer） |
+| 応答のコード | 箱の `meta.status`。戻りの線のラベル（`200 Today`）に使う |
+
+body の無い応答（`out/status`）から呼び出し元の `ret_n` への線は型を照合しない（fetch の戻りの `Response` と integer を比べると誤った error になる）。
+
 ## 6. 線（wire）と箱の中の対応（links）
 
 ```jsonc

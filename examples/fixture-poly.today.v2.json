@@ -243,7 +243,7 @@
         {
           "from": "in/html",
           "to": "out/render_1",
-          "confidence": "exact"
+          "confidence": "crude"
         }
       ]
     },
@@ -798,7 +798,7 @@
         {
           "from": "in/call",
           "to": "out/call_1",
-          "confidence": "exact"
+          "confidence": "crude"
         },
         {
           "from": "in/ret_1",

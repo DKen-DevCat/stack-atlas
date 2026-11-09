@@ -120,6 +120,8 @@ Lambda → Go 入口の推定 5 件、DB の推定、Function URL の呼び先�
 - [x] 8-0 縦スライス: fixture-poly の `/today` 経路を v2 で手で組み、schema v2・`@stack-atlas/wiring`（たどる・球・食い違い・レイアウト）・ビューアの配線図で通しで動かした（PR #3。CI の e2e 7 件を含め通過）
 - [x] 8-1 契約: graph.json v2（箱・口・項目・線・links・variants・host・wireType・broken）、v1 → v2 変換（`upgradeGraph`。`build` の graph.json は v2、3D の地図は graph.v1.json。両フィクスチャと race-site で v2 の検証エラー 0。結果と踏み込んだ決定は docs/16 §10「実装結果」）
 - [ ] 8-2 抽出: TS（compiler API）・Go（go/packages）の言語アダプタ、合流点の項目照合、レシピ
+  - [x] 8-2a TS の言語アダプタ `ts-types`、openapi の endpoint の項目、合流（クライアント側）、mergeV2・group 化、detectBroken をパイプラインに。fixture-poly の TS の側が手で組んだ例と項目まで一致、POST の食い違い 2 件が自動で出る（docs/17 §8）
+  - [ ] 8-2b Go の言語アダプタ `go-types`、sql の table の口、合流（サーバー側と table）、CI で go を必須に
 - [ ] 8-3 表示: 配線図ビューア（層状レイアウト＋直交配線、球、分岐の表、再生バー、折りたたみ）
 - [ ] 8-4 ハーネス: skill と `init --skill`、`validate --strict`
 - [ ] 8-5 実リポジトリへの適用（非公開）
