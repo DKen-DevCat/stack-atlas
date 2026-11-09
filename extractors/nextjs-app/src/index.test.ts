@@ -1,10 +1,17 @@
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import type { PartialGraph, RepoContext, StackAtlasConfig } from '@stack-atlas/core';
-import { extractor, parseSegmentConfig, segmentToUrl } from './index.js';
+import {
+  extractor,
+  parseSegmentConfig,
+  readNextConfig,
+  readNextOutput,
+  segmentToUrl,
+} from './index.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../examples/fixture-repo');
 const silent = { debug() {}, info() {}, warn() {}, error() {} };
@@ -36,6 +43,63 @@ const upstream: PartialGraph = {
   ],
   edges: [],
 };
+
+describe('readNextConfig（8-3b: screens が trailingSlash・basePath・assetPrefix・distDir を使う）', () => {
+  const app = (config: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'stack-atlas-nextcfg-'));
+    mkdirSync(join(dir, 'web', 'src', 'app'), { recursive: true });
+    writeFileSync(join(dir, 'web', 'next.config.mjs'), config);
+    return dir;
+  };
+
+  it('文字列と真偽値のリテラルを読む。next.config のディレクトリも返す', () => {
+    const dir = app(
+      [
+        '/** @type {import("next").NextConfig} */',
+        'export default {',
+        '  output: "export",',
+        "  distDir: 'build/site',",
+        '  trailingSlash: true,',
+        '  basePath: `/docs`,',
+        "  assetPrefix: 'https://cdn.example.com',",
+        '};',
+      ].join('\n'),
+    );
+    expect(readNextConfig(dir, { appDir: 'web/src/app' })).toEqual({
+      dir: 'web',
+      file: 'web/next.config.mjs',
+      output: 'export',
+      distDir: 'build/site',
+      trailingSlash: true,
+      basePath: '/docs',
+      assetPrefix: 'https://cdn.example.com',
+    });
+    expect(readNextOutput(dir, { appDir: 'web/src/app' })).toBe('export');
+  });
+
+  it('コメントの中の値と、環境変数などで決まる値（テンプレートの ${}）は読まない', () => {
+    const dir = app(
+      [
+        'export default {',
+        "  // basePath: '/old',",
+        "  /* assetPrefix: 'https://old.example.com', */",
+        '  assetPrefix: `${process.env.CDN}`,',
+        '  trailingSlash: false,',
+        '};',
+      ].join('\n'),
+    );
+    expect(readNextConfig(dir, { appDir: 'web/src/app' })).toEqual({
+      dir: 'web',
+      file: 'web/next.config.mjs',
+      trailingSlash: false,
+    });
+  });
+
+  it('next.config が無ければ undefined', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stack-atlas-nextcfg-'));
+    expect(readNextConfig(dir, {})).toBeUndefined();
+  });
+});
 
 describe('segmentToUrl', () => {
   it('strips groups and keeps dynamic segments', () => {

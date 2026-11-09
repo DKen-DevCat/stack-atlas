@@ -10,9 +10,14 @@
  *
  * 出力先の既定（<repo>/.stack-atlas/out）は解析対象の repo の中にある。repo がそこにシンボリックリンクを置いて
  * 別のファイルを書き換えさせないよう、書く前に出力先のリンクを確かめ、あれば書かずに終了コード 2 にする（unsafeOutputs）。
+ *
+ * screens 抽出器（docs/18 §3.3）は消毒した画面の HTML と資産を <outDir>/screens/ に書く。build は前回の screens/ を
+ * （screens 抽出器が書いた印のファイルがあるときだけ）消してから抽出を始める。
  */
 import {
   AtlasConfigError,
+  SCREENS_DIR,
+  SCREENS_MARKER,
   buildGraph,
   createConsoleLogger,
   loadConfig,
@@ -105,6 +110,12 @@ export function formatBuildSummary(
   }
   const errors = issues.filter((i) => i.level === 'error');
   const warnings = issues.filter((i) => i.level === 'warning');
+  // info は数字の報告（画面のカバー率・消毒で落としたもの。8-3b）。問題の件数にも終了コードにも数えない
+  const infos = issues.filter((i) => i.level === 'info');
+  if (infos.length) {
+    lines.push(`報告（issues.json の info）: ${infos.length} 件`);
+    for (const i of infos) lines.push(`  ${i.path}: ${i.message}`);
+  }
   lines.push(`問題: エラー ${errors.length} 件、警告 ${warnings.length} 件`);
   for (const i of [...errors, ...warnings]) {
     lines.push(`  [${i.level === 'error' ? 'エラー' : '警告'}] ${i.path}: ${i.message}`);
@@ -144,6 +155,8 @@ const isSymlink = (p: string) => lstatSync(p, { throwIfNoEntry: false })?.isSymb
  * - graph.json・graph.v1.json・issues.json・memos.json（--v1 で消す graph.v1.json も。消すのはリンクそのものだが、
  *   リンクがある出力先は信用しない）
  * - スクショの置き場 shots/ とその中の項目（スクショ抽出器は <outDir>/shots/<slug>.png に書く）
+ * - 画面の置き場 screens/ と、その中の全部（screens 抽出器は <outDir>/screens/<slug>/index.html と
+ *   screens/_assets/ に書き、build は前回の screens/ を消す。消すのも書くのも、リンクがあれば止める）
  * - --with-viewer で写すビューアの各ファイル・ディレクトリの写し先（cpSync は写し先のリンクをたどって書く）
  */
 export function unsafeOutputs(repo: string, outDir: string, viewerDist?: string): string[] {
@@ -167,6 +180,19 @@ export function unsafeOutputs(repo: string, outDir: string, viewerDist?: string)
   if (!found.includes(shots) && existsSync(shots) && statSync(shots).isDirectory()) {
     for (const d of readdirSync(shots)) check(join(shots, d));
   }
+  const screens = join(outDir, SCREENS_DIR);
+  check(screens);
+  if (!found.includes(screens)) {
+    const walk = (dir: string) => {
+      if (!lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) return;
+      for (const d of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, d.name);
+        if (d.isSymbolicLink()) found.push(p);
+        else if (d.isDirectory()) walk(p);
+      }
+    };
+    walk(screens);
+  }
   if (viewerDist) {
     const walk = (src: string, dest: string) => {
       for (const d of readdirSync(src, { withFileTypes: true })) {
@@ -178,6 +204,23 @@ export function unsafeOutputs(repo: string, outDir: string, viewerDist?: string)
     if (existsSync(outDir)) walk(viewerDist, outDir);
   }
   return found;
+}
+
+/**
+ * 前回の build の screens/ を消す（消した route の画面や古い資産を残さない）。screens 抽出器が書いた印
+ * （screens/.stack-atlas-screens）があるときだけ消す（-o で選んだ先の、自分が書いていない screens/ は消さない）。
+ * 中のシンボリックリンクは unsafeOutputs で先に止めてある（rmSync はリンクを辿らずに消す）
+ */
+export function clearScreens(outDir: string, log?: Logger): boolean {
+  const dir = join(outDir, SCREENS_DIR);
+  const st = lstatSync(dir, { throwIfNoEntry: false });
+  if (!st || st.isSymbolicLink() || !st.isDirectory()) return false;
+  if (!lstatSync(join(dir, SCREENS_MARKER), { throwIfNoEntry: false })?.isFile()) {
+    log?.debug(`${dir} は screens 抽出器が書いたものではない（印が無い）ので消さない`);
+    return false;
+  }
+  rmSync(dir, { recursive: true, force: true });
+  return true;
 }
 
 export async function runBuild(opts: BuildOptions): Promise<number> {
@@ -214,6 +257,10 @@ export async function runBuild(opts: BuildOptions): Promise<number> {
       ...config.screenshots,
       outDir: config.screenshots?.outDir ?? outDir,
     };
+    // screens 抽出器は <outDir>/screens/ に書き、graph.json からは screens/… で参照する（設定ファイルの outDir は
+    // checkConfig が外す。repo の設定で出力先の外に書かせない）
+    if (config.screens) config.screens = { ...config.screens, outDir };
+    clearScreens(outDir, log);
     log.info(`解析中: ${repo}`);
     const repoEntries = Object.entries(config.repos ?? {});
     if (repoEntries.length) {

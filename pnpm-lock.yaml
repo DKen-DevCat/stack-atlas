@@ -146,6 +146,25 @@ importers:
         specifier: workspace:*
         version: link:../../packages/schema
 
+  extractors/screens:
+    dependencies:
+      '@stack-atlas/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@stack-atlas/extractor-nextjs-app':
+        specifier: workspace:*
+        version: link:../nextjs-app
+      '@stack-atlas/extractor-screenshots':
+        specifier: workspace:*
+        version: link:../screenshots
+    devDependencies:
+      '@stack-atlas/schema':
+        specifier: workspace:*
+        version: link:../../packages/schema
+      playwright:
+        specifier: 1.63.0
+        version: 1.63.0
+
   extractors/screenshots:
     dependencies:
       '@stack-atlas/core':
@@ -261,6 +280,9 @@ importers:
       '@stack-atlas/extractor-openapi':
         specifier: workspace:*
         version: link:../../extractors/openapi
+      '@stack-atlas/extractor-screens':
+        specifier: workspace:*
+        version: link:../../extractors/screens
       '@stack-atlas/extractor-screenshots':
         specifier: workspace:*
         version: link:../../extractors/screenshots

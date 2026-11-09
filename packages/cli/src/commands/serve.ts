@@ -9,8 +9,11 @@
  * - `GET /api/memos`: メモを返す（--repo があれば <repo>/.stack-atlas/memos.json、無ければ outDir/memos.json）
  * - `POST /api/memos`: body（`Record<string,string>`、Content-Type: application/json）を
  *   <repo>/.stack-atlas/memos.json と outDir/memos.json に書く。--repo が無ければ 405
+ * - `/screens/` の下（screens 抽出器が書いた画面の HTML と資産。docs/18 §3.3）は `Content-Security-Policy`（`sandbox` 付き）を
+ *   付けて返す。画面の HTML や SVG をタブで直接開いても script は動かず、外へも読みに行かない
  */
 import {
+  SCREENS_DIR,
   isMemos,
   saveMemos,
   serializeMemos,
@@ -38,10 +41,25 @@ export const CONTENT_TYPES: Record<string, string> = {
   '.gif': 'image/gif',
   '.ico': 'image/x-icon',
   '.txt': 'text/plain; charset=utf-8',
+  '.avif': 'image/avif',
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
   '.wasm': 'application/wasm',
 };
+
+/**
+ * 画面（/screens/ の下）の応答ヘッダの CSP（docs/18 §3.3、D63）。消毒した HTML の meta の CSP に `sandbox allow-same-origin` を足したもの。
+ * sandbox は allow-scripts を付けないので script は動かない（ビューアの iframe と同じ。allow-same-origin は領域の計測に要る）
+ */
+export const SCREENS_CSP =
+  "sandbox allow-same-origin; default-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; base-uri 'none'; form-action 'none'";
+
+/** 配信するファイルが root の screens/ の下か（URL ではなく解決したパスで見る。`/%73creens/` でも同じ） */
+export function isScreensPath(root: string, file: string): boolean {
+  return relative(resolve(root), file).split(sep)[0] === SCREENS_DIR;
+}
 
 export function contentType(file: string): string {
   return CONTENT_TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream';
@@ -213,6 +231,7 @@ export function createAtlasServer(opts: ServeOptions): Server {
         'Content-Length': st.size,
         'Cache-Control': 'no-cache',
         'X-Content-Type-Options': 'nosniff',
+        ...(isScreensPath(root, file) ? { 'Content-Security-Policy': SCREENS_CSP } : {}),
       });
       if (req.method === 'HEAD') return res.end();
       createReadStream(file).pipe(res);

@@ -1,3 +1,4 @@
+import { SCREEN_CSP } from '@stack-atlas/extractor-screens';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -5,10 +6,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  SCREENS_CSP,
   contentType,
   createAtlasServer,
   hostnameOf,
   isAllowedHost,
+  isScreensPath,
   resolveStaticPath,
 } from '../commands/serve.js';
 
@@ -103,6 +106,56 @@ describe('createAtlasServer', () => {
     const head = await fetch(`${url}/graph.v1.json`, { method: 'HEAD' });
     expect(head.status).toBe(200);
     expect((await fetch(`${url}/nope.v1.json`, { method: 'HEAD' })).status).toBe(404);
+  });
+
+  it('/screens/ の下（画面の HTML と資産）だけに sandbox 付きの CSP と nosniff を付ける（8-3b）', async () => {
+    const { url, out } = await start();
+    mkdirSync(join(out, 'screens', 'index'), { recursive: true });
+    mkdirSync(join(out, 'screens', '_assets'), { recursive: true });
+    writeFileSync(join(out, 'screens', 'index', 'index.html'), '<!DOCTYPE html><p>screen</p>');
+    writeFileSync(
+      join(out, 'screens', '_assets', 'a.svg'),
+      '<svg xmlns="http://www.w3.org/2000/svg"/>',
+    );
+    writeFileSync(join(out, 'screens.json'), '{}');
+    for (const path of [
+      '/screens/index/index.html',
+      '/screens/index/',
+      '/screens/_assets/a.svg',
+      '/%73creens/index/index.html', // URL ではなく解決したパスで判定する
+      '/graph.json/../screens/index/index.html',
+    ]) {
+      const r = await fetch(`${url}${path}`);
+      expect(r.status, path).toBe(200);
+      expect(r.headers.get('content-security-policy'), path).toBe(SCREENS_CSP);
+      expect(r.headers.get('x-content-type-options'), path).toBe('nosniff');
+    }
+    expect(SCREENS_CSP).toMatch(/^sandbox allow-same-origin; default-src 'none'; /);
+    expect(SCREENS_CSP).not.toMatch(/allow-scripts|allow-forms|allow-popups/);
+    for (const path of ['/graph.json', '/screens.json', '/index.html']) {
+      const r = await fetch(`${url}${path}`);
+      expect(r.status, path).toBe(200);
+      expect(r.headers.get('content-security-policy'), path).toBeNull();
+    }
+    const head = await fetch(`${url}/screens/index/index.html`, { method: 'HEAD' });
+    expect(head.headers.get('content-security-policy')).toBe(SCREENS_CSP);
+  });
+
+  it('応答ヘッダの CSP は、消毒した HTML の meta の CSP に sandbox を足したもの。docs/11・docs/18 と同じ文字列', () => {
+    expect(SCREENS_CSP).toBe(`sandbox allow-same-origin; ${SCREEN_CSP}`);
+    const doc = (name: string) =>
+      readFileSync(new URL(`../../../../docs/${name}`, import.meta.url), 'utf8');
+    expect(doc('11-sharing.md')).toContain(SCREENS_CSP);
+    expect(doc('18-design-wiring-viewer.md')).toContain(SCREENS_CSP);
+    expect(doc('18-design-wiring-viewer.md')).toContain(SCREEN_CSP);
+  });
+
+  it('isScreensPath は root からの相対パスの最初の段で見る', () => {
+    expect(isScreensPath('/srv/out', '/srv/out/screens/a/index.html')).toBe(true);
+    expect(isScreensPath('/srv/out/', '/srv/out/screens/_assets/x.css')).toBe(true);
+    expect(isScreensPath('/srv/out', '/srv/out/screens.json')).toBe(false);
+    expect(isScreensPath('/srv/out', '/srv/out/a/screens/x.html')).toBe(false);
+    expect(isScreensPath('/srv/out', '/srv/viewer/screens/x.html')).toBe(false);
   });
 
   it('outDir に index.html があればそちらを使う', async () => {

@@ -20,6 +20,9 @@ export {
   listPagesFiles,
   nextUrlToApiPath,
   readNextOutput,
+  readNextConfig,
+  NEXT_CONFIG_FILES,
+  type NextConfigInfo,
   type NextDirs,
   type NextFile,
 } from './files.js';

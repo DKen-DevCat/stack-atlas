@@ -83,6 +83,20 @@ describe('validateGraph', () => {
     expect(errs.some((e) => /\/screen\/regions\/0\/ref$/.test(e.path))).toBe(true);
   });
 
+  it('screen の html / source（8-3b）は通り、知らない source と未定義のフィールドはスキーマエラー', () => {
+    const withHtml = (screen: Record<string, unknown>) =>
+      broken((g) => {
+        const n = g.nodes.find((x) => x.screen)!;
+        Object.assign(n.screen!, screen);
+      });
+    expect(
+      errorsOf(withHtml({ html: 'screens/races-id/index.html', source: 'next-export' })),
+    ).toEqual([]);
+    expect(errorsOf(withHtml({ html: 'screens/x/index.html', source: 'dir' }))).toEqual([]);
+    expect(errorsOf(withHtml({ source: 'png' })).length).toBeGreaterThan(0);
+    expect(errorsOf(withHtml({ htmlFile: 'x.html' })).length).toBeGreaterThan(0);
+  });
+
   it('存在しない flow step のノードはエラー', () => {
     const errs = errorsOf(
       broken((g) => {

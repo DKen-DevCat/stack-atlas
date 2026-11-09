@@ -2,7 +2,14 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { CACHE_TONES, FLOW_TONES, KNOWN_EDGE_KINDS, KNOWN_NODE_KINDS } from './types.js';
+import {
+  CACHE_TONES,
+  FLOW_TONES,
+  KNOWN_EDGE_KINDS,
+  KNOWN_NODE_KINDS,
+  SCREEN_SOURCES_V1,
+} from './types.js';
+import { SCREEN_SOURCES } from './v2.js';
 
 interface SchemaJson {
   required: string[];
@@ -46,6 +53,16 @@ describe('types.ts と graph.schema.json の一致', () => {
       ['$schema', 'version', 'project', 'layers', 'nodes', 'edges', 'flows', 'kinds'].sort(),
     );
     expect(schema.required.sort()).toEqual(['edges', 'layers', 'nodes', 'version']);
+  });
+
+  it('screen のフィールドと source の enum（8-3b で html / source を足した。v2 の screen と同じ語彙）', () => {
+    const screen = schema.$defs.screen!;
+    expect(Object.keys(screen.properties).sort()).toEqual(
+      ['html', 'source', 'screenshot', 'width', 'height', 'regions'].sort(),
+    );
+    expect([...SCREEN_SOURCES_V1].sort()).toEqual([...screen.properties.source!.enum!].sort());
+    // upgradeGraph が screen をそのまま写すので、v1 と v2 の語彙は同じでなければならない
+    expect([...SCREEN_SOURCES_V1].sort()).toEqual([...SCREEN_SOURCES].sort());
   });
 
   it('kinds の定義のフィールドが想定どおり', () => {

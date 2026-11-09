@@ -209,8 +209,40 @@ export function listNextFiles(
   return { files, skipped };
 }
 
-/** next.config.{js,mjs,ts,cjs} の `output: 'export'`。app / pages の親ディレクトリから root まで探す */
-export function readNextOutput(root: string, dirs: NextDirs): string | undefined {
+export const NEXT_CONFIG_FILES = [
+  'next.config.ts',
+  'next.config.mjs',
+  'next.config.js',
+  'next.config.cjs',
+  'next.config.mts',
+] as const;
+
+/** next.config から読む値（静的に読める文字列・真偽値のリテラルだけ。環境変数などで決まる値は undefined） */
+export interface NextConfigInfo {
+  /** next.config のあるディレクトリ（root 相対、/ 区切り。直下なら `.`） */
+  dir: string;
+  /** next.config のファイル（root 相対） */
+  file: string;
+  /** `output`（`export` / `standalone`） */
+  output?: string;
+  /** `distDir`（static export ではエクスポートの出力先。既定 `out`） */
+  distDir?: string;
+  /** `trailingSlash`（true なら `/a` → `a/index.html`） */
+  trailingSlash?: boolean;
+  /** `basePath`（`/docs` など。HTML の参照は basePath 付き、エクスポートのファイルは basePath 無し） */
+  basePath?: string;
+  /** `assetPrefix`（`https://cdn.example.com` か `/prefix`。`/_next/` の参照の前に付く） */
+  assetPrefix?: string;
+}
+
+const stringOption = (src: string, key: string) =>
+  new RegExp(`\\b${key}\\s*:\\s*(["'\`])([^"'\`$]*)\\1`).exec(src)?.[2];
+
+/**
+ * next.config.{ts,mjs,js,cjs,mts} を探して `output`・`distDir`・`trailingSlash`・`basePath`・`assetPrefix` を読む
+ * （docs/18 §3.3。app / pages の親ディレクトリから root まで、深い方から探す）。無ければ undefined
+ */
+export function readNextConfig(root: string, dirs: NextDirs): NextConfigInfo | undefined {
   const starts = new Set<string>(['.']);
   for (const d of [dirs.appDir, dirs.pagesDir]) {
     if (!d) continue;
@@ -222,18 +254,28 @@ export function readNextOutput(root: string, dirs: NextDirs): string | undefined
     }
   }
   for (const dir of [...starts].sort((a, b) => b.length - a.length)) {
-    for (const name of [
-      'next.config.ts',
-      'next.config.mjs',
-      'next.config.js',
-      'next.config.cjs',
-      'next.config.mts',
-    ]) {
+    for (const name of NEXT_CONFIG_FILES) {
       const p = join(root, dir, name);
       if (!existsSync(p)) continue;
-      const src = readFileSync(p, 'utf8').replace(/^\s*\/\/.*$/gm, '');
-      return /\boutput\s*:\s*["'`](\w+)["'`]/.exec(src)?.[1];
+      const src = readFileSync(p, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+      const info: NextConfigInfo = { dir, file: toPosix(join(dir, name)) };
+      const output = /\boutput\s*:\s*["'`](\w+)["'`]/.exec(src)?.[1];
+      if (output) info.output = output;
+      const trailing = /\btrailingSlash\s*:\s*(true|false)\b/.exec(src)?.[1];
+      if (trailing) info.trailingSlash = trailing === 'true';
+      for (const key of ['distDir', 'basePath', 'assetPrefix'] as const) {
+        const v = stringOption(src, key);
+        if (v !== undefined) info[key] = v;
+      }
+      return info;
     }
   }
   return undefined;
+}
+
+/** next.config.{js,mjs,ts,cjs} の `output: 'export'`。app / pages の親ディレクトリから root まで探す */
+export function readNextOutput(root: string, dirs: NextDirs): string | undefined {
+  return readNextConfig(root, dirs)?.output;
 }

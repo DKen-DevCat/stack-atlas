@@ -45,6 +45,17 @@ export interface PartialGraphV2 {
   groups?: Record<string, string>;
 }
 
+/**
+ * build の問題（issues.json の 1 行）。validateGraph の ValidationIssue に `info` を足したもの。
+ * `info` は数字の報告（画面のカバー率・消毒で落としたものの数。8-3b）で、終了コードにも「問題: 警告 n 件」にも数えない
+ */
+export interface BuildIssue {
+  level: 'error' | 'warning' | 'info';
+  /** `/nodes/3/layer`・`extractor:<name>`・`screens:<route>` など */
+  path: string;
+  message: string;
+}
+
 /** 抽出器 1 つの出力。マージで統合される */
 export interface PartialGraph {
   layers?: Layer[];
@@ -55,6 +66,10 @@ export interface PartialGraph {
   kinds?: Record<string, KindDefinition>;
   /** 言語アダプタ（ts-types など）と openapi の v2 の部分グラフ（docs/17 §3.1） */
   v2?: PartialGraphV2;
+  /**
+   * issues.json に足す報告（パイプラインが抽出器ごとに集める。マージはしない）。抽出器はビルドを止めないので error は出さない
+   */
+  issues?: Array<BuildIssue & { level: 'warning' | 'info' }>;
 }
 
 export interface Logger {
@@ -116,6 +131,26 @@ export interface StackAtlasConfig {
     storageState?: string;
     outDir?: string;
     timeout?: number;
+  }>;
+  /**
+   * ビルド成果物の画面（screens 抽出器。docs/18 §3.3）。route ごとに HTML を写して消毒し、`<出力先>/screens/` に置く。
+   * `from: next-export` は next.config の distDir（既定 out）、`dir` は `dir` の HTML を読む。`dir` は repo 相対
+   */
+  screens?: RepoScoped<{
+    from?: 'next-export' | 'dir';
+    /** HTML のディレクトリ（repo 相対）。next-export では next.config のディレクトリの distDir（既定 out） */
+    dir?: string;
+    /** 動的ルートのサンプル（`{ "/items/[id]": ["sample-1"] }`。最初の 1 件の HTML を使う） */
+    routes?: Record<string, string[]>;
+    /** 描画と regions の座標系（既定 1280×800） */
+    viewport?: { width: number; height: number };
+    /** `/` で始まる参照の 2 つ目の探し先（repo 相対）。next-export の既定は next.config のディレクトリの public */
+    publicDir?: string;
+    /**
+     * 書き出し先（graph.json のディレクトリ）。CLI の build が入れる。設定ファイルには書けない
+     * （checkConfig が外す。解析対象の repo の設定で repo の外に書かせないため）
+     */
+    outDir?: string;
   }>;
   /** 抽出器の有効・無効（既定は detect() に従う） */
   extractors?: Record<string, boolean>;
@@ -216,6 +251,10 @@ export interface FlowDefinition {
   tone?: Flow['tone'];
   steps: Array<[string, string] | { node: string; text: string }>;
 }
+
+/** screens 抽出器の書き出し先（`<出力先>/screens/`）と、build が前回の分を消してよいことを示す印のファイル */
+export const SCREENS_DIR = 'screens';
+export const SCREENS_MARKER = '.stack-atlas-screens';
 
 /** 既定の層 */
 export const DEFAULT_LAYERS: Layer[] = [

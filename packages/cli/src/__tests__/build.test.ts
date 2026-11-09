@@ -347,7 +347,12 @@ describe('loadExtractors', () => {
     );
     expect(log.of('warn')).toHaveLength(1);
     // Phase 8-2a で変更: 言語アダプタ ts-types を ts-imports の直後に足したので 12 → 13
-    expect(EXTRACTOR_PACKAGES).toHaveLength(13);
+    // 2026-11-09 変更（8-3b）: ビルド成果物の画面の screens を screenshots の後に足したので 13 → 14
+    expect(EXTRACTOR_PACKAGES).toHaveLength(14);
+    expect(EXTRACTOR_PACKAGES.at(-1)).toBe('@stack-atlas/extractor-screens');
+    expect(EXTRACTOR_PACKAGES.indexOf('@stack-atlas/extractor-screens')).toBe(
+      EXTRACTOR_PACKAGES.indexOf('@stack-atlas/extractor-screenshots') + 1,
+    );
     expect(EXTRACTOR_PACKAGES[0]).toBe('@stack-atlas/extractor-files');
     expect(EXTRACTOR_PACKAGES.indexOf('@stack-atlas/extractor-ts-types')).toBe(
       EXTRACTOR_PACKAGES.indexOf('@stack-atlas/extractor-ts-imports') + 1,
@@ -486,5 +491,132 @@ describe('build (fixture-poly)', () => {
       expect.arrayContaining(['type:Today', 'type:Entry', 'table:transactions']),
     );
     expect(v2.views.map((v: N) => v.id)).toEqual(['today', 'inbound']);
+
+    // 2026-11-09 追加（8-3b）: screens 抽出器が web/export の HTML を写して消毒し、route の箱に screen.html を付ける（v1 と v2）
+    type S = {
+      id: string;
+      screen?: { html?: string; source?: string; width: number; height: number };
+    };
+    for (const g of [graph as unknown as { nodes: S[] }, v2 as { nodes: S[] }]) {
+      expect(
+        Object.fromEntries(g.nodes.filter((n) => n.screen).map((n) => [n.id, n.screen])),
+      ).toEqual({
+        'route:/': { html: 'screens/index/index.html', width: 1280, height: 800, source: 'dir' },
+        'route:/calendar': {
+          html: 'screens/calendar/index.html',
+          width: 1280,
+          height: 800,
+          source: 'dir',
+        },
+        'route:/push': { html: 'screens/push/index.html', width: 1280, height: 800, source: 'dir' },
+      });
+    }
+    for (const n of v2.nodes as S[])
+      if (n.screen?.html) expect(existsSync(join(out, n.screen.html)), n.id).toBe(true);
+    const issues = JSON.parse(readFileSync(join(out, 'issues.json'), 'utf8')) as Array<{
+      level: string;
+      path: string;
+      message: string;
+    }>;
+    expect(issues.filter((i) => /カバー率/.test(i.message)).map((i) => [i.level, i.path])).toEqual([
+      ['info', 'screens:/calendar'],
+      ['info', 'screens:/'],
+      ['info', 'screens:/push'],
+    ]);
+    expect(issues.filter((i) => i.level === 'warning').map((i) => i.path)).toEqual([
+      'screens:/',
+      'screens:_next/static/css/7f3a9c1d2e4b5a60.css',
+    ]);
   }, 60_000);
+});
+
+describe('runBuild（screens の出力先。8-3b）', () => {
+  /** 画面を 1 つ書くだけの screens の代わり（本物と同じく config.screens.outDir に書く） */
+  const screensStub: Extractor = {
+    name: 'screens',
+    detect: async (ctx) => Boolean(ctx.config.screens),
+    extract: async (ctx) => {
+      const dir = join(ctx.config.screens!.outDir!, 'screens', 'index');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'index.html'), '<!DOCTYPE html>');
+      writeFileSync(join(ctx.config.screens!.outDir!, 'screens', '.stack-atlas-screens'), '');
+      return {
+        nodes: [{ id: 'lib:x', file: 'src/x.ts' }],
+        edges: [],
+        issues: [
+          { level: 'info', path: 'screens:/', message: 'regions のカバー率 1/2（50%）' },
+          { level: 'error' as 'warning', path: 'screens:/x', message: 'error は warning にする' },
+        ],
+      };
+    },
+  };
+  const withScreens = () => {
+    const root = repo();
+    writeFileSync(
+      join(root, 'stack-atlas.config.yaml'),
+      'project: { name: demo }\nscreens: { from: dir, dir: site, outDir: /tmp/evil }\n',
+    );
+    return root;
+  };
+
+  it('config.screens.outDir は出力先（設定ファイルの outDir は使わない）。info は要約に出し、問題の件数に数えない', async () => {
+    const root = withScreens();
+    const out = join(root, 'o');
+    const mlog = createMemoryLogger();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const code = await runBuild({ repo: root, outDir: out, extractors: [screensStub], log: mlog });
+    const summary = log.mock.calls.map((c) => String(c[0])).join('\n');
+    log.mockRestore();
+    expect(code).toBe(0);
+    expect(existsSync(join(out, 'screens', 'index', 'index.html'))).toBe(true);
+    expect(mlog.of('warn').join('\n')).toContain('screens.outDir は設定できません');
+    expect(summary).toContain(
+      '報告（issues.json の info）: 1 件\n  screens:/: regions のカバー率 1/2（50%）',
+    );
+    expect(summary).toContain('問題: エラー 0 件、警告 1 件');
+    expect(JSON.parse(readFileSync(join(out, 'issues.json'), 'utf8'))).toEqual([
+      { level: 'info', path: 'screens:/', message: 'regions のカバー率 1/2（50%）' },
+      { level: 'warning', path: 'screens:/x', message: 'error は warning にする' },
+    ]);
+  });
+
+  it('前回の screens/ は印があるときだけ消す（自分が書いていない screens/ は残す）', async () => {
+    const root = repo();
+    const out = join(root, 'o');
+    mkdirSync(join(out, 'screens', 'old'), { recursive: true });
+    writeFileSync(join(out, 'screens', 'old', 'index.html'), 'old');
+    const run = () =>
+      quiet(() =>
+        runBuild({ repo: root, outDir: out, extractors: [stub], log: createMemoryLogger() }),
+      );
+    expect(await run()).toBe(0);
+    expect(existsSync(join(out, 'screens', 'old', 'index.html'))).toBe(true);
+    writeFileSync(join(out, 'screens', '.stack-atlas-screens'), '');
+    expect(await run()).toBe(0);
+    expect(existsSync(join(out, 'screens'))).toBe(false);
+  });
+
+  it('screens/ とその中（入れ子も）がリンクなら書かずに終了コード 2。消すときもリンクの先は消さない', async () => {
+    const victim = mkdtempSync(join(tmpdir(), 'stack-atlas-victim-'));
+    writeFileSync(join(victim, 'keep.txt'), 'keep');
+    const run = (root: string, out: string) =>
+      quiet(() =>
+        runBuild({ repo: root, outDir: out, extractors: [screensStub], log: createMemoryLogger() }),
+      );
+
+    const r1 = withScreens();
+    const o1 = join(r1, 'o');
+    mkdirSync(o1);
+    symlinkSync(victim, join(o1, 'screens'));
+    expect(await run(r1, o1)).toBe(2);
+
+    const r2 = withScreens();
+    const o2 = join(r2, 'o');
+    mkdirSync(join(o2, 'screens', '_assets'), { recursive: true });
+    writeFileSync(join(o2, 'screens', '.stack-atlas-screens'), '');
+    symlinkSync(victim, join(o2, 'screens', '_assets', 'deep'));
+    expect(await run(r2, o2)).toBe(2);
+    expect(existsSync(join(o2, 'screens', '_assets', 'deep'))).toBe(true);
+    expect(readFileSync(join(victim, 'keep.txt'), 'utf8')).toBe('keep');
+  });
 });

@@ -32,6 +32,7 @@ const KNOWN_KEYS: Record<keyof StackAtlasConfig, 'object' | 'array'> = {
   files: 'array',
   kinds: 'object',
   screenshots: 'object',
+  screens: 'object',
   extractors: 'object',
   adapters: 'object',
 };
@@ -174,6 +175,7 @@ export function checkConfig(
       }
     }
   }
+  if (cfg.screens) checkScreens(cfg.screens as Record<string, unknown>, log, file);
   if (cfg.extractors) {
     for (const [k, v] of Object.entries(cfg.extractors)) {
       if (typeof v !== 'boolean') {
@@ -183,6 +185,53 @@ export function checkConfig(
     }
   }
   return cfg;
+}
+
+/** screens（docs/18 §3.3）のキー。おかしな値は警告して取り除く。outDir は設定ファイルからは受け付けない */
+function checkScreens(sc: Record<string, unknown>, log: Logger, file: string) {
+  const drop = (key: string, why: string) => {
+    log.warn(`${file}: screens.${key} ${why}（無視します）`);
+    delete sc[key];
+  };
+  if ('outDir' in sc) {
+    // 書き出し先は build の出力先（graph.json の隣）に決まっている。repo の設定で repo の外に書かせない
+    drop('outDir', 'は設定できません。書き出し先は build の出力先の screens/ です');
+  }
+  for (const key of Object.keys(sc)) {
+    if (!['repo', 'from', 'dir', 'routes', 'viewport', 'publicDir', 'outDir'].includes(key))
+      drop(key, 'は未知のキーです');
+  }
+  if (sc.from !== undefined && sc.from !== 'next-export' && sc.from !== 'dir')
+    drop('from', 'は next-export か dir で書いてください');
+  for (const key of ['repo', 'dir', 'publicDir']) {
+    if (sc[key] !== undefined && (typeof sc[key] !== 'string' || !sc[key]))
+      drop(key, 'は文字列で書いてください');
+  }
+  if (sc.from === 'dir' && sc.dir === undefined)
+    log.warn(
+      `${file}: screens.from が dir のときは screens.dir に HTML のディレクトリを書いてください`,
+    );
+  const vp = sc.viewport;
+  if (
+    vp !== undefined &&
+    !(
+      isPlainObject(vp) &&
+      [vp.width, vp.height].every((x) => Number.isInteger(x) && (x as number) > 0)
+    )
+  )
+    drop('viewport', 'は { width, height }（正の整数）で書いてください');
+  const routes = sc.routes;
+  if (routes !== undefined) {
+    if (!isPlainObject(routes))
+      drop('routes', 'は { "<ルート>": ["<サンプル>"] } で書いてください');
+    else
+      for (const [k, v] of Object.entries(routes)) {
+        if (!Array.isArray(v) || !v.every((x) => typeof x === 'string')) {
+          log.warn(`${file}: screens.routes["${k}"] は文字列の配列で書いてください（無視します）`);
+          delete routes[k];
+        }
+      }
+  }
 }
 
 /** 抽出器に渡す RepoContext を作る */

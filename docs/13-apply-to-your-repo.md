@@ -289,6 +289,7 @@ graph.json（v2）では flows は **views** に置き換わる（docs/15 §3.9�
 | `files` | `[{ glob, kind, name?, id?, layer?, repo? }]` | なし |
 | `kinds` | `kind → { name, color, size, layer }`（graph.json の `kinds` に出る） | なし |
 | `screenshots.{baseUrl,viewport,routes,storageState,outDir,timeout,repo}` | スクショ設定（`docs/10`） | — |
+| `screens.{from,dir,routes,viewport,publicDir,repo}` | ビルド成果物の画面（`screens` 抽出器。docs/18 §3.3）。`from: next-export` は next.config の `distDir`（既定 `out`）・`trailingSlash`・`basePath`・`assetPrefix` を読む、`from: dir` は `dir` の HTML。route ごとに HTML を写して消毒し、出力先の `screens/` に置く。`routes` は動的ルートのサンプル、`publicDir` は `/` で始まる参照の 2 つ目の探し先。書き出し先は build の出力先に決まっていて設定できない | `from: next-export`、`viewport` 1280×800 |
 | `extractors` | `{ <name>: false }` で抽出器を無効化 | `detect()` に従う |
 | `adapters.{depth,maxItems}` | 言語アダプタ（v2。`ts-types` など）の上限。`depth` は型を項目に展開する深さ、`maxItems` は 1 箱の項目の数。超えたら警告して打ち切る（docs/17） | `2`、`200` |
 

@@ -89,9 +89,27 @@ export interface Region {
   h: number;
 }
 
+/** screen.html の出どころ。v2 の ScreenSource と同じ語彙（schema の screen.source の enum と一致させる） */
+export const SCREEN_SOURCES_V1 = [
+  'next-export',
+  'next-build',
+  'dir',
+  'wireframe',
+  'screenshot',
+] as const;
+export type ScreenSourceV1 = (typeof SCREEN_SOURCES_V1)[number];
+
 export interface Screen {
+  /**
+   * graph.json からの相対パス。消毒したビルド成果物の HTML（script 無し。screens 抽出器。docs/18 §3.3）。
+   * screenshot と両方あれば html を優先して描く
+   */
+  html?: string;
+  /** html の出どころ */
+  source?: ScreenSourceV1;
   /** graph.json からの相対パス */
   screenshot?: string;
+  /** regions の座標系の幅（スクショの px 幅。html のときはビューポート） */
   width: number;
   height: number;
   regions?: Region[];

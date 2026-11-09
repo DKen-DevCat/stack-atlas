@@ -1,0 +1,17 @@
+@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap");
+@font-face{font-family:"__Noto_Sans_JP_a1b2c3";font-style:normal;font-weight:400;font-display:swap;src:url(/_next/static/media/e4af272ccee01ff0-s.p.woff2) format("woff2");unicode-range:U+0020-007F,U+3000-30FF}
+@font-face{font-family:"__Noto_Sans_JP_Fallback_a1b2c3";src:local("Arial");ascent-override:110.2%;descent-override:27.36%;line-gap-override:0.00%;size-adjust:105.43%}
+.__className_a1b2c3{font-family:"__Noto_Sans_JP_a1b2c3","__Noto_Sans_JP_Fallback_a1b2c3";font-style:normal}
+.__variable_a1b2c3{--font-noto-sans-jp:"__Noto_Sans_JP_a1b2c3","__Noto_Sans_JP_Fallback_a1b2c3"}
+/* ここから下はアプリの CSS（合成） */
+*,:after,:before{box-sizing:border-box}
+body{margin:0;background:#f6f7f9;color:#1d2433}
+main{max-width:960px;margin:0 auto;padding:32px 24px}
+h1{font-size:24px;margin:0 0 16px}
+[data-component=TodayIsland]{padding:16px;border:1px dashed #b8c0cc;border-radius:8px;color:#5b6577}
+[data-component=CalendarIsland]{min-height:240px;border:1px solid #dde2ea;border-radius:8px;background:#fff}
+[data-component=PushToggle]{padding:10px 20px;border:0;border-radius:6px;background:#2a62d6;color:#fff;font:inherit}
+.cms-banner{display:flex;gap:12px;align-items:center;max-width:960px;margin:0 auto;padding:12px 24px;background:url(../../../images/receipt.png) right center/contain no-repeat,#fff}
+.cms-banner .hero{background-image:u\72l(https://cdn.example.com/hero.png)}
+.cms-banner .retina{background-image:image-set("/images/receipt.png" 1x,"/images/receipt@2x.png" 2x)}
+@media (prefers-color-scheme:dark){body{background:#11151c;color:#e6e9ef}}
