@@ -156,7 +156,10 @@ export function buildPorts(box: Box, env: TypeEnv, maxItems: number): BoxState {
   };
   const fn = box.fn;
   const params = (
-    Node.isFunctionDeclaration(fn) || Node.isArrowFunction(fn) || Node.isFunctionExpression(fn)
+    Node.isFunctionDeclaration(fn) ||
+    Node.isArrowFunction(fn) ||
+    Node.isFunctionExpression(fn) ||
+    Node.isMethodDeclaration(fn)
       ? fn.getParameters()
       : []
   ).map((p) => p.compilerNode);
@@ -319,7 +322,12 @@ function isRelay(call: CallExpression, pathIndex: number, box: Box): boolean {
   const arg = call.getArguments()[pathIndex];
   if (!arg) return false;
   for (const a of call.getAncestors()) {
-    if (Node.isFunctionDeclaration(a) || Node.isArrowFunction(a) || Node.isFunctionExpression(a)) {
+    if (
+      Node.isFunctionDeclaration(a) ||
+      Node.isArrowFunction(a) ||
+      Node.isFunctionExpression(a) ||
+      Node.isMethodDeclaration(a)
+    ) {
       if (a.getParameters().some((p) => passesParam(arg, p.getName()))) return true;
     }
     if (a === box.fn) break;
@@ -505,7 +513,17 @@ export function buildCalls(st: BoxState, ctx: BuildContext): void {
         if (local) queue.push(local);
         if (local || isInside(d, box.fn.compilerNode)) return;
       }
-      const key = rawKey(d);
+      let key = rawKey(d);
+      // オブジェクトのメソッドの箱（`api.getRaces`。呼び出しでも値でも）: オブジェクト（group になる v1 の箱）ではなく
+      // メソッドの箱を参照する（2026-11-09 8-2b）
+      if (
+        parent &&
+        Node.isPropertyAccessExpression(parent) &&
+        parent.getExpression().compilerNode === id.compilerNode
+      ) {
+        const md = declOf(env, parent.getNameNode().compilerNode);
+        if (md && ctx.boxByKey.has(rawKey(md))) key = rawKey(md);
+      }
       const target = ctx.boxByKey.get(key)?.id ?? ctx.v1ByKey.get(key);
       // `#` を含む v1 の id（ts-imports の衝突の退避）は v2 に入らない（upgrade が落とす）
       if (!target || target === box.id || target.includes('#')) return;
@@ -1128,7 +1146,8 @@ export function buildLinks(st: BoxState): LinkV2[] {
     const body =
       Node.isFunctionDeclaration(box.fn) ||
       Node.isArrowFunction(box.fn) ||
-      Node.isFunctionExpression(box.fn)
+      Node.isFunctionExpression(box.fn) ||
+      Node.isMethodDeclaration(box.fn)
         ? box.fn.getBody()
         : undefined;
     if (body && !Node.isBlock(body)) exprs.push(body);

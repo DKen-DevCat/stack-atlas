@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { confineShotsOutDir, runBuild, unsafeOutputs } from '../commands/build.js';
 import { EXTRACTOR_PACKAGES, loadExtractors } from '../extractors.js';
+import { hasGo, POLY_GO_FNS, POLY_GO_GROUPS } from './go-env.js';
 
 function repo(): string {
   const root = mkdtempSync(join(tmpdir(), 'stack-atlas-build-'));
@@ -347,8 +348,9 @@ describe('loadExtractors', () => {
     );
     expect(log.of('warn')).toHaveLength(1);
     // Phase 8-2a で変更: 言語アダプタ ts-types を ts-imports の直後に足したので 12 → 13
-    // 2026-11-09 変更（8-3b）: ビルド成果物の画面の screens を screenshots の後に足したので 13 → 14
-    expect(EXTRACTOR_PACKAGES).toHaveLength(14);
+    // 2026-11-09 変更（8-2b）: 言語アダプタ go-types を go の直後に足したので 13 → 14
+    // 2026-11-09 変更（8-3b）: ビルド成果物の画面の screens を screenshots の後に足したので 14 → 15
+    expect(EXTRACTOR_PACKAGES).toHaveLength(15);
     expect(EXTRACTOR_PACKAGES.at(-1)).toBe('@stack-atlas/extractor-screens');
     expect(EXTRACTOR_PACKAGES.indexOf('@stack-atlas/extractor-screens')).toBe(
       EXTRACTOR_PACKAGES.indexOf('@stack-atlas/extractor-screenshots') + 1,
@@ -356,6 +358,9 @@ describe('loadExtractors', () => {
     expect(EXTRACTOR_PACKAGES[0]).toBe('@stack-atlas/extractor-files');
     expect(EXTRACTOR_PACKAGES.indexOf('@stack-atlas/extractor-ts-types')).toBe(
       EXTRACTOR_PACKAGES.indexOf('@stack-atlas/extractor-ts-imports') + 1,
+    );
+    expect(EXTRACTOR_PACKAGES.indexOf('@stack-atlas/extractor-go-types')).toBe(
+      EXTRACTOR_PACKAGES.indexOf('@stack-atlas/extractor-go') + 1,
     );
   });
 });
@@ -474,6 +479,12 @@ describe('build (fixture-poly)', () => {
       'fn:createTransaction',
       'fn:toTodayView',
     ];
+    // 2026-11-09 変更（8-2b）: go-types の関数の箱が v1 の Go のパッケージの箱を置き換える（meta.go.pkg の被覆。D53）。
+    // go が無ければ Go の側はパッケージの箱のまま（D51）
+    if (hasGo) {
+      grouped.push(...POLY_GO_GROUPS);
+      fnBoxes.push(...POLY_GO_FNS);
+    }
     expect([...v2.nodes.map((n: N) => n.id)].sort()).toEqual(
       [
         ...graph.nodes
@@ -482,7 +493,8 @@ describe('build (fixture-poly)', () => {
         ...fnBoxes,
       ].sort(),
     );
-    for (const id of fnBoxes)
+    // internal/domain の関数は v1 の箱が type（types[]）なので group が無い
+    for (const id of fnBoxes.filter((x) => !x.startsWith('fn:internal/domain.')))
       expect(
         grouped.includes(v2.nodes.find((n: N & { group?: string }) => n.id === id).group),
         id,

@@ -8,6 +8,9 @@
 // 交差の上限は実装時の値 ×1.1（切り上げ）。数え方は metrics.ts の countCrossings。
 // /today の 45 は group を割った並び（lib:fetcher が feature/spend の間、host の中の api と store が交互）だった。
 // 塊を割らない今は 50 で、上限 50 は 8-3a の時のまま（基準の graph は 425 × 1.1 = 468 に締めた）
+// 2026-11-09 変更（8-2b の取り込み）: 8-2b が例を直した（InsertTransaction は複数の入口から使われるので host を外して
+// meta.hosts に、POST /transactions に login の分岐）。InsertTransaction の線が Lambda の枠の外を通るようになり、
+// /today は 2676×1526（1.754、交差 53）。入力が変わったので上限を 53 × 1.1 = 59 に置き直した
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -29,7 +32,7 @@ const ASPECT_MAX = 2.2;
 
 describe.each([
   ['基準の graph（poly-82a）', baseline, 468],
-  ['/today の例', today, 50],
+  ['/today の例', today, 59],
 ])('受け入れ条件: %s', (_name, make, maxCrossings) => {
   const index = indexGraph(make());
   const layout = layoutWiring(index);

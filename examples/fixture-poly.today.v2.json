@@ -1282,8 +1282,36 @@
         }
       ],
       "meta": {
-        "operationId": "createTransaction"
-      }
+        "operationId": "createTransaction",
+        "auth": "internal/auth.Verifier.Middleware（Authorization ヘッダ）"
+      },
+      "variants": [
+        {
+          "id": "login",
+          "name": "ログイン済み",
+          "default": true
+        }
+      ],
+      "links": [
+        {
+          "from": "in/path",
+          "to": "req/path",
+          "when": {
+            "login": true
+          }
+        },
+        {
+          "from": "in/body",
+          "to": "req/body",
+          "when": {
+            "login": true
+          }
+        },
+        {
+          "from": "res/status",
+          "to": "out/status"
+        }
+      ]
     },
     {
       "id": "fn:internal/api.handleToday",
@@ -1770,8 +1798,10 @@
       "runtime": "server",
       "file": "platform/internal/store/store.go",
       "line": 49,
-      "host": "infra:lambda_api/api",
       "group": "platform/internal/store",
+      "meta": {
+        "hosts": ["infra:lambda_api/api", "infra:lambda_api/gmail_webhook"]
+      },
       "ports": [
         {
           "id": "in",

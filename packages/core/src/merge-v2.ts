@@ -13,6 +13,8 @@
  *   （`@runtime` の複製）④ Go: 同じ `meta.go.pkg` の関数の箱がある。接頭辞では判定しない
  * - 置き換わる v1 の箱の host・runtime は中の関数の箱が受け継ぐ。関数の箱の group は v1 の箱 id（折りたたみの単位。
  *   その id に付いたメモは group に出す）
+ * - 複数の入口から使う関数（`meta.hosts`）は group の host を受け継がない（8-2b）。型は同じ id なら契約（openapi・sql）が
+ *   言語アダプタに勝つ（D65。v2-parts の mergeNamedTypes）
  * - overrides.yaml（2026-11-09 レビュー C2）: `remove` の箱 id はアダプタからも出さない。その `@runtime` の複製と、
  *   消した v1 の箱が group になるはずだった中の関数の箱も消す（消す前の file・meta で被覆を判定する）。`nodes` の
  *   上書き（kind・name・file・line・code・cache・screen）はアダプタの値に勝つ（upgrade の箱の値を戻す。複製にも）
@@ -27,7 +29,10 @@
  *   相手がアダプタの箱でも消さず（細かい線が無い = 合流できなかった・overrides で足した線）、中の関数の箱のうち
  *   **実際に参照しているもの**へ付け替える（2026-11-09 レビュー C1・C6）。参照の手がかりは、アダプタの refs（箱ごとの
  *   参照先）と、HTTP の線なら呼び出しの項目の `meta.http`（endpoint に合うもの、無ければ合流できなかった呼び出し）。
- *   決められなければ中の全部へ付け替え、その数を `undetermined` に数える（サマリに出す）
+ *   テーブルへの線（via sql）は、そのテーブルを SQL（`meta.sql`）で使う中の関数の箱（8-2b）。
+ *   決められなければ中の全部へ付け替え、その数を `undetermined` に数える（サマリに出す。中が 1 つだけの group は
+ *   決められた側に数える。8-2b レビュー）。合流で結んだ箱の対
+ *   （JoinReport.pairs）は細かい線があるものとして数える
  * - group になった v1 の箱を消す。アダプタの箱の `_` は、どの線にも指されていなければ消す
  * - 残った `_`（呼び出しでない参照・合流の相手がまだ箱の単位の所）には crude の links を足す。起動の項目 → `out/_`、
  *   `in/_` → 全部の out（links を 1 本でも持つ箱は既定の「全 in → 全 out」が効かず、`_` が行き止まりになるため）
@@ -46,13 +51,14 @@ import type {
 } from '@stack-atlas/schema';
 import type { Overrides, PartialGraphV2, PartialNode, PartialNodeV2 } from './types.js';
 import { clone, deepMerge, isPlainObject } from './util.js';
-import { endpointRoute, httpCallOf } from './join.js';
+import { endpointRoute, httpCallOf, usesTable } from './join.js';
 import { apiPathMatches, methodMatches } from './paths.js';
 import {
   UNDERSCORE,
   boxOf,
   isUnderscoreRef,
   mergeLinkLists,
+  mergeNamedTypes,
   mergeVariants,
   underscoreItem,
   walkItems,
@@ -224,12 +230,10 @@ export function mergeV2(
     graph.wires.push(clone(w));
   }
 
-  const typeIds = new Set((graph.types ?? []).map((t) => t.id));
-  for (const t of part.types ?? []) {
-    if (typeIds.has(t.id)) continue;
-    typeIds.add(t.id);
-    (graph.types ??= []).push(clone(t));
-  }
+  // 型（D65）: 同じ id は契約（source が openapi・sql）が言語アダプタに勝つ。upgrade の型（v1 の type: の箱）は先に
+  // あるもの（v1 のマージで OpenAPI の型が正になっていれば source は openapi）。負けた側の宣言の場所は勝った側の meta.copies に足す
+  graph.types = mergeNamedTypes(graph.types ?? [], part.types ?? []);
+  if (!graph.types.length) delete graph.types;
 
   // 被覆（group）。overrides で消した v1 の箱も、消す前の file・meta で判定し、中の関数の箱を消す
   const candidates = new Map<string, GroupCandidate>(graph.nodes.map((n) => [n.id, n]));
@@ -262,12 +266,15 @@ export function mergeV2(
     }
   }
 
-  // 中の関数の箱は、置き換わる v1 の箱の host・runtime を受け継ぐ。group は v1 の箱 id
+  // 中の関数の箱は、置き換わる v1 の箱の host・runtime を受け継ぐ。group は v1 の箱 id。
+  // 複数の入口から使う関数（アダプタが host を空にして meta.hosts に並べたもの。§7 #11）は host を受け継がない
+  // （2026-11-09 8-2b の決定。パッケージの箱の host は 8-1 の uses の閉包で、関数の単位より粗い）
   for (const [g, members] of groups) {
     const gn = byId.get(g)!;
     for (const id of members) {
       const m = byId.get(id)!;
-      if (m.host === undefined && gn.host !== undefined) m.host = gn.host;
+      if (m.host === undefined && gn.host !== undefined && !Array.isArray(m.meta?.hosts))
+        m.host = gn.host;
       if ((m as Partial<NodeV2>).runtime === undefined) m.runtime = gn.runtime;
       if (m.group === undefined) m.group = g;
     }
@@ -408,8 +415,16 @@ export interface CleanupV2Result {
   issues: ValidationIssue[];
 }
 
+export interface CleanupV2Options {
+  /**
+   * 合流で結んだ箱の対（向き付き。`<from>\u0000<to>`。JoinReport.pairs）。細かい線があるものとして数える
+   * （応答の項目の無い handler など、片方の向きに線が無くても箱の単位の線を残さない）
+   */
+  pairs?: ReadonlySet<string>;
+}
+
 /** 掃除（D50・D53）。join の後に呼ぶ。state.graph を書き換えて返す */
-export function cleanupV2(state: MergedV2): CleanupV2Result {
+export function cleanupV2(state: MergedV2, opts: CleanupV2Options = {}): CleanupV2Result {
   const { graph, upgradeWires, groups, refs } = state;
   const adapterIds = state.adapterIds;
   const issues: ValidationIssue[] = [];
@@ -426,14 +441,21 @@ export function cleanupV2(state: MergedV2): CleanupV2Result {
   const finePairs = new Set<string>();
   /** 合流の線が出ている呼び出しの項目（`<箱>#out/call_n`） */
   const joinedCalls = new Set<string>();
+  const addPair = (x: string, y: string) => {
+    for (const a of reps(x)) for (const b of reps(y)) finePairs.add(`${a}\u0000${b}`);
+  };
   for (const w of graph.wires) {
     if (upgradeWires.has(w)) continue;
-    for (const a of reps(boxOf(w.from)))
-      for (const b of reps(boxOf(w.to))) finePairs.add(`${a}\u0000${b}`);
-    if (w.via === 'http' && !w.reply && byId.get(boxOf(w.to))?.kind === 'endpoint') {
+    addPair(boxOf(w.from), boxOf(w.to));
+    // アダプタは http の線を引かない（D49）ので、upgrade でない http の行きの線は合流の線（endpoint・handler へ）
+    if (w.via === 'http' && !w.reply) {
       const m = /^[^#]*#[^/]*\/[^.]*/.exec(w.from);
       if (m) joinedCalls.add(m[0]);
     }
+  }
+  for (const p of opts.pairs ?? []) {
+    const i = p.indexOf('\u0000');
+    addPair(p.slice(0, i), p.slice(i + 1));
   }
   let replaced = 0;
   let retargeted = 0;
@@ -494,6 +516,13 @@ export function cleanupV2(state: MergedV2): CleanupV2Result {
     if (caller) {
       hit = members.filter((m) => references(m, other));
       if (!hit.length && w.via === 'http') hit = httpCallers(members, other);
+      // テーブルへの線（overrides の uses・8-1 の schema）は、そのテーブルを SQL で使う中の関数の箱（meta.sql。8-2b）
+      const table = byId.get(other);
+      if (!hit.length && w.via === 'sql' && table?.kind === 'table')
+        hit = members.filter((m) => {
+          const n = byId.get(m);
+          return !!n && usesTable(n, table);
+        });
     } else {
       const callers = groups.get(other) ?? [other];
       hit = members.filter((m) => callers.some((c) => references(c, m)));
@@ -536,6 +565,8 @@ export function cleanupV2(state: MergedV2): CleanupV2Result {
       const callerBox = w.reply ? b : a;
       const ends = (box: string, members: string[] | undefined, other: string) => {
         if (!members) return { list: [box], determined: true };
+        // 中が 1 つだけなら、付け替え先はそれしか無い（決められた側に数える。2026-11-09 8-2b レビュー）
+        if (members.length === 1) return { list: members, determined: true };
         const hit = referrers(members, other, box === callerBox, w);
         return hit ? { list: hit, determined: true } : { list: members, determined: false };
       };
@@ -648,6 +679,10 @@ function linkUnderscores(n: NodeV2) {
         if (named('out', 'out').some((b) => b.item.id === a.item.id))
           links.push({ from: ref(a), to: `out/${a.item.id}` });
     }
+    // in → req に分岐（認証の login。合流の段が書く）があれば、`_` の in → req にも同じ when を付ける
+    const gate = n.links?.find(
+      (l) => l.when && l.from.startsWith('in/') && l.to.startsWith('req/'),
+    )?.when;
     const pairs: Array<[string, string]> = [
       ['in', 'req'],
       ['res', 'out'],
@@ -657,10 +692,23 @@ function linkUnderscores(n: NodeV2) {
       const dsts = roots(n, 'out', dst);
       for (const a of srcs)
         for (const b of dsts)
-          if (a.item.id === UNDERSCORE || b.item.id === UNDERSCORE) add(ref(a), ref(b));
+          if (a.item.id === UNDERSCORE || b.item.id === UNDERSCORE) {
+            add(ref(a), ref(b));
+            if (gate && src === 'in') links[links.length - 1]!.when = { ...gate };
+          }
     }
+  } else if (n.kind === 'table') {
+    // table の既定は key → read（write は read へ流れない。wiring の defaultLinks と同じ）
+    if (!n.links)
+      for (const a of named('in', 'key'))
+        for (const b of named('out', 'read')) links.push({ from: ref(a), to: ref(b) });
+    const keys = roots(n, 'in', 'key');
+    const reads = roots(n, 'out', 'read');
+    for (const a of keys)
+      for (const b of reads)
+        if (a.item.id === UNDERSCORE || b.item.id === UNDERSCORE) add(ref(a), ref(b));
   } else {
-    if (!n.links && n.kind !== 'table') {
+    if (!n.links) {
       for (const a of named('in')) for (const b of named('out')) add(ref(a), ref(b));
     }
     const activation = named('in').filter((r) => ACTIVATION.includes(r.item.id));

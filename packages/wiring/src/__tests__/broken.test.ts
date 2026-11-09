@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { GraphV2 } from '@stack-atlas/schema';
-import { detectBroken } from '../broken.js';
+import { brokenEnds, detectBroken } from '../broken.js';
 import { indexGraph } from '../graph-index.js';
 import { I, N, P, W, todayGraph } from './fixture.js';
 
@@ -121,5 +121,33 @@ describe('detectBroken', () => {
         .map((b) => b.path)
         .sort(),
     ).toEqual(['amount', 'occurredAt']);
+  });
+
+  it('path が空の broken（役割ごとの欠け。docs/17 D59）は線そのもの: 描く端は線の from と to', () => {
+    // 2026-11-09 追加（8-2b）: PushToggle は必須の body を送らない。合流の段が call_1（親）→ in/body の線に path "" で書く
+    const g: GraphV2 = {
+      version: 2,
+      nodes: [
+        N('comp:Toggle', 'component', 'browser', [
+          P('out', 'out', [I('call_1', 'fetch()', { children: [I('input', 'string')] })]),
+        ]),
+        N('endpoint:POST /x', 'endpoint', 'server', [
+          P('in', 'in', [
+            I('path', 'string'),
+            I('body', 'Sub', { children: [I('endpoint', 'string')] }),
+          ]),
+        ]),
+      ],
+      wires: [
+        {
+          ...W('comp:Toggle#out/call_1', 'endpoint:POST /x#in/body', 'http'),
+          broken: [{ path: '', level: 'error', reason: '送る側に無い（必須の body）' }],
+        },
+      ],
+    };
+    const ends = brokenEnds(indexGraph(g));
+    expect(ends.map((e) => [e.from.ref, e.to.ref, e.broken.path])).toEqual([
+      ['comp:Toggle#out/call_1', 'endpoint:POST /x#in/body', ''],
+    ]);
   });
 });

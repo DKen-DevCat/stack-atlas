@@ -12,10 +12,15 @@ TS / TSX の**言語アダプタ**（Phase 8-2a。設計は `docs/17-design-adap
 | 部品 | ts-imports の comp（.tsx の大文字の関数で JSX がある。構文で判定） | `comp:<名前>` |
 | hook | ts-imports の hook | `hook:<名前>` |
 | 関数 | それ以外の export された関数・アロー関数 | `fn:<名前>`（衝突は `fn:<file>~<名前>`） |
+| オブジェクトのメソッド（8-2b） | export した const のオブジェクトリテラルで、プロパティが全部関数（メソッド・アロー関数・関数式）のものの各プロパティ（`export const api = { getRaces: () => … }`） | `fn:<オブジェクト>.<メソッド>`（`fn:api.getRaces`。衝突は `fn:<file>~<オブジェクト>.<メソッド>`） |
 
 ファイルの export がその関数 1 つで、名前がファイルの lib 名と同じもの（`lib/fetcher/index.ts` の `fetcher`）は v1 の id（`lib:fetcher`、kind helper）のまま。
 TS のハンドラは `handler:<名前>` のまま。関数の箱が v1 のファイルの箱（`lib:<file>`）の export を全部置き換えるときは `groups`（関数の箱 → v1 の箱）で知らせ、
 パイプラインの mergeV2 がその v1 の箱を group にする。
+
+オブジェクトのメソッドの箱は、呼び出し側の書き方（`api.getRaces(…)`）と同じ名前にする（サーバーの `handler:getRaces` と紛れない）。`meta.ts.exportName` は
+オブジェクトの名前（`api`。その export を全部のメソッドの箱が置き換えるので、v1 の箱 `lib:apiClient` が group になる）。関数でないプロパティ（定数・スプレッド・
+省略記法）が 1 つでもあるオブジェクトは箱にしない（v1 の箱のまま）。`api.getRaces` を呼ぶ・値として渡す参照は、オブジェクトの v1 の箱ではなくメソッドの箱へ向ける。
 
 ## 口・項目・links・線
 

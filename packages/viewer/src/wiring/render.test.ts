@@ -115,6 +115,18 @@ describe('renderScene', () => {
     expect(svg).not.toContain('<script>');
     expect(svg).toContain('&lt;img');
   });
+
+  it('path が空の broken（役割ごとの欠け。docs/17 D59）は線そのものを赤で描き、title は理由だけ', () => {
+    // 2026-11-09 追加（8-2b）: fixture-poly の PushToggle は必須の body を送らない（call_1 → in/body の線全体が赤）
+    const g = structuredClone(graph);
+    const w = g.wires.find((x) => x.from === 'fn:createTransaction#out/call_1.body')!;
+    w.from = 'fn:createTransaction#out/call_1';
+    w.broken = [{ path: '', level: 'error', reason: '送る側に無い（必須の body）' }];
+    const idx = indexGraph(g);
+    const svg = renderScene({ index: idx, layout: layoutWiring(idx), state: state0, lit: null });
+    expect(svg).toContain('data-path="" d="');
+    expect(svg).toContain('<title>送る側に無い（必須の body）</title>');
+  });
 });
 
 describe('文字の幅', () => {

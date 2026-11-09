@@ -27,3 +27,25 @@ SQL マイグレーションのテーブルを `schema:<table>` ノードにす�
   `FROM|JOIN|INTO|UPDATE|TABLE [schema.]<table>` があれば、そのノード → `schema:<table>`。
   Go のノード（`meta.go`）はパッケージのディレクトリの `.go` をすべて見る。1 ファイルに複数ノード（TS の export ごと）があれば、
   `code` に参照があるノード、無ければそのファイルの lib / handler。
+
+## v2（言語アダプタの合流点。docs/17 §7 #2・#5、Phase 8-2b）
+
+`PartialGraph.v2` に各テーブルの箱を出す（v1 と同じ id `schema:<table>`、kind `table`、runtime `data`。host は upgrade が DB の枠にする）。
+
+| 口 | dir | 項目 |
+|---|---|---|
+| `key` | in | カラム全部（WHERE で引く。合流の段が `query_n.<col> → key/<col>` を引く） |
+| `write` | in | 親の項目 `row`（type `record`）の子がカラム。INSERT で省けるもの（DEFAULT・serial・identity・AUTO_INCREMENT・nullable）は optional |
+| `read` | out | 親の項目 `row` の子がカラム。NOT NULL / PRIMARY KEY（列か表の制約）でなければ nullable |
+
+カラムの項目は type が書いたままの SQL の型、`typeRef: table:<table>`（`types[]` に source `sql`）。wireType は `sqlWireType`:
+smallint / int / integer / bigint / serial / bigserial → integer、numeric / decimal / real / double precision / float → number、
+text / varchar / char / uuid → string、boolean → boolean、timestamp / timestamptz / date / time → datetime、bytea / blob → bytes、
+json / jsonb → object、配列（`text[]` / `ARRAY`）→ array、ほか unknown。
+
+`readTables(root, globs)`（テーブル ＋ `parseColumnDefs` のカラムの定義）は go-types も使う（関数の SQL の項目の型を埋める）。
+
+線は引かない（契約。`v2Role: contract`）。関数の SQL の項目（go-types の `meta.sql`）との線は、パイプラインの合流の段（core の `joinTables`）が
+テーブル名（大文字小文字を区別しない。`schema.table` は最後の段でも）で引く: SELECT / DELETE の WHERE のカラム → `key/<col>`（WHERE の無い SELECT は
+`key/_`）、INSERT / UPDATE → `write/row`（親 1 本）、SELECT / RETURNING の 1 行 `read/row` → 関数の `in/row`（reply）。食い違いの照合（D66）は、
+読む線は受ける側（SELECT のカラム）だけ、UPDATE は送る側（SET のカラム）だけ、INSERT は両側（必須のカラムの欠けは error）。
