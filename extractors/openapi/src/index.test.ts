@@ -294,6 +294,29 @@ const countItems = (items: readonly ItemV2[]): number =>
   items.reduce((n, it) => n + 1 + countItems(it.children ?? []), 0);
 
 describe('悪意のある・壊れた spec（2026-11-09 レビュー S1）', () => {
+  it('別名を倍々に重ねた YAML（billion laughs）は展開せずに例外にする（すぐ終わる）', () => {
+    const lines = ['a0: &a0 [x, x]'];
+    for (let i = 1; i <= 30; i++) lines.push(`a${i}: &a${i} [*a${i - 1}, *a${i - 1}]`);
+    lines.push('openapi: 3.0.3', 'paths: {}', 'x-bomb: *a30');
+    const t0 = process.cpuUsage();
+    expect(() => parseOpenApi(lines.join('\n'))).toThrow(/alias/i);
+    const cpu = process.cpuUsage(t0);
+    expect((cpu.user + cpu.system) / 1000).toBeLessThan(1000);
+  });
+
+  it('普通の別名（少数）は今までどおり読める', () => {
+    const src = [
+      'openapi: 3.0.3',
+      'x-ok: &ok { description: OK }',
+      'paths:',
+      '  /a:',
+      '    get:',
+      '      responses:',
+      "        '200': *ok",
+    ].join('\n');
+    expect(parseOpenApi(src).operations.map((o) => `${o.method} ${o.path}`)).toEqual(['GET /a']);
+  });
+
   const roots: string[] = [];
   afterAll(() => {
     for (const r of roots) rmSync(r, { recursive: true, force: true });

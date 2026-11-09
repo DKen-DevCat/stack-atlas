@@ -219,7 +219,9 @@ export function parseOpenApi(
 ): OpenApiSpec {
   const lc = new LineCounter();
   const doc = parseDocument(src, { lineCounter: lc, uniqueKeys: false });
-  const json = doc.toJS({ maxAliasCount: -1 }) as unknown;
+  // 別名（&a / *a）の展開は yaml の既定の上限（100）で止める。-1（無制限）だと別名を倍々に重ねた YAML で
+  // 展開と collectRefs が指数時間になる（2026-11-09 のレビューで判明。上限を超えると例外 → 呼び出し元が警告して飛ばす）
+  const json = doc.toJS({ maxAliasCount: 100 }) as unknown;
   const root = isObj(json) ? json : {};
   const components = isObj(root['components']) ? root['components'] : {};
   const out: OpenApiSpec = { operations: [], schemas: [] };
