@@ -18,7 +18,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { isAbsolute, join } from 'node:path';
+import { pathWithin as within } from '@stack-atlas/core';
 
 /** root が base（realpath）の中にあるディレクトリなら、その realpath。無い・外・ディレクトリでなければ理由 */
 export function confineDir(
@@ -37,13 +38,6 @@ export function confineDir(
   if (!within(realBase, real, true)) return { why: 'outside' };
   if (!lstatSync(real).isDirectory()) return { why: 'missing' };
   return { dir: real };
-}
-
-/** child が root の中（allowSame なら root そのものも可）か */
-export function within(root: string, child: string, allowSame = false): boolean {
-  const rel = relative(root, child);
-  if (rel === '') return allowSame;
-  return !rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel);
 }
 
 export type FindResult =

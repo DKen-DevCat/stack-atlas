@@ -49,10 +49,24 @@ export const FONT_MIME = new Set([
   'application/vnd.ms-fontobject',
 ]);
 
+/** C0 制御文字か空白（U+0000〜U+0020。URL の仕様で前後から外すもの） */
+const isC0OrSpace = (code: number) => code <= 0x20;
+
+/**
+ * 前後の C0 制御文字と空白を外す。ループで端から数える（2026-11-09（8-3b のレビュー）: 正規表現の
+ * `/^[\u0000- ]+|[\u0000- ]+$/g` は途中の空白の並びの位置ごとに末尾まで試して 2 乗だった。空白 40k で 3.7 秒）
+ */
+export function trimC0(raw: string): string {
+  let a = 0;
+  let b = raw.length;
+  while (a < b && isC0OrSpace(raw.charCodeAt(a))) a++;
+  while (b > a && isC0OrSpace(raw.charCodeAt(b - 1))) b--;
+  return raw.slice(a, b);
+}
+
 /** 判定の前の正規化（前後の空白・C0 を落とし、タブ・改行を消し、`\` を `/` にする）。危険な制御文字があれば undefined */
 export function normalizeUrl(raw: string): string | undefined {
-  // eslint-disable-next-line no-control-regex -- URL の仕様どおり C0 制御文字と空白を外す
-  let v = raw.replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, '').replace(/[\t\n\r]/g, '');
+  let v = trimC0(raw).replace(/[\t\n\r]/g, '');
   // eslint-disable-next-line no-control-regex -- 途中に残った制御文字は危険とみなす
   if (/[\u0000-\u001f\u007f]/.test(v)) return undefined;
   v = v.replace(/\\/g, '/');
@@ -110,7 +124,10 @@ export function parseSrcset(value: string): SrcsetCandidate[] {
     i = j;
     let descriptor = '';
     if (url.endsWith(',')) {
-      url = url.replace(/,+$/, '');
+      // 末尾のカンマを端から数えて外す（`/,+$/` は途中のカンマの並びで 2 乗だった。8-3b のレビュー）
+      let e = url.length;
+      while (e > 0 && url.charCodeAt(e - 1) === 0x2c) e--;
+      url = url.slice(0, e);
     } else {
       // 記述子: カンマ（括弧の外）まで
       let depth = 0;

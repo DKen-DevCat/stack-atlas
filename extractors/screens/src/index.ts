@@ -6,14 +6,17 @@
  * - route → HTML: `/` → index.html、`/a` → a.html か a/index.html（trailingSlash なら後者を先に）、動的ルートは
  *   `screens.routes` のサンプル（最初の 1 件）。HTML が無ければ何もしない（プレースホルダのまま）
  * - 消毒（sanitize.ts・css.ts）と資産の写し（assets.ts・fsafe.ts）。落としたものの数と regions のカバー率（coverage.ts）を issues.json に出す
- * - 書き出し先は config.screens.outDir（CLI の build が出力先を入れる。設定ファイルからは書けない）。無ければ何もしない
+ * - 書き出し先は config.screens.outDir（CLI の build が出力先を入れる。設定ファイルからは書けない）。無ければ何もしない。
+ *   そこの screens/ が印の無いディレクトリ（stack-atlas が書いていない）かリンクなら、書かずに警告する（screensDirState）
+ * - 1 画面に data: URL で埋め込む SVG は合計 2 MB まで、書き出す HTML は 10 MB まで（assets.ts の DEFAULT_LIMITS）
  */
-import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import {
   SCREENS_DIR,
   SCREENS_MARKER,
   isMultiRepo,
+  screensDirState,
+  screensSkipMessage,
   sectionFor,
   type BuildIssue,
   type Extractor,
@@ -21,7 +24,7 @@ import {
   type PartialNode,
 } from '@stack-atlas/core';
 import { findNextDirs, readNextConfig } from '@stack-atlas/extractor-nextjs-app';
-import { routeToUrls, slugify } from '@stack-atlas/extractor-screenshots';
+import { routeToUrls, uniqueSlug } from '@stack-atlas/extractor-screenshots';
 import { ASSETS_DIR, AssetStore, DEFAULT_LIMITS, toSitePath } from './assets.js';
 import { computeCoverage, type Coverage } from './coverage.js';
 import { confineDir, findSiteFile, readNoFollow, SafeOutput } from './fsafe.js';
@@ -39,28 +42,30 @@ export const MAX_HTML_BYTES = 10 * 1024 * 1024;
 
 type Issue = BuildIssue & { level: 'warning' | 'info' };
 
-/** route の URL パス（routeToUrls の結果。段は URL エンコード済み）→ 探す HTML のサイトの中のパス */
+/**
+ * route の URL パス（routeToUrls の結果。段は URL エンコード済み）→ 探す HTML のサイトの中のパス。
+ * 根（`/`）だけが index.html。サイトの中のパスにできないもの（`/../a`・壊れた `%` エンコード・段の中の `/` `\` NUL）は
+ * 空の配列（2026-11-09（8-3b のレビュー）: 以前は index.html を返し、別の画面を写していた）
+ */
 export function htmlCandidates(urlPath: string, trailingSlash?: boolean): string[] {
   const base = toSitePath(urlPath.startsWith('/') ? urlPath : `/${urlPath}`, '');
-  if (!base) return ['index.html'];
+  if (base === undefined) return [];
+  if (base === '') return ['index.html'];
   const a = `${base}.html`;
   const b = `${base}/index.html`;
   return trailingSlash ? [b, a] : [a, b];
 }
 
-/** 画面の出力先の名前（screenshots と同じ slugify。英数字で始まらないものと衝突はハッシュで分ける） */
-export function screenSlug(pattern: string, used: Map<string, string>): string {
-  const h = (n: number) => createHash('sha1').update(pattern).digest('hex').slice(0, n);
-  let base = slugify(pattern);
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(base) || base.length > 100) base = `r-${h(8)}`;
-  const owner = used.get(base);
-  if (owner === undefined || owner === pattern) {
-    used.set(base, pattern);
-    return base;
-  }
-  const slug = `${base}-${h(6)}`;
-  used.set(slug, pattern);
-  return slug;
+// 制御文字の範囲そのものが目的（issues.json と端末に出す前に外す）
+// eslint-disable-next-line no-control-regex
+const UNPRINTABLE = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+
+/**
+ * issues.json と build の要約（端末）に出す文字列の制御文字（C0・DEL・C1・双方向の上書き）を `\u{1b}` の形にする
+ * （2026-11-09（8-3b のレビュー）: タグ名・rel・data-component の値は解析対象の HTML のもので、ESC で端末を操作できた）
+ */
+export function printable(s: string): string {
+  return s.replace(UNPRINTABLE, (c) => `\\u{${c.codePointAt(0)!.toString(16)}}`);
 }
 
 /** 消毒で落としたものの要約。何も落としていなければ undefined */
@@ -78,6 +83,15 @@ export function summarizeStats(s: SanitizeStats): { text: string; warn: boolean 
   if (s.css.other) parts.push(`壊れた・許可しない CSS ${s.css.other}`);
   if (!parts.length) return undefined;
   return { text: parts.join('、'), warn: s.external + s.unsafe + s.css.imports > 0 };
+}
+
+/** 1 つの文書の埋め込みの上限（DEFAULT_LIMITS.inline）で入れなかった SVG の参照の info */
+export function inlineDroppedIssue(path: string, sitePath: string, dropped: number): Issue {
+  return {
+    level: 'info',
+    path,
+    message: `${sitePath} に data: URL で埋め込む SVG が合計 ${DEFAULT_LIMITS.inline / 1024 / 1024} MB を超えるので、${dropped} 件の参照を入れない（写せない資産に数えた）`,
+  };
 }
 
 /** カバー率の issue（0 なら警告） */
@@ -126,10 +140,22 @@ export const extractor: Extractor = {
       return empty;
     }
     const issues: Issue[] = [];
+    const done = (g: PartialGraph): PartialGraph => ({
+      ...g,
+      issues: issues.map((i) => ({ ...i, path: printable(i.path), message: printable(i.message) })),
+    });
+    const state = screensDirState(cfg.outDir);
+    if (state === 'foreign' || state === 'link') {
+      const message = screensSkipMessage(state);
+      issues.push({ level: 'warning', path: 'screens', message });
+      ctx.log.warn(`screens: ${message}`);
+      return done(empty);
+    }
     const from = cfg.from ?? 'next-export';
     const next = readNextConfig(
       ctx.root,
       findNextDirs(ctx.root, sectionFor(ctx, ctx.config.next) ?? {}),
+      (m) => issues.push({ level: 'warning', path: 'screens', message: m }),
     );
     if (from === 'next-export' && next?.output && next.output !== 'export') {
       ctx.log.warn(
@@ -144,7 +170,7 @@ export const extractor: Extractor = {
         path: 'screens',
         message: 'screens.from が dir のときは screens.dir が要ります',
       });
-      return { ...empty, issues };
+      return done(empty);
     }
     const exportDir = confineDir(ctx.root, dirRel);
     if (!('dir' in exportDir)) {
@@ -157,8 +183,8 @@ export const extractor: Extractor = {
         path: 'screens',
         message: `HTML のディレクトリ ${dirRel} ${why}`,
       });
-      ctx.log.warn(`screens: HTML のディレクトリ ${dirRel} ${why}`);
-      return { ...empty, issues };
+      ctx.log.warn(printable(`screens: HTML のディレクトリ ${dirRel} ${why}`));
+      return done(empty);
     }
     const roots = [exportDir.dir];
     const pubRel =
@@ -203,8 +229,11 @@ export const extractor: Extractor = {
         continue;
       }
       let found: { file: string; sitePath: string } | undefined;
+      const invalid: string[] = [];
       for (const u of urls) {
-        for (const cand of htmlCandidates(u, next?.trailingSlash)) {
+        const cands = htmlCandidates(u, next?.trailingSlash);
+        if (!cands.length) invalid.push(u);
+        for (const cand of cands) {
           const f = findSiteFile([exportDir.dir], cand);
           if ('file' in f) {
             found = { file: f.file, sitePath: cand };
@@ -214,7 +243,13 @@ export const extractor: Extractor = {
         if (found) break;
       }
       if (!found) {
-        noHtml.push(pattern);
+        if (invalid.length === urls.length) {
+          issues.push({
+            level: 'warning',
+            path: `screens:${pattern}`,
+            message: `ルートの URL ${invalid.join(', ')} をサイトの中のパスにできない（\`..\` で根の外に出る・壊れた % エンコードなど）ので、HTML を探しません`,
+          });
+        } else noHtml.push(pattern);
         continue;
       }
       const buf = readNoFollow(found.file, MAX_HTML_BYTES);
@@ -227,9 +262,22 @@ export const extractor: Extractor = {
         continue;
       }
       const page = found;
-      const result = sanitizeHtml(buf.toString('utf8'), {
-        url: (raw, kind) => store.verdict(raw, kind, page.sitePath, `../${ASSETS_DIR}/`),
-      });
+      const budget = store.budget();
+      let result: ReturnType<typeof sanitizeHtml>;
+      try {
+        result = sanitizeHtml(buf.toString('utf8'), {
+          url: (raw, kind) => store.verdict(raw, kind, page.sitePath, `../${ASSETS_DIR}/`, budget),
+        });
+      } catch (e) {
+        // 上限で止めきれない大きさ（文字列の長さの上限）。その画面だけ出さない
+        if (!(e instanceof RangeError)) throw e;
+        issues.push({
+          level: 'warning',
+          path: `screens:${pattern}`,
+          message: `${found.sitePath} の消毒の結果が大きすぎる（${e.message}）ので、画面を出しません`,
+        });
+        continue;
+      }
       if (!result.ok) {
         issues.push({
           level: 'warning',
@@ -238,7 +286,16 @@ export const extractor: Extractor = {
         });
         continue;
       }
-      const slug = screenSlug(pattern, slugs);
+      const bytes = Buffer.byteLength(result.html);
+      if (bytes > store.outputLimit) {
+        issues.push({
+          level: 'warning',
+          path: `screens:${pattern}`,
+          message: `${found.sitePath} の消毒した HTML（${Math.ceil(bytes / 1024 / 1024)} MB）が上限 ${store.outputLimit / 1024 / 1024} MB を超えるので、画面を出しません`,
+        });
+        continue;
+      }
+      const slug = uniqueSlug(pattern, slugs);
       out.write([SCREENS_DIR, slug, 'index.html'], result.html);
       nodes.push({
         id: r.id,
@@ -257,9 +314,13 @@ export const extractor: Extractor = {
           path: `screens:${pattern}`,
           message: `消毒（${found.sitePath}）: ${sum.text}${sum.warn ? '。外部・危険な URL は読み込まない（画面に出ない）' : ''}`,
         });
+      if (budget.dropped)
+        issues.push(inlineDroppedIssue(`screens:${pattern}`, found.sitePath, budget.dropped));
       issues.push(coverageIssue(pattern, computeCoverage(r.id, upstream, result.dataComponents)));
     }
     for (const [sitePath, f] of store.cssFiles) {
+      if (f.inlineDropped)
+        issues.push(inlineDroppedIssue(`screens:${sitePath}`, sitePath, f.inlineDropped));
       const sum = summarizeStats(f.stats);
       if (!sum) continue;
       issues.push({
@@ -275,6 +336,12 @@ export const extractor: Extractor = {
         path: `screens:${sitePath}`,
         message: `SVG（${Math.ceil(size / 1024)} KB）が data: URL にする上限 ${DEFAULT_LIMITS.svg / 1024} KB を超えるので、画面に入れない（写せない資産に数えた）`,
       });
+    for (const [sitePath, size] of store.oversizedCss)
+      issues.push({
+        level: 'warning',
+        path: `screens:${sitePath}`,
+        message: `消毒した CSS（${Math.ceil(size / 1024 / 1024)} MB）が上限 ${store.outputLimit / 1024 / 1024} MB を超えるので、写さない（写せない資産に数えた）`,
+      });
     if (nodes.length) {
       out.write(
         [SCREENS_DIR, SCREENS_MARKER],
@@ -283,14 +350,18 @@ export const extractor: Extractor = {
     }
     if (noSample.length)
       ctx.log.info(
-        `screens: サンプルの無い動的ルート（screens.routes に足す）: ${noSample.join(', ')}`,
+        printable(
+          `screens: サンプルの無い動的ルート（screens.routes に足す）: ${noSample.join(', ')}`,
+        ),
       );
     if (noHtml.length)
-      ctx.log.info(`screens: HTML の無いルート（プレースホルダのまま）: ${noHtml.join(', ')}`);
+      ctx.log.info(
+        printable(`screens: HTML の無いルート（プレースホルダのまま）: ${noHtml.join(', ')}`),
+      );
     ctx.log.info(
       `screens: ${nodes.length} 画面（資産 ${store.written}、data: URL にした SVG ${store.inlined}）を ${SCREENS_DIR}/ に写した`,
     );
-    return { nodes, edges: [], issues };
+    return done({ nodes, edges: [] });
   },
 };
 

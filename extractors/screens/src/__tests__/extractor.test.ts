@@ -16,7 +16,8 @@ import { describe, expect, it } from 'vitest';
 import type { PartialGraph, PartialNode, RepoContext, StackAtlasConfig } from '@stack-atlas/core';
 import type { Edge } from '@stack-atlas/schema';
 import { SCREENS_MARKER } from '@stack-atlas/core';
-import { extractor, htmlCandidates, screenSlug } from '../index.js';
+import { uniqueSlug } from '@stack-atlas/extractor-screenshots';
+import { extractor, htmlCandidates } from '../index.js';
 import { SCREEN_CSP } from '../sanitize.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -445,16 +446,16 @@ describe('設定と境目', () => {
     expect(g.nodes.map((n) => n.id)).toEqual(['route:/a']);
   });
 
-  it('htmlCandidates と screenSlug', () => {
+  it('htmlCandidates と画面の名前（screenshots の uniqueSlug。2026-11-09（8-3b のレビュー）で screenSlug を一本にした）', () => {
     expect(htmlCandidates('/')).toEqual(['index.html']);
     expect(htmlCandidates('/a/b')).toEqual(['a/b.html', 'a/b/index.html']);
     expect(htmlCandidates('/a', true)).toEqual(['a/index.html', 'a.html']);
     expect(htmlCandidates('/items/a%20b')).toEqual(['items/a b.html', 'items/a b/index.html']);
     const used = new Map<string, string>();
-    expect(screenSlug('/', used)).toBe('index');
-    expect(screenSlug('/races/[id]', used)).toBe('races-id');
-    expect(screenSlug('/races/id', used)).toMatch(/^races-id-[0-9a-f]{6}$/);
-    expect(screenSlug('/..', used)).toMatch(/^r-[0-9a-f]{8}$/);
-    expect(screenSlug('/_assets', used)).toMatch(/^r-[0-9a-f]{8}$/);
+    expect(uniqueSlug('/', used)).toBe('index');
+    expect(uniqueSlug('/races/[id]', used)).toBe('races-id');
+    expect(uniqueSlug('/races/id', used)).toMatch(/^races-id-[0-9a-f]{6}$/);
+    expect(uniqueSlug('/..', used)).toMatch(/^r-[0-9a-f]{8}$/);
+    expect(uniqueSlug('/_assets', used)).toMatch(/^r-[0-9a-f]{8}$/);
   });
 });

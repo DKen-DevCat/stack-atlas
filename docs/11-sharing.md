@@ -103,7 +103,7 @@ index.html?graph=https://atlas.example.com/atlas/graph.json&prev=https://atlas.e
 `screens/` の HTML は消毒してあり（script 無し、`<head>` の最初の子に CSP の meta）、ビューアは `allow-scripts` 無しの sandbox の iframe で描く。
 それでも、HTML や `_assets/` を**タブで直接開いた**ときに備えて、`stack-atlas serve` と同じ応答ヘッダを付ける（D63）。
 SVG は `_assets/` にファイルとして置かず、画像として読む所（`<img>` の `src`・`srcset`、CSS の `url()` など）に `data:image/svg+xml;base64,…` で埋め込む
-（上限 256 KB。超えたものは画面に入れず `issues.json` の info に出す）。画像として読む SVG は script を動かさないので、ヘッダを付け忘れた配信（素の S3 など）でも
+（上限 256 KB。超えたものは画面に入れず `issues.json` の info に出す。埋め込むのは 1 つの画面の HTML・CSS ファイルで合計 2 MB まで。超えた参照も info）。画像として読む SVG は script を動かさないので、ヘッダを付け忘れた配信（素の S3 など）でも
 SVG の中の script がビューアと同じ origin で動くことは無い。ヘッダは HTML を直接開いたときの備え:
 
 ```

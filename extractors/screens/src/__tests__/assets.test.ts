@@ -98,7 +98,8 @@ describe('toSitePath', () => {
     expect(toSitePath('/a%5cx.png', '')).toBeUndefined();
     expect(toSitePath('/a%00.png', '')).toBeUndefined();
     expect(toSitePath('/%E0%A4%A.png', '')).toBeUndefined();
-    expect(toSitePath('/', '')).toBeUndefined();
+    // 2026-11-09 変更（8-3b のレビュー）: 根は undefined（不正なパスと同じ）でなく空文字列。htmlCandidates が根だけを index.html にする
+    expect(toSitePath('/', '')).toBe('');
   });
 });
 
@@ -126,7 +127,7 @@ describe('AssetStore', () => {
     const so = new SafeOutput(out);
     const store = new AssetStore({ roots: [site, pub], out: so });
     const v = (raw: string, kind: Parameters<AssetStore['verdict']>[1], doc = 'index.html') =>
-      store.verdict(raw, kind, doc, '../_assets/');
+      store.verdict(raw, kind, doc, '../_assets/', store.budget());
     const written = () =>
       existsSync(join(out, 'screens', '_assets'))
         ? readdirSync(join(out, 'screens', '_assets')).sort()
@@ -216,7 +217,9 @@ describe('AssetStore', () => {
           '<img src="/img/evil.svg" alt="a"><img srcset="/img/evil.svg 1x, img/evil.svg 2x">' +
           '<span style="background:url(/img/evil.svg)">s</span><input type="image" src="/img/evil.svg">' +
           '<a href="/img/evil.svg">リンクはたどるだけ</a></body></html>',
-        { url: (raw, kind) => store.verdict(raw, kind, 'index.html', '../_assets/') },
+        {
+          url: (raw, kind) => store.verdict(raw, kind, 'index.html', '../_assets/', store.budget()),
+        },
       );
       expect(r.ok).toBe(true);
       if (!r.ok) return;
@@ -247,12 +250,12 @@ describe('AssetStore', () => {
         out: new SafeOutput(join(base, 'o')),
         limits: { svg: 64 },
       });
-      expect(s.verdict('/big.svg', 'image', 'index.html', '')).toEqual({
+      expect(s.verdict('/big.svg', 'image', 'index.html', '', s.budget())).toEqual({
         ok: false,
         why: 'missing',
       });
-      expect(s.verdict('big.svg', 'image-or-font', 'index.html', '').ok).toBe(false);
-      expect(s.verdict('/small.svg', 'image', 'index.html', '')).toEqual({
+      expect(s.verdict('big.svg', 'image-or-font', 'index.html', '', s.budget()).ok).toBe(false);
+      expect(s.verdict('/small.svg', 'image', 'index.html', '', s.budget())).toEqual({
         ok: true,
         url: `data:image/svg+xml;base64,${Buffer.from('<svg/>').toString('base64')}`,
       });
@@ -288,7 +291,8 @@ describe('AssetStore', () => {
     tree(site, { '_next/static/a.png': 'A', 'logo.png': 'L' });
     const mk = (opts: { basePath?: string; assetPrefix?: string }) =>
       new AssetStore({ roots: [site], out: new SafeOutput(join(base, 'out')), ...opts });
-    const ok = (s: AssetStore, raw: string) => s.verdict(raw, 'image', 'index.html', '').ok;
+    const ok = (s: AssetStore, raw: string) =>
+      s.verdict(raw, 'image', 'index.html', '', s.budget()).ok;
     const b = mk({ basePath: '/docs/' });
     expect(ok(b, '/docs/_next/static/a.png')).toBe(true);
     expect(ok(b, '/docs/logo.png')).toBe(true);
@@ -299,17 +303,23 @@ describe('AssetStore', () => {
     expect(ok(u, 'https://cdn.example.com/_next/static/a.png')).toBe(true);
     expect(ok(u, 'HTTPS://CDN.example.com/_next/static/a.png')).toBe(true);
     expect(
-      u.verdict('https://cdn.example.com.evil/_next/static/a.png', 'image', 'index.html', ''),
+      u.verdict(
+        'https://cdn.example.com.evil/_next/static/a.png',
+        'image',
+        'index.html',
+        '',
+        u.budget(),
+      ),
     ).toEqual({
       ok: false,
       why: 'external',
     });
-    expect(u.verdict('https://cdn.example.com/../../etc/x.png', 'image', 'index.html', '')).toEqual(
-      {
-        ok: false,
-        why: 'missing',
-      },
-    );
+    expect(
+      u.verdict('https://cdn.example.com/../../etc/x.png', 'image', 'index.html', '', u.budget()),
+    ).toEqual({
+      ok: false,
+      why: 'missing',
+    });
     const r = mk({ assetPrefix: '//cdn.example.com' });
     expect(ok(r, '//cdn.example.com/_next/static/a.png')).toBe(true);
   });
@@ -322,8 +332,8 @@ describe('AssetStore', () => {
       out: new SafeOutput(join(base, 'o')),
       limits: { css: 4, asset: 1024 },
     });
-    expect(s.verdict('/big.png', 'image', 'index.html', '').ok).toBe(false);
-    expect(s.verdict('/a.css', 'style', 'index.html', '').ok).toBe(false);
+    expect(s.verdict('/big.png', 'image', 'index.html', '', s.budget()).ok).toBe(false);
+    expect(s.verdict('/a.css', 'style', 'index.html', '', s.budget()).ok).toBe(false);
   });
 });
 

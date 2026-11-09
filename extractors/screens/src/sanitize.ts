@@ -469,7 +469,7 @@ export function sanitizeHtml(input: string, opts: SanitizeOptions): SanitizeResu
       inner = r.css;
     } else {
       inner = children(el.children);
-      // <pre> の直後の改行はブラウザが捨てるので、中身の改行を残すなら 1 つ足す
+      // <pre> の直後の改行はブラウザが捨てる（字句の側でも 1 つ捨ててある。html.ts）ので、中身が改行で始まるなら 1 つ足す
       if (tag === 'pre' && inner.startsWith('\n')) inner = `\n${inner}`;
     }
     return `${open}${inner}</${tag}>`;

@@ -124,3 +124,56 @@ describe('mergePartialGraphs', () => {
     expect(JSON.stringify(part)).toBe(snapshot);
   });
 });
+
+// 2026-11-09 追加（8-3b のレビュー）: 先に出た値を残す規則で screenshots の幅・高さが残り、screens.viewport が効かなかった
+describe('mergeNodes の screen（HTML を出した側の幅・高さ）', () => {
+  const shot = {
+    id: 'route:/',
+    screen: {
+      screenshot: 'shots/index.png',
+      width: 1280,
+      height: 800,
+      regions: [{ ref: 'comp:A', x: 0, y: 0, w: 100, h: 50 }],
+    },
+  };
+  const html = (width: number, height: number) => ({
+    id: 'route:/',
+    screen: { html: 'screens/index/index.html', width, height, source: 'dir' as const },
+  });
+
+  it('screens.viewport が screenshots と違えば HTML の大きさにし、別の大きさで測った regions は捨てる（順は問わない）', () => {
+    const expected = {
+      id: 'route:/',
+      screen: {
+        screenshot: 'shots/index.png',
+        html: 'screens/index/index.html',
+        width: 375,
+        height: 812,
+        source: 'dir',
+      },
+    };
+    for (const parts of [
+      [shot, html(375, 812)],
+      [html(375, 812), shot],
+    ]) {
+      const g = mergePartialGraphs(parts.map((n) => ({ nodes: [n], edges: [] })));
+      expect(g.nodes[0]).toEqual(expected);
+    }
+  });
+
+  it('大きさが同じなら regions を残す。HTML が無ければ従来どおり先の値', () => {
+    const g = mergePartialGraphs([shot, html(1280, 800)].map((n) => ({ nodes: [n], edges: [] })));
+    expect(g.nodes[0]!.screen).toMatchObject({
+      width: 1280,
+      height: 800,
+      regions: shot.screen.regions,
+    });
+    const g2 = mergePartialGraphs(
+      [shot, { id: 'route:/', screen: { width: 375, height: 812 } }].map((n) => ({
+        nodes: [n],
+        edges: [],
+      })),
+    );
+    expect(g2.nodes[0]!.screen).toMatchObject({ width: 1280, height: 800 });
+  });
+});

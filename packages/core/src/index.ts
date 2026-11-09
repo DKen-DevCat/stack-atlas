@@ -88,11 +88,13 @@ export {
   deepMerge,
   globToRegExp,
   globBase,
+  pathWithin,
   toArray,
   toPosix,
   type DeepMergeOptions,
 } from './util.js';
 export * from './next-routes.js';
+export { screensDirState, screensSkipMessage, type ScreensDirState } from './screens-dir.js';
 export {
   buildGraph,
   type BuildGraphOptions,

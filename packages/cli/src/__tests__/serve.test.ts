@@ -1,5 +1,12 @@
 import { SCREEN_CSP } from '@stack-atlas/extractor-screens';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { request } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -150,7 +157,28 @@ describe('createAtlasServer', () => {
     expect(doc('18-design-wiring-viewer.md')).toContain(SCREEN_CSP);
   });
 
+  // 2026-11-09 追加（8-3b のレビュー）: 大文字小文字を区別しない FS（macOS の既定）では /SCREENS/ が同じファイルを CSP 無しで返していた
+  it('/SCREENS/・/%53creens/・screens/ を指す別名のディレクトリでも、screens/ の中のファイルには CSP を付ける', async () => {
+    const { url, out } = await start();
+    mkdirSync(join(out, 'screens', 'index'), { recursive: true });
+    writeFileSync(join(out, 'screens', 'index', 'index.html'), '<!DOCTYPE html><p>screen</p>');
+    symlinkSync(join(out, 'screens'), join(out, 'alias'));
+    const caseInsensitive = existsSync(join(out, 'SCREENS'));
+    for (const path of [
+      '/SCREENS/index/index.html',
+      '/%53creens/index/index.html',
+      '/Screens/index/',
+      '/alias/index/index.html',
+    ]) {
+      const r = await fetch(`${url}${path}`);
+      if (path.startsWith('/alias') || caseInsensitive) expect(r.status, path).toBe(200);
+      if (r.status === 200)
+        expect(r.headers.get('content-security-policy'), path).toBe(SCREENS_CSP);
+    }
+  });
+
   it('isScreensPath は root からの相対パスの最初の段で見る', () => {
+    expect(isScreensPath('/srv/out', '/srv/out/SCREENS/a/index.html')).toBe(true);
     expect(isScreensPath('/srv/out', '/srv/out/screens/a/index.html')).toBe(true);
     expect(isScreensPath('/srv/out/', '/srv/out/screens/_assets/x.css')).toBe(true);
     expect(isScreensPath('/srv/out', '/srv/out/screens.json')).toBe(false);
