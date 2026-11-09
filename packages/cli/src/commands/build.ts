@@ -11,15 +11,18 @@
  * 出力先の既定（<repo>/.stack-atlas/out）は解析対象の repo の中にある。repo がそこにシンボリックリンクを置いて
  * 別のファイルを書き換えさせないよう、書く前に出力先のリンクを確かめ、あれば書かずに終了コード 2 にする（unsafeOutputs）。
  *
- * screens 抽出器（docs/18 §3.3）は消毒した画面の HTML と資産を <outDir>/screens/ に書く。build は前回の screens/ を
- * （screens 抽出器が書いた印のファイルがあるときだけ）消してから抽出を始める。
+ * screens 抽出器（docs/18 §3.3）は消毒した画面の HTML と資産を、出力先の中の一時ディレクトリ（.screens-staging-*）の
+ * screens/ に書く。build が成功して graph.json を書くときに、前回の screens/（印のファイルがあるものだけ）と入れ替える
+ * （swapScreens。失敗した build は前回の screens/ を残す）。出力先の screens/ が印の無いディレクトリなら、
+ * 画面を書かずに警告する（利用者のディレクトリを消さない。screensDirState）。
  *
  * スクショ抽出器の書き出し先（config.screenshots.outDir）は、解析対象の repo の設定なので信用しない。
- * build の出力先の中だけにする（confineShotsOutDir。絶対パス・出力先の外は警告して出力先にする）。
+ * build の出力先そのものだけにする（confineShotsOutDir。graph.json は shots/… で参照するので、ほかは警告して出力先にする）。
  *
  * ハーネス（Phase 8-4。docs/19 §3.2・§3.3。出力は harness.ts）:
- * - `--dry-run`: 抽出から strict の判定まで行い、出力先には書かない（screens は一時ディレクトリに書いて消す。screenshots は
- *   強制的に無効。--with-viewer は無視）
+ * - `--dry-run`: 抽出から strict の判定まで行い、出力先には書かない（screens は一時ディレクトリの中の staging に書いて消す。
+ *   screenshots は強制的に無効。--with-viewer は無視）。出力先の screens/ が印の無いディレクトリかリンクなら、本番の build と
+ *   同じく画面を写さずに警告する（dry-run の報告が本番の build と食い違わないように）
  * - `--json`: 標準出力は build の報告の JSON だけ（docs/19 §3.2）。ログと要約は標準エラー
  * - `--strict`: strict の違反（strictIssues）があれば終了コード 1（CI の関門）
  */
@@ -33,6 +36,9 @@ import {
   loadMemos,
   memosFile,
   orphanMemos,
+  pathWithin,
+  screensDirState,
+  screensSkipMessage,
   serializeMemos,
   type BuildGraphResult,
   type Extractor,
@@ -46,6 +52,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -191,17 +198,12 @@ export function formatAdapterSummary(a: V2AdapterReport): string[] {
 
 const isSymlink = (p: string) => lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink() === true;
 
-/** child が dir そのものか、その中か（パスの字面で。リンクは unsafeOutputs で調べる） */
-const insideOrSame = (dir: string, child: string) => {
-  const rel = relative(dir, child);
-  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
-};
-
 /**
  * スクショの書き出し先（config.screenshots.outDir。PNG は <ここ>/shots/ に書く）を決める。
- * 値は config のあるディレクトリ（repo）基準の相対パスで、build の出力先 outDir そのものかその中だけを受け付ける。
- * 無ければ outDir。絶対パス・文字列でない・出力先の外（`..` で出るものも）は警告して outDir にする
- * （解析対象の repo の設定で、PNG を出力先の外の任意の場所に書かせない）
+ * 値は config のあるディレクトリ（repo）基準の相対パスで、build の出力先 outDir **そのもの**だけを受け付ける。
+ * 無ければ outDir。絶対パス・文字列でない・出力先の外（`..` で出るものも）・出力先の下のディレクトリは警告して outDir にする
+ * （解析対象の repo の設定で、PNG を出力先の外の任意の場所に書かせない。2026-11-09（8-3b のレビュー）: 出力先の下も
+ * 受け付けていたが、スクショ抽出器は graph.json からの参照を shots/<slug>.png と書くので、下のディレクトリでは画像が開けなかった）
  */
 export function confineShotsOutDir(
   repo: string,
@@ -219,8 +221,10 @@ export function confineShotsOutDir(
   if (typeof value !== 'string' || !value) return fallback('は文字列でない');
   if (isAbsolute(value)) return fallback('は絶対パスな');
   const abs = resolve(repo, value);
-  if (!insideOrSame(outDir, abs)) return fallback('は build の出力先の外を指す');
-  return abs;
+  if (!pathWithin(outDir, abs, true)) return fallback('は build の出力先の外を指す');
+  if (abs !== resolve(outDir))
+    return fallback('は build の出力先の下のディレクトリ（graph.json は shots/… で参照する）な');
+  return outDir;
 }
 
 /**
@@ -230,24 +234,24 @@ export function confineShotsOutDir(
  *   repo の外の出力先（-o で利用者が選んだ場所）は、それ自体がリンクでも調べない
  * - graph.json・graph.v1.json・issues.json・memos.json（--v1 で消す graph.v1.json も。消すのはリンクそのものだが、
  *   リンクがある出力先は信用しない）
- * - スクショの置き場 shots/ とその中の項目（スクショ抽出器は <shotsOutDir>/shots/<slug>.png に書く。shotsOutDir は
- *   confineShotsOutDir で outDir かその中に決めたもの。中なら outDir からそこまでの各ディレクトリも）
- * - 画面の置き場 screens/ と、その中の全部（screens 抽出器は <outDir>/screens/<slug>/index.html と
- *   screens/_assets/ に書き、build は前回の screens/ を消す。消すのも書くのも、リンクがあれば止める）
+ * - スクショの置き場 shots/ とその中の項目（スクショ抽出器は <outDir>/shots/<slug>.png に書く）
+ * - screens が true のとき（この build が screens/ を消すか書く。印のある screens/ か、screens を設定していて印の無い
+ *   ディレクトリでないとき）だけ、画面の置き場 screens/ と、その中の全部。2026-11-09（8-3b のレビュー）: 以前は
+ *   触らない screens/ の中まで調べ、利用者のディレクトリのリンクで build を止めていた
  * - --with-viewer で写すビューアの各ファイル・ディレクトリの写し先（cpSync は写し先のリンクをたどって書く）
  */
 export function unsafeOutputs(
   repo: string,
   outDir: string,
   viewerDist?: string,
-  shotsOutDir: string = outDir,
+  screens = false,
 ): string[] {
   const found: string[] = [];
   const check = (p: string) => {
     if (isSymlink(p)) found.push(p);
   };
   const rel = relative(repo, outDir);
-  if (rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)) {
+  if (pathWithin(repo, outDir)) {
     let p = repo;
     for (const seg of rel.split(sep)) {
       p = join(p, seg);
@@ -257,30 +261,14 @@ export function unsafeOutputs(
   if (found.length) return found; // 出力先そのものがリンクなら、中は見ない（リンクの先を調べることになる）
   for (const f of ['graph.json', 'graph.v1.json', 'issues.json', 'memos.json'])
     check(join(outDir, f));
-  // スクショの書き出し先が出力先の下のディレクトリなら、そこまでの各段も（リンクの先を見ないよう、リンクで止める）
-  let shotsBase: string | undefined = shotsOutDir;
-  const shotsRel = relative(outDir, shotsOutDir);
-  if (shotsRel && insideOrSame(outDir, shotsOutDir)) {
-    let p = outDir;
-    for (const seg of shotsRel.split(sep)) {
-      p = join(p, seg);
-      if (isSymlink(p)) {
-        found.push(p);
-        shotsBase = undefined;
-        break;
-      }
-    }
+  const shots = join(outDir, 'shots');
+  check(shots);
+  if (!found.includes(shots) && existsSync(shots) && statSync(shots).isDirectory()) {
+    for (const d of readdirSync(shots)) check(join(shots, d));
   }
-  if (shotsBase) {
-    const shots = join(shotsBase, 'shots');
-    check(shots);
-    if (!found.includes(shots) && existsSync(shots) && statSync(shots).isDirectory()) {
-      for (const d of readdirSync(shots)) check(join(shots, d));
-    }
-  }
-  const screens = join(outDir, SCREENS_DIR);
-  check(screens);
-  if (!found.includes(screens)) {
+  const screensDir = join(outDir, SCREENS_DIR);
+  if (screens) check(screensDir);
+  if (screens && !found.includes(screensDir)) {
     const walk = (dir: string) => {
       if (!lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) return;
       for (const d of readdirSync(dir, { withFileTypes: true })) {
@@ -289,7 +277,7 @@ export function unsafeOutputs(
         else if (d.isDirectory()) walk(p);
       }
     };
-    walk(screens);
+    walk(screensDir);
   }
   if (viewerDist) {
     const walk = (src: string, dest: string) => {
@@ -305,20 +293,26 @@ export function unsafeOutputs(
 }
 
 /**
- * 前回の build の screens/ を消す（消した route の画面や古い資産を残さない）。screens 抽出器が書いた印
- * （screens/.stack-atlas-screens）があるときだけ消す（-o で選んだ先の、自分が書いていない screens/ は消さない）。
- * 中のシンボリックリンクは unsafeOutputs で先に止めてある（rmSync はリンクを辿らずに消す）
+ * 成功した build の画面を出力先に置く: 前回の screens/（印 screens/.stack-atlas-screens があるものだけ）を消し、
+ * stage（この build の一時ディレクトリ）の screens/ を印があれば screens/ に移す（rename。同じ出力先の中なので一度に入れ替わる）。
+ * stage が無い（screens を設定していない・印の無い screens/ で書かなかった）ときは前回の分を消すだけ。
+ * 印の無い screens/ には触らない。中のシンボリックリンクは unsafeOutputs で先に止めてある（rmSync はリンクを辿らずに消す）。
+ * 2026-11-09（8-3b のレビュー）: 以前は抽出の前に消していたので、失敗した build の後の graph.json（前回の分）が消した画面を指した
  */
-export function clearScreens(outDir: string, log?: Logger): boolean {
+export function swapScreens(outDir: string, stage: string | undefined, log?: Logger): void {
   const dir = join(outDir, SCREENS_DIR);
-  const st = lstatSync(dir, { throwIfNoEntry: false });
-  if (!st || st.isSymbolicLink() || !st.isDirectory()) return false;
-  if (!lstatSync(join(dir, SCREENS_MARKER), { throwIfNoEntry: false })?.isFile()) {
+  const before = screensDirState(outDir);
+  if (before === 'ours') rmSync(dir, { recursive: true, force: true });
+  else if (before !== 'absent')
     log?.debug(`${dir} は screens 抽出器が書いたものではない（印が無い）ので消さない`);
-    return false;
+  if (!stage) return;
+  const fresh = join(stage, SCREENS_DIR);
+  if (!lstatSync(join(fresh, SCREENS_MARKER), { throwIfNoEntry: false })?.isFile()) return;
+  if (screensDirState(outDir) !== 'absent') {
+    log?.warn(screensSkipMessage('foreign'));
+    return;
   }
-  rmSync(dir, { recursive: true, force: true });
-  return true;
+  renameSync(fresh, dir);
 }
 
 export async function runBuild(opts: BuildOptions): Promise<number> {
@@ -329,27 +323,33 @@ export async function runBuild(opts: BuildOptions): Promise<number> {
   }
   // --json: 標準出力は JSON だけ（抽出器が直に console.log しても標準エラーへ）
   const restore = opts.json ? redirectConsoleLog() : undefined;
-  // --dry-run: 一時ディレクトリに書いて捨てる（screens もここで測る）
-  const tmp = opts.dryRun ? mkdtempSync(join(tmpdir(), 'stack-atlas-dry-run-')) : undefined;
+  // --dry-run: 一時ディレクトリに書いて捨てる（screens もここで測る）。出力先は読むだけ（screens/ の印とリンク）
+  const scratch = opts.dryRun ? mkdtempSync(join(tmpdir(), 'stack-atlas-dry-run-')) : undefined;
   try {
     const code = await buildInto(
       {
         ...opts,
         log,
-        ...(tmp ? { outDir: tmp, screenshots: false, withViewer: false } : {}),
+        ...(scratch ? { screenshots: false, withViewer: false } : {}),
       },
       restore,
+      scratch,
     );
     return code;
   } finally {
     restore?.();
-    if (tmp) rmSync(tmp, { recursive: true, force: true });
+    if (scratch) rmSync(scratch, { recursive: true, force: true });
   }
 }
 
+/**
+ * build の本体。scratch（--dry-run の一時ディレクトリ）があれば、書くものはすべてそこに書き、出力先（outDir）は読むだけ
+ * （screens/ の印とリンクを本番の build と同じ規則で判定する）
+ */
 async function buildInto(
   opts: BuildOptions & { log: Logger },
   restoreConsole: (() => void) | undefined,
+  scratch?: string,
 ): Promise<number> {
   const log = opts.log;
   const repo = resolve(opts.repo);
@@ -358,6 +358,8 @@ async function buildInto(
     return 2;
   }
   const outDir = resolve(opts.outDir ?? join(repo, '.stack-atlas', 'out'));
+  // 書く先（dry-run なら一時ディレクトリ）
+  const writeDir = scratch ?? outDir;
   const viewerDist = opts.viewerDist ?? VIEWER_DIST;
   if (opts.withViewer && !existsSync(join(viewerDist, 'index.html'))) {
     log.error(
@@ -377,11 +379,31 @@ async function buildInto(
     throw e;
   }
   // スクショ抽出器は <shotsOutDir>/shots/<slug>.png に書き、graph.json からは shots/… で参照する。
-  // そのため既定は graph.json と同じディレクトリ。設定ファイルの値は出力先の中だけ（confineShotsOutDir）
-  const shotsOutDir = confineShotsOutDir(repo, outDir, config.screenshots?.outDir, log);
+  // そのため graph.json と同じディレクトリ。設定ファイルの値は出力先そのものだけ（confineShotsOutDir）
+  const shotsOutDir = scratch ?? confineShotsOutDir(repo, outDir, config.screenshots?.outDir, log);
 
-  const unsafe = unsafeOutputs(repo, outDir, opts.withViewer ? viewerDist : undefined, shotsOutDir);
-  if (unsafe.length) {
+  // 画面（screens）: 出力先の screens/ が印の無いディレクトリなら、この build では書かない（消しもしない）。
+  // dry-run は出力先に書かないが、本番の build と同じ判定をする（リンクは本番では下の unsafeOutputs で止まる）
+  const screensState = screensDirState(outDir);
+  const screensSkip: 'foreign' | 'link' | undefined = !config.screens
+    ? undefined
+    : screensState === 'foreign'
+      ? 'foreign'
+      : scratch && screensState === 'link'
+        ? 'link'
+        : undefined;
+  if (screensSkip) log.warn(`screens: ${screensSkipMessage(screensSkip)}`);
+  // 本番の build がこの出力先の screens/ を消すか書くか（dry-run はこれで本番が止まるかを予告する）
+  const touchesScreens =
+    screensState === 'ours' || (!!config.screens && screensState !== 'foreign');
+
+  const unsafe = unsafeOutputs(
+    repo,
+    outDir,
+    opts.withViewer ? viewerDist : undefined,
+    touchesScreens,
+  );
+  if (unsafe.length && !scratch) {
     log.error(
       `出力先にシンボリックリンクがあるので書きません（リンクの先のファイルを書き換えないため）: ${unsafe.join(', ')}。` +
         'リンクを消すか、-o で別の出力先を指定してください',
@@ -390,12 +412,17 @@ async function buildInto(
   }
 
   let res: BuildGraphResult;
+  // screens 抽出器の書き出し先（書く先の中の一時ディレクトリ。成功したら swapScreens で screens/ に入れ替える）
+  let stage: string | undefined;
   try {
     config.screenshots = { ...config.screenshots, outDir: shotsOutDir };
-    // screens 抽出器は <outDir>/screens/ に書き、graph.json からは screens/… で参照する（設定ファイルの outDir は
-    // checkConfig が外す。repo の設定で出力先の外に書かせない）
-    if (config.screens) config.screens = { ...config.screens, outDir };
-    clearScreens(outDir, log);
+    // screens 抽出器は <stage>/screens/ に書き、graph.json からは screens/… で参照する（設定ファイルの outDir は
+    // checkConfig が外す。repo の設定で出力先の外に書かせない）。印の無い screens/ があれば outDir を渡さない（書かない）
+    if (config.screens && !screensSkip) {
+      mkdirSync(writeDir, { recursive: true });
+      stage = mkdtempSync(join(writeDir, '.screens-staging-'));
+      config.screens = { ...config.screens, outDir: stage };
+    }
     log.info(`解析中: ${repo}`);
     const repoEntries = Object.entries(config.repos ?? {});
     if (repoEntries.length) {
@@ -413,6 +440,7 @@ async function buildInto(
       ...(opts.v1Only ? { v1Only: true } : {}),
     });
   } catch (e) {
+    if (stage) rmSync(stage, { recursive: true, force: true });
     if (e instanceof AtlasConfigError) {
       log.error(e.message);
       return 2;
@@ -420,8 +448,28 @@ async function buildInto(
     throw e;
   }
 
-  if (opts.dryRun) return finishHarness(res, outDir, opts, restoreConsole);
+  if (screensSkip)
+    res.issues.push({
+      level: 'warning',
+      path: 'screens',
+      message: screensSkipMessage(screensSkip),
+    });
+  if (scratch) {
+    if (stage) rmSync(stage, { recursive: true, force: true });
+    if (unsafe.length)
+      res.issues.push({
+        level: 'warning',
+        path: 'build',
+        message: `出力先にシンボリックリンクがあるので、本番の build は書かずに止まります（終了コード 2）: ${unsafe.join(', ')}`,
+      });
+    return finishHarness(res, outDir, opts, restoreConsole);
+  }
   mkdirSync(outDir, { recursive: true });
+  try {
+    swapScreens(outDir, stage, log);
+  } finally {
+    if (stage) rmSync(stage, { recursive: true, force: true });
+  }
   if (opts.withViewer) cpSync(viewerDist, outDir, { recursive: true });
   const json = (v: unknown) => `${JSON.stringify(v, null, 2)}\n`;
   if (opts.v1Only) {

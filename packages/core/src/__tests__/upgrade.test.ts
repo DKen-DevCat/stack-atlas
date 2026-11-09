@@ -20,6 +20,8 @@ import {
   V2_KIND_OF_V1,
 } from '../upgrade.js';
 import { diffGraphsV2, isEmptyDiffV2 } from '../diff.js';
+import * as core from '../index.js';
+import * as wiring from '@stack-atlas/wiring';
 
 const RACE = fileURLToPath(new URL('../../../../examples/race-site.graph.json', import.meta.url));
 
@@ -917,6 +919,13 @@ describe('examples/race-site.graph.json', () => {
 
 describe('diffGraphsV2', () => {
   const v1 = JSON.parse(readFileSync(RACE, 'utf8')) as Graph;
+
+  it('2026-11-09（8-3c）: v2 の差分は @stack-atlas/wiring に移した。core は同じ関数を再 export する', () => {
+    expect(diffGraphsV2).toBe(wiring.diffGraphsV2);
+    expect(isEmptyDiffV2).toBe(wiring.isEmptyDiffV2);
+    expect(core.diffGraphsV2).toBe(wiring.diffGraphsV2);
+    expect(core.isEmptyDiffV2).toBe(wiring.isEmptyDiffV2);
+  });
 
   it('口の無い箱（検証していない graph）でも落ちない', () => {
     // 以前は n.ports をそのまま回していたので TypeError で落ちた（CLI の diff は今は v2 を検証してから比べる）

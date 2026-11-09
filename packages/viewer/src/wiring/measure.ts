@@ -46,7 +46,11 @@ export const domApi: DomApi = {
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-/** load の後、fonts.ready と画像（img）の読み込みを待つ。上限 ms（docs/18 §3.3。上限 3 秒） */
+/**
+ * load の後、fonts.ready と画像（img）の読み込みを待つ。上限 ms（docs/18 §3.3。上限 3 秒）。
+ * `loading="lazy"` の画像は待たない（2026-11-09（8-3b のレビュー）: 縮小した iframe や表示の枠の外では読み込まれず、
+ * 毎回上限まで待っていた。消毒は loading を残す）
+ */
 export async function settle(doc: Document, ms: number, api: DomApi = domApi): Promise<void> {
   const waits: Promise<unknown>[] = [];
   try {
@@ -56,6 +60,8 @@ export async function settle(doc: Document, ms: number, api: DomApi = domApi): P
     for (let i = 0; i < imgs.length; i++) {
       const img = imgs[i]!;
       if (api.complete(img)) continue;
+      // 列挙の属性の値は ASCII の大文字小文字を区別しない
+      if (api.attr(img, 'loading')?.toLowerCase() === 'lazy') continue;
       waits.push(
         new Promise<void>((r) => {
           api.once(img, 'load', r);

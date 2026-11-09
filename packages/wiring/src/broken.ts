@@ -91,12 +91,12 @@ export function detectBroken(index: GraphIndex): BrokenWire[] {
   return out;
 }
 
-/** 線の端の項目から、相対パスの最も深い所まで降りる（無い段で止まる） */
-function descend(root: IndexedItem, path: string): IndexedItem {
+/** 線の端の項目から、相対パスの最も深い所まで降りる（無い段・skip の項目で止まる） */
+function descend(root: IndexedItem, path: string, skip?: ReadonlySet<string>): IndexedItem {
   if (!path) return root;
   let cur = root;
   for (const seg of path.split('.')) {
-    const next = cur.children.find((c) => c.id === seg);
+    const next = cur.children.find((c) => c.id === seg && !skip?.has(c.ref));
     if (!next) break;
     cur = next;
   }
@@ -105,9 +105,11 @@ function descend(root: IndexedItem, path: string): IndexedItem {
 
 /**
  * graph.json に書かれた broken（抽出時の照合の結果。コードの事実）を、描く端の組にする。
- * 表示は書かれたものを正にする（detectBroken は抽出器とテストが使う）
+ * 表示は書かれたものを正にする（detectBroken は抽出器とテストが使う）。
+ * `skip` の項目（差分の幽霊の項目。今の graph に無い）には降りない: 端は今の graph の最も近い祖先で止まる
+ * （`?prev=` が無いときと同じ所。docs/18 §10.6）
  */
-export function brokenEnds(index: GraphIndex): BrokenEnd[] {
+export function brokenEnds(index: GraphIndex, skip?: ReadonlySet<string>): BrokenEnd[] {
   const out: BrokenEnd[] = [];
   for (const w of index.wires) {
     for (const b of w.wire.broken ?? []) {
@@ -115,8 +117,8 @@ export function brokenEnds(index: GraphIndex): BrokenEnd[] {
         key: `b${out.length}`,
         wire: w,
         broken: b,
-        from: descend(w.from, b.path),
-        to: descend(w.to, b.path),
+        from: descend(w.from, b.path, skip),
+        to: descend(w.to, b.path, skip),
       });
     }
   }

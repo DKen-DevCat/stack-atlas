@@ -1,12 +1,16 @@
 /**
  * エントリポイント: graph.json の入力（?graph=、ドロップ、ファイル選択）→ 検証 → Viewer。
  * - `version: 2` の graph は validateGraphV2 で検証し、3D の Viewer ではなく配線図（wiring/）で開く（SVG なので WebGL は要らない）
- * - `?prev=<URL>`（または「開く ▾ → 前回と比較…」）で前回の graph.json を読み、差分を色分けする
- * - graph.json と同じディレクトリの memos.json（と serve の GET /api/memos）を共有メモとして読む
+ * - `?prev=<URL>`（または「開く ▾ → 前回と比較…」）で前回の graph.json を読み、差分を色分けする。配線図は前も v2 のとき
+ *   差分を描き、前が v1 なら題名の横に「前の graph が v1 です」（docs/18 §3.4）
+ * - `?view=<id>` は配線図で graph の views を当てて開く（共有用。docs/18 §3.4）。URL（?graph=）から開いたときだけ読み書きする
+ *   （ドロップ・ファイル選択で開いた graph の view は URL に書かない。graph に無い id は警告を出して URL から外す）
+ * - graph.json と同じディレクトリの memos.json（と serve の GET /api/memos）を共有メモとして読む（3D の地図と配線図の両方）
+ * - 検証の一覧は 3D の地図では図の上の枠、配線図では題名の横の「警告 N 件」のリンク（D64）
  * - build の出力（docs/16 §10）の graph.json（v2）と graph.v1.json（v1）は、隣にあれば左上のリンクで行き来する
  */
 import './style.css';
-import type { Graph, ValidationIssue } from '@stack-atlas/schema';
+import type { Graph, GraphV2, ValidationIssue } from '@stack-atlas/schema';
 import { Viewer } from './app';
 import { buildModel } from './graph/model';
 import {
@@ -103,6 +107,8 @@ async function showEmpty(message?: string, note?: string) {
 
 interface PrevGraph {
   graph?: Graph;
+  /** 前回の graph.json が v2 だった（配線図の差分の比較元） */
+  graphV2?: GraphV2;
   /** 前回の graph.json を読めなかったときの警告 */
   issue?: ValidationIssue;
 }
@@ -110,6 +116,7 @@ interface PrevGraph {
 /** 前回の graph.json（差分の比較元）を LoadResult から取り出す。読めなければ警告にする */
 function prevFrom(r: LoadResult): PrevGraph {
   if (r.graph) return { graph: r.graph };
+  if (r.graphV2) return { graphV2: r.graphV2 };
   const first = r.issues.find((i) => i.level === 'error');
   return {
     issue: {
@@ -123,19 +130,44 @@ function prevFrom(r: LoadResult): PrevGraph {
 /** 画面を出し直した回数（隣の graph の確かめが終わる前に別の graph を開いたら、リンクを出さない） */
 let shownSeq = 0;
 
-function showResult(res: LoadResult, shared: SharedMemoSource, prev: PrevGraph = {}) {
+/** URL（?graph=）から開いたとき: ?view= の id（無ければ undefined）。ファイルで開いたときは渡さない */
+interface FromUrl {
+  viewId: string | undefined;
+}
+
+function showResult(
+  res: LoadResult,
+  shared: SharedMemoSource,
+  prev: PrevGraph = {},
+  fromUrl?: FromUrl,
+) {
   shownSeq++;
   overlays.replaceChildren();
   // 配線図は、v1 から変換した箱の単位の v2 で必ず出る警告（口の単位・置き場の項目の wireType unknown）を一覧に出さない
   const issues0 = res.v2 ? wiringIssues(res) : res.issues;
-  const allIssues = prev.issue ? [...issues0, prev.issue] : issues0;
-  const issues = createIssuesBox(allIssues, res.versionWarning, !!(res.graph ?? res.graphV2));
-  if (issues) overlays.append(issues);
   const view = viewFor(res, hasWebGL());
+  // 3D の地図は v1 どうしで比べる（前が v2 なら警告だけ）
+  const prevIssue =
+    prev.issue ??
+    (view !== 'wiring' && prev.graphV2
+      ? {
+          level: 'warning' as const,
+          path: 'prev',
+          message:
+            '前回の graph.json は version 2 のため差分は表示しません（3D の地図は version 1 どうしで比べます）',
+        }
+      : undefined);
+  const allIssues = prevIssue ? [...issues0, prevIssue] : issues0;
+  // 検証の一覧の枠（3D の地図と、配線図を描けなかったとき）。配線図は題名の横のリンク（D64）
+  const showIssuesBox = () => {
+    const box = createIssuesBox(allIssues, res.versionWarning, !!(res.graph ?? res.graphV2));
+    if (box) overlays.append(box);
+  };
   if (view === 'wiring') {
-    showWiring(res);
+    showWiring(res, { shared, issues: allIssues, prev, fromUrl, showIssuesBox });
     return;
   }
+  showIssuesBox();
   if (view === 'unrenderable' || !res.graph) {
     void showEmpty('graph.json を描画できませんでした。上の一覧を確認してください。');
     return;
@@ -171,23 +203,49 @@ function showResult(res: LoadResult, shared: SharedMemoSource, prev: PrevGraph =
   setStatus('ready');
 }
 
-/** graph v2 を配線図で開く（メモ・差分は v2 ではまだ扱わない） */
-function showWiring(res: LoadResult) {
+interface WiringStart {
+  shared: SharedMemoSource;
+  issues: ValidationIssue[];
+  prev: PrevGraph;
+  /** URL から開いたときだけ（?view= を読み、views のメニューで選んだ view を書く） */
+  fromUrl: FromUrl | undefined;
+  /** 描けなかったときに検証の一覧の枠を出す */
+  showIssuesBox: () => void;
+}
+
+/** graph v2 を配線図で開く（メモ・差分・views・検証の一覧のリンク。docs/18 §3.4） */
+function showWiring(res: LoadResult, w: WiringStart) {
   if (!res.graphV2) {
+    w.showIssuesBox();
     void showEmpty('graph.json（version 2）を描画できませんでした。上の一覧を確認してください。');
     return;
   }
   disposeAll();
   current = null;
+  const scope = storageScope(res.graphV2.project?.name, res.source);
   try {
     wiring = mountWiring({
       root: app,
       graph: res.graphV2,
       source: res.source,
       ...(res.baseUrl ? { baseUrl: res.baseUrl } : {}),
+      issues: w.issues,
+      memos: {
+        store: new SharedMemoStore(scope, w.shared.memos),
+        ...(w.shared.api && w.shared.apiUrl ? { apiUrl: w.shared.apiUrl } : {}),
+      },
+      ...(w.prev.graphV2
+        ? { prev: { v2: w.prev.graphV2 } }
+        : w.prev.graph
+          ? { prev: { v1: true } }
+          : {}),
+      ...(w.fromUrl?.viewId ? { view: w.fromUrl.viewId } : {}),
+      // ファイルで開いた graph の view を URL に書くと、再読み込みで別の graph（?graph= が無い）に当たる
+      ...(w.fromUrl ? { onViewChange: (id: string | null) => setParam('view', id) } : {}),
     });
   } catch (e) {
     // 参照が解けない graph は索引が作れない（一覧のエラーを見て直す）
+    w.showIssuesBox();
     void showEmpty(
       `graph.json（version 2）を描画できませんでした: ${e instanceof Error ? e.message : String(e)}`,
     );
@@ -252,6 +310,14 @@ function showNoWebGL() {
   setStatus('error');
 }
 
+/** URL のクエリを 1 つ書き換える（null で外す）。共有できるよう、views のメニューで選んだ view を ?view= に残す */
+function setParam(name: string, value: string | null) {
+  const url = new URL(location.href);
+  if (value === null) url.searchParams.delete(name);
+  else url.searchParams.set(name, value);
+  if (url.href !== location.href) history.replaceState(null, '', url);
+}
+
 /** URL から指定のクエリを外す（再読み込みで別の graph に戻らないように） */
 function dropParams(...names: string[]) {
   const url = new URL(location.href);
@@ -263,7 +329,7 @@ function dropParams(...names: string[]) {
 async function openFile(f: File) {
   setStatus('loading');
   showResult(await loadGraphFromFile(f), { memos: {}, api: false });
-  dropParams('graph', 'prev');
+  dropParams('graph', 'prev', 'view');
 }
 
 /** 「前回と比較…」: 今の graph はそのままに、選んだファイルを比較元にして作り直す */
@@ -286,16 +352,18 @@ async function start() {
     return;
   }
   app.replaceChildren(h('div', { class: 'loading' }, 'graph.json を読み込み中…'));
-  // 差分（?prev=）は v1 の地図だけ
+  // 差分（?prev=）: 3D の地図は v1 どうし、配線図は v2 どうし（前が v1 なら題名の横に文言だけ）
   const prevUrl = prevUrlFromSearch(location.search, location.href);
   const [res, prevRes] = await Promise.all([
     loadGraphFromUrl(url),
     prevUrl ? loadGraphFromUrl(prevUrl) : Promise.resolve(null),
   ]);
-  const shared = res.graph
-    ? await loadSharedMemos(res.baseUrl, location.href)
-    : { memos: {}, api: false };
-  showResult(res, shared, prevRes ? prevFrom(prevRes) : {});
+  const shared =
+    res.graph || res.graphV2
+      ? await loadSharedMemos(res.baseUrl, location.href)
+      : { memos: {}, api: false };
+  const viewId = new URLSearchParams(location.search).get('view') ?? undefined;
+  showResult(res, shared, prevRes ? prevFrom(prevRes) : {}, { viewId });
 }
 
 void start();

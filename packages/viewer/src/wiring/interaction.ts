@@ -1,5 +1,5 @@
-// 操作（docs/15 §3.5・§3.6）: クリックで選ぶ（型 → 項目 → 光っている線 → 箱 → 枠 → 空白の順に見る）、Esc で解く、
-// `F` キーで全体表示（docs/18 §3.2。画面に文字は出さない）。
+// 操作（docs/15 §3.5・§3.6）: クリックで選ぶ（型 → 項目 → 光っている線 → 箱 → 枠 → 空白の順に見る）、Esc で解く
+// （文字を打つ欄の中では欄から焦点を外すだけ）、`F` キーで全体表示（docs/18 §3.2。画面に文字は出さない）。
 // hover は何も選んでいないときだけ箱とその線を少し明るくする（選択中は hover が効かない）。分岐の表だけは選択中でも出る
 import type { Selection } from '@stack-atlas/wiring';
 import { createTableHover } from './tableHover';
@@ -24,25 +24,47 @@ export interface InteractionDeps {
   fitAll: () => void;
 }
 
-/** `F` キーを全体表示にするか（修飾キー付き・入力欄の中は除く。⌘F のページ内検索を奪わない） */
+type KeyTarget = { tagName?: string; isContentEditable?: boolean; type?: string } | null;
+
+/**
+ * 文字を打つ欄か: textarea・contenteditable・文字の input（メモの札・孤立メモの移し先など）。
+ * チェックボックス・範囲のスライダー・ボタンは含めない（焦点があってもキーの操作は効かせる）
+ */
+export function isTextEntry(target: EventTarget | null): boolean {
+  const t = target as KeyTarget;
+  const tag = t?.tagName?.toLowerCase();
+  if (t?.isContentEditable || tag === 'textarea') return true;
+  if (tag === 'input') return !['checkbox', 'range', 'button', 'radio'].includes(t?.type ?? 'text');
+  return false;
+}
+
+/** `F` キーを全体表示にするか（修飾キー付き・入力欄の中・IME の変換中は除く。⌘F のページ内検索を奪わない） */
 export function isFitKey(ev: {
   key: string;
   ctrlKey: boolean;
   metaKey: boolean;
   altKey: boolean;
+  isComposing?: boolean;
   target: EventTarget | null;
 }): boolean {
   if (ev.key !== 'f' && ev.key !== 'F') return false;
-  if (ev.ctrlKey || ev.metaKey || ev.altKey) return false;
-  const t = ev.target as { tagName?: string; isContentEditable?: boolean } | null;
-  const tag = t?.tagName?.toLowerCase();
-  if (t?.isContentEditable || tag === 'textarea' || tag === 'select') return false;
-  // チェックボックスや範囲のスライダーに焦点があっても全体表示にする（文字を打つ欄だけ除く）
-  if (tag === 'input') {
-    const type = (t as { type?: string }).type ?? 'text';
-    if (!['checkbox', 'range', 'button', 'radio'].includes(type)) return false;
-  }
-  return true;
+  if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.isComposing) return false;
+  // select も除く（文字を打つと選択肢へ飛ぶ。views のメニュー）
+  return !isTextEntry(ev.target) && (ev.target as KeyTarget)?.tagName?.toLowerCase() !== 'select';
+}
+
+/**
+ * Esc で何をするか（isFitKey と同じ文字を打つ欄の規則）: 文字を打つ欄の中は欄から焦点を外すだけ（'blur'。選択は解かない）、
+ * IME の変換中は何もしない（Esc は変換の取り消し）、それ以外は選択を解く（'clear'）。Esc でなければ null。
+ * 閉じた select（views のメニュー）は Esc に意味が無いので選択を解く（開いた一覧の Esc はブラウザが受ける）
+ */
+export function escapeAction(ev: {
+  key: string;
+  isComposing?: boolean;
+  target: EventTarget | null;
+}): 'clear' | 'blur' | null {
+  if (ev.key !== 'Escape' || ev.isComposing) return null;
+  return isTextEntry(ev.target) ? 'blur' : 'clear';
 }
 
 /** 分岐の表と、箱との間の透明な橋 */
@@ -106,8 +128,11 @@ export function installInteraction(d: InteractionDeps): () => void {
     svg.querySelectorAll('.wire.hov').forEach((p) => p.classList.remove('hov'));
   };
   const onKey = (ev: KeyboardEvent) => {
-    if (ev.key === 'Escape') d.select(null);
-    else if (isFitKey(ev)) d.fitAll();
+    if (ev.key === 'Escape') {
+      const a = escapeAction(ev);
+      if (a === 'clear') d.select(null);
+      else if (a === 'blur' && ev.target instanceof HTMLElement) ev.target.blur();
+    } else if (isFitKey(ev)) d.fitAll();
   };
   const onLeave = () => tableHover.leave();
 

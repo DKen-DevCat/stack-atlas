@@ -19,7 +19,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { isAbsolute, join } from 'node:path';
+import { pathWithin } from './util.js';
 
 /** root が base（realpath）の中にあるディレクトリなら、その realpath。無い・外・ディレクトリでなければ理由 */
 export function confineDir(
@@ -40,12 +41,8 @@ export function confineDir(
   return { dir: real };
 }
 
-/** child が root の中（allowSame なら root そのものも可）か */
-export function within(root: string, child: string, allowSame = false): boolean {
-  const rel = relative(root, child);
-  if (rel === '') return allowSame;
-  return !rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel);
-}
+/** child が root の中（allowSame なら root そのものも可）か。util の pathWithin と同じもの（8-3b のレビューで一本にした） */
+export const within = pathWithin;
 
 export type FindResult =
   { file: string; root: string } | { why: 'missing' | 'symlink' | 'outside' };

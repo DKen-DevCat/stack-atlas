@@ -98,6 +98,23 @@ export function tokenize(input: string): Token[] {
     const j = src.indexOf(needle, from);
     return j < 0 ? -1 : j + needle.length;
   };
+  /**
+   * from 以降で最初の needle の位置（無ければ -1）。前回の答えを覚えておき、まだ from より後ろならそれを返す
+   * （i は前にしか進まないので、答えは変わらない）。2026-11-09（8-3b のレビュー）: コメントごとに `-->` を
+   * 末尾まで探していたので、`-->` の無い文書の `<!----!>` の並びが 2 乗だった（320 KB で 48 秒）
+   */
+  const finder = (needle: string) => {
+    let at = -2; // -2: まだ探していない
+    let searchedFrom = 0;
+    return (from: number) => {
+      if (from >= searchedFrom && (at === -1 || at >= from)) return at;
+      searchedFrom = from;
+      at = src.indexOf(needle, from);
+      return at;
+    };
+  };
+  const nextCommentEnd = finder('-->');
+  const nextBangEnd = finder('--!>');
 
   while (i < n) {
     const c = src[i]!;
@@ -116,10 +133,10 @@ export function tokenize(input: string): Token[] {
       } else if (src.startsWith('<!--->', i)) {
         i += 6;
       } else {
-        // `-->` か `--!>` の早い方。`--!>` は `-->` までの間だけ探す（コメントが多くても全体を何度も走査しない）
-        const a = src.indexOf('-->', i + 4);
-        const b = a < 0 ? src.indexOf('--!>', i + 4) : src.slice(i + 4, a).indexOf('--!>');
-        const end = a < 0 ? (b < 0 ? -1 : b + 4) : b < 0 ? a + 3 : i + 4 + b + 4;
+        // `-->` か `--!>` の早い方（どちらも位置を覚えて、文書を前から 1 回ずつしか走査しない）
+        const a = nextCommentEnd(i + 4);
+        const b = nextBangEnd(i + 4);
+        const end = a < 0 && b < 0 ? -1 : b < 0 || (a >= 0 && a < b) ? a + 3 : b + 4;
         if (end < 0) {
           out.push({ type: 'eof-in', what: 'comment' });
           return out;
@@ -415,6 +432,9 @@ const IN_HEAD = new Set([
   'bgsound',
 ]);
 
+/** 開始タグの直後の改行 1 つを捨てる要素（HTML の仕様。ブラウザも捨てる） */
+const DROPS_LEADING_NEWLINE = new Set(['pre', 'listing', 'textarea']);
+
 /** 字句から木を組み立てる */
 export function parseHtml(input: string): Document {
   const tokens = tokenize(input);
@@ -431,9 +451,20 @@ export function parseHtml(input: string): Document {
     }
   };
   let sawElement = false;
+  /** 直前の字句が pre・listing・textarea の開始タグ（次のテキストの先頭の改行を 1 つ捨てる） */
+  let dropNewline = false;
 
   for (const t of tokens) {
     if (doc.truncated) break;
+    // 2026-11-09（8-3b のレビュー）: 捨てずに木に残すと、消毒で `<pre>` の後に改行を 1 つ足す所（ブラウザが捨てる分）と
+    // 合わせて改行が 2 つになり、`<pre>\ncode` の上に空の行が出ていた
+    if (dropNewline && (t.type === 'text' || t.type === 'raw') && t.text.startsWith('\n')) {
+      const rest = t.text.slice(1);
+      dropNewline = false;
+      if (!rest) continue;
+      t.text = rest;
+    }
+    dropNewline = t.type === 'start' && DROPS_LEADING_NEWLINE.has(t.name);
     switch (t.type) {
       case 'doctype':
         if (!sawElement) doc.doctype = true;

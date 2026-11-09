@@ -14,6 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Browser } from 'playwright';
 import type { PartialGraph, RepoContext } from '@stack-atlas/core';
 import { extractor } from '../index.js';
+import { sanitizeHtml } from '../sanitize.js';
 
 const poly = resolve(fileURLToPath(new URL('../../../../examples/fixture-poly', import.meta.url)));
 const FALLBACK_EXECUTABLE = '/opt/pw-browsers/chromium';
@@ -147,4 +148,26 @@ describe('消毒した画面を Chromium で開く', () => {
     },
     60_000,
   );
+
+  // 2026-11-09 追加（8-3b のレビュー）: 字句が <pre> の直後の改行を残していたので、書き出しで足す改行と合わせて 2 つになり、
+  // ブラウザが 1 つ捨てた後も上に空の行が出ていた
+  it('<pre> の直後の改行: 消毒した HTML をブラウザで描くと元と同じ中身', async () => {
+    const page = await browser.newPage();
+    for (const [src, text] of [
+      ['<pre>\ncode</pre>', 'code'],
+      ['<pre>\n\ncode</pre>', '\ncode'],
+      ['<pre>code\n</pre>', 'code\n'],
+    ] as const) {
+      const r = sanitizeHtml(`<!DOCTYPE html><html><head></head><body>${src}</body></html>`, {
+        url: () => ({ ok: false, why: 'missing' }),
+      });
+      if (!r.ok) throw new Error(r.reason);
+      await page.setContent(r.html);
+      expect(await page.evaluate(`document.querySelector('pre').textContent`), src).toBe(text);
+      // 元の HTML をそのまま描いても同じ（ブラウザの解釈と揃っている）
+      await page.setContent(`<!DOCTYPE html><html><head></head><body>${src}</body></html>`);
+      expect(await page.evaluate(`document.querySelector('pre').textContent`), src).toBe(text);
+    }
+    await page.close();
+  });
 });

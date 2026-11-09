@@ -8,6 +8,9 @@
  * - SVG はファイルとして写さず、参照している所（画像として読む所だけ）に `data:image/svg+xml;base64,…` で埋め込む
  *   （上限 256 KB。超えたら写さずに oversized に数える）。ファイルの SVG は、応答ヘッダの無い配信（素の S3 など）で
  *   タブで直接開くと中の script がビューアと同じ origin で動きうる。画像として読む SVG は script を動かさない
+ * - 埋め込むのは 1 つの文書（画面の HTML・写す CSS ファイル）で合計 2 MB まで（InlineBudget。超えた参照は入れずに数える）。
+ *   2026-11-09（8-3b のレビュー）: 参照ごとに埋め込むので、256 KB の SVG を 100 回参照すると 34 MB、2000 回で文字列の
+ *   上限を超えて抽出器が落ちていた。写す CSS も書き出しが 10 MB を超えたら書かない
  * - 書き出す名前は内容のハッシュ（`screens/_assets/<hash>.<ext>`）。CSS は消毒（css.ts）してから中の url() を写した名前に書き換え、
  *   書き換えた後の内容でハッシュを取る。書き出す拡張子は WRITTEN_EXT だけ（svg は無い）
  */
@@ -36,14 +39,30 @@ export const ASSET_EXT: Record<AssetKind, ReadonlySet<string>> = {
 export const WRITTEN_EXT: ReadonlySet<string> = new Set(['css', ...IMAGE_EXT, ...FONT_EXT]);
 
 export const ASSETS_DIR = '_assets';
-/** 大きさの上限（バイト）。svg は data: URL にして参照ごとに埋め込むので小さく */
-export const DEFAULT_LIMITS = { css: 5 * 1024 * 1024, asset: 20 * 1024 * 1024, svg: 256 * 1024 };
+/**
+ * 大きさの上限（バイト）。svg は data: URL にして参照ごとに埋め込むので小さく。
+ * inline は 1 つの文書に埋め込む data: URL の合計、output は書き出す画面の HTML・CSS ファイル 1 つの大きさ
+ */
+export const DEFAULT_LIMITS = {
+  css: 5 * 1024 * 1024,
+  asset: 20 * 1024 * 1024,
+  svg: 256 * 1024,
+  inline: 2 * 1024 * 1024,
+  output: 10 * 1024 * 1024,
+};
+
+/** 1 つの文書（画面の HTML・写す CSS ファイル）に埋め込める data: URL の残りと、上限で入れなかった参照の数 */
+export interface InlineBudget {
+  left: number;
+  dropped: number;
+}
 
 /**
  * URL の相対パス（判定済み。scheme も `//` も無い。`\` は `/` にしてある）→ サイトの中のパス（`a/b.css`）。
  * `/` で始まるものは prefixes（basePath・assetPrefix のパス）の最初に合ったものを外す。
  * 相対のものは docDir（文書のディレクトリ）から。`%xx` は段ごとに解き、`..` で根の上に出る・壊れたエンコード・
- * 段の中の `/` `\` NUL は undefined
+ * 段の中の `/` `\` NUL は undefined。根そのもの（`/`）は空文字列（2026-11-09（8-3b のレビュー）: 以前は undefined で、
+ * 呼び出し側が不正なパスと根を区別できず、不正なルートの URL が index.html になっていた）
  */
 export function toSitePath(
   value: string,
@@ -80,14 +99,16 @@ export function toSitePath(
     }
     out.push(seg);
   }
-  return out.length ? out.join('/') : undefined;
+  return out.join('/');
 }
 
 /** basePath・assetPrefix（next.config）を正規化する: 末尾の `/` を外す。assetPrefix は URL（`https://` `//`）かパス */
 export function normalizePrefix(p: string | undefined): string | undefined {
   if (!p) return undefined;
-  const v = p.replace(/\/+$/, '');
-  return v || undefined;
+  // 末尾の `/` を端から数えて外す（`/\/+$/` は途中の `/` の並びで 2 乗だった。8-3b のレビュー）
+  let e = p.length;
+  while (e > 0 && p.charCodeAt(e - 1) === 0x2f) e--;
+  return p.slice(0, e) || undefined;
 }
 
 export interface AssetStoreOptions {
@@ -104,7 +125,7 @@ export interface AssetStoreOptions {
 /** 写した資産: ファイルの名前（`_assets/` の中）か、埋め込む data: URL */
 type Copied = { name: string } | { dataUrl: string };
 
-/** 写した資産の名前と数。同じファイルは 1 回だけ写す */
+/** 写した資産の名前と数。同じファイルは 1 回だけ写す（data: URL の文字列も資産ごとに 1 つを使い回す） */
 export class AssetStore {
   private readonly copied = new Map<string, Copied | null>();
   private readonly prefixes: string[];
@@ -114,10 +135,18 @@ export class AssetStore {
   written = 0;
   /** data: URL にした SVG の数（ファイルごとに 1 つ） */
   inlined = 0;
-  /** 写した CSS ファイル（サイトの中のパス → 書き出した名前と、消毒で落としたものの数）。issues.json にファイルごとに出す */
-  readonly cssFiles = new Map<string, { name: string; stats: SanitizeStats }>();
+  /**
+   * 写した CSS ファイル（サイトの中のパス → 書き出した名前と、消毒で落としたものの数、埋め込みの上限で入れなかった
+   * SVG の参照の数）。issues.json にファイルごとに出す
+   */
+  readonly cssFiles = new Map<
+    string,
+    { name: string; stats: SanitizeStats; inlineDropped: number }
+  >();
   /** data: URL の上限を超えたので写さなかった SVG（サイトの中のパス → バイト数）。issues.json に出す */
   readonly oversized = new Map<string, number>();
+  /** 消毒した結果が output の上限を超えたので書かなかった CSS（サイトの中のパス → バイト数）。issues.json に出す */
+  readonly oversizedCss = new Map<string, number>();
 
   constructor(private readonly opts: AssetStoreOptions) {
     const base = normalizePrefix(opts.basePath);
@@ -130,11 +159,28 @@ export class AssetStore {
     this.limits = { ...DEFAULT_LIMITS, ...opts.limits };
   }
 
+  /** 1 つの文書の埋め込みの枠（DEFAULT_LIMITS.inline） */
+  budget(): InlineBudget {
+    return { left: this.limits.inline, dropped: 0 };
+  }
+
+  /** 書き出す画面の HTML・CSS ファイルの大きさの上限 */
+  get outputLimit(): number {
+    return this.limits.output;
+  }
+
   /**
    * URL を判定する（docSitePath は参照している文書のサイトの中のパス。refPrefix は書き出す参照の前に付けるもの:
-   * 画面の HTML からは `../_assets/`、写した CSS からは ``）
+   * 画面の HTML からは `../_assets/`、写した CSS からは ``）。budget はその文書の埋め込みの枠（budget() で文書ごとに作る。
+   * 省けない）で、data: URL にする SVG が残りに入らなければ入れない（写せない資産。budget.dropped に数える）
    */
-  verdict(raw: string, kind: UrlKind, docSitePath: string, refPrefix: string): UrlVerdict {
+  verdict(
+    raw: string,
+    kind: UrlKind,
+    docSitePath: string,
+    refPrefix: string,
+    budget: InlineBudget,
+  ): UrlVerdict {
     let c = classifyUrl(raw);
     // assetPrefix が URL（https://cdn… や //cdn…）なら、その下は同じ出所の `/` で始まるパスとして読む
     if (c.type === 'external' && this.urlPrefix) {
@@ -168,6 +214,13 @@ export class AssetStore {
         if (kind === 'link') return { ok: true, url: c.value };
         const copied = this.copy(c.value, kind, docSitePath);
         if (!copied) return { ok: false, why: 'missing' };
+        if ('dataUrl' in copied) {
+          if (copied.dataUrl.length > budget.left) {
+            budget.dropped++;
+            return { ok: false, why: 'missing' };
+          }
+          budget.left -= copied.dataUrl.length;
+        }
         const fragment = kind === 'style' ? '' : (/#[A-Za-z0-9_.:-]*$/.exec(c.value)?.[0] ?? '');
         const url = 'dataUrl' in copied ? copied.dataUrl : `${refPrefix}${copied.name}`;
         return { ok: true, url: `${url}${fragment}` };
@@ -208,9 +261,10 @@ export class AssetStore {
       this.inlined++;
     } else if (ext === 'css') {
       const stats = emptyStats();
+      const budget = this.budget();
       const css = sanitizeStylesheet(buf.toString('utf8'), {
         url: (raw) => {
-          const v = this.verdict(raw, 'image-or-font', sitePath, '');
+          const v = this.verdict(raw, 'image-or-font', sitePath, '', budget);
           if (v.ok) return { ok: true, url: v.url };
           if (v.why === 'external') stats.external++;
           else if (v.why === 'unsafe') stats.unsafe++;
@@ -220,10 +274,16 @@ export class AssetStore {
       });
       stats.css = css.stats;
       const data = `${css.css}\n`;
+      const bytes = Buffer.byteLength(data);
+      if (bytes > this.limits.output) {
+        // 書かない（写せない資産。呼び出し側の参照は外れる）。読みかけの null のまま残し、次の参照も同じにする
+        this.oversizedCss.set(sitePath, bytes);
+        return undefined;
+      }
       const name = `${hash(data)}.css`;
       result = { name };
       this.write(name, data);
-      this.cssFiles.set(sitePath, { name, stats });
+      this.cssFiles.set(sitePath, { name, stats, inlineDropped: budget.dropped });
     } else {
       const name = `${hash(buf)}.${ext}`;
       result = { name };

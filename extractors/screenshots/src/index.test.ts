@@ -69,6 +69,16 @@ describe('uniqueSlug', () => {
     // 決定的
     expect(uniqueSlug('/races/id', new Map([['races-id', '/races/[id]']]))).toBe(second);
   });
+
+  it('英数字で始まらない・100 文字を超える名前は r-<ハッシュ>（2026-11-09（8-3b のレビュー）: screens の screenSlug と一本にした）', () => {
+    const used = new Map<string, string>();
+    expect(uniqueSlug('/..', used)).toMatch(/^r-[0-9a-f]{8}$/);
+    expect(uniqueSlug('/_assets', used)).toMatch(/^r-[0-9a-f]{8}$/);
+    expect(uniqueSlug('/.well-known', used)).toMatch(/^r-[0-9a-f]{8}$/);
+    expect(uniqueSlug(`/${'a'.repeat(101)}`, used)).toMatch(/^r-[0-9a-f]{8}$/);
+    expect(uniqueSlug(`/${'a'.repeat(100)}`, used)).toBe('a'.repeat(100));
+    expect(uniqueSlug('/_assets', used)).toBe(uniqueSlug('/_assets', new Map()));
+  });
 });
 
 describe('resolveRegionRef', () => {

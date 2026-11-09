@@ -162,4 +162,9 @@ export interface LayoutOptions {
    * false は 8-3a の配置（項目の行だけ。テストで比べる用）
    */
   screens?: boolean;
+  /**
+   * 差分の幽霊の項目（diffOverlayV2 の ghost.items）。切れた線の端はここに降りず、今の graph の最も近い祖先で止まる
+   * （`?prev=` が無いときと同じ所。docs/18 §10.6）
+   */
+  ghostItems?: ReadonlySet<string>;
 }
