@@ -85,21 +85,34 @@ export function findSiteFile(roots: readonly string[], sitePath: string): FindRe
   return { why: 'missing' };
 }
 
-/** シンボリックリンクを辿らずに開いて読む。普通のファイルでない・maxBytes を超えるなら undefined */
-export function readNoFollow(file: string, maxBytes: number): Buffer | undefined {
+export type ReadResult =
+  { data: Buffer } | { why: 'unreadable' } | { why: 'too-large'; size: number };
+
+/**
+ * シンボリックリンクを辿らずに開いて読む。開けない・普通のファイルでないなら unreadable、
+ * maxBytes を超えるなら too-large（大きさ付き。読まない）
+ */
+export function readNoFollowResult(file: string, maxBytes: number): ReadResult {
   let fd: number;
   try {
     fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   } catch {
-    return undefined;
+    return { why: 'unreadable' };
   }
   try {
     const st = fstatSync(fd);
-    if (!st.isFile() || st.size > maxBytes) return undefined;
-    return readFileSync(fd);
+    if (!st.isFile()) return { why: 'unreadable' };
+    if (st.size > maxBytes) return { why: 'too-large', size: st.size };
+    return { data: readFileSync(fd) };
   } finally {
     closeSync(fd);
   }
+}
+
+/** シンボリックリンクを辿らずに開いて読む。普通のファイルでない・maxBytes を超えるなら undefined */
+export function readNoFollow(file: string, maxBytes: number): Buffer | undefined {
+  const r = readNoFollowResult(file, maxBytes);
+  return 'data' in r ? r.data : undefined;
 }
 
 const SEGMENT = /^[A-Za-z0-9_.][A-Za-z0-9._-]*$/;

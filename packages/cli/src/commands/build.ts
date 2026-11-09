@@ -13,6 +13,9 @@
  *
  * screens 抽出器（docs/18 §3.3）は消毒した画面の HTML と資産を <outDir>/screens/ に書く。build は前回の screens/ を
  * （screens 抽出器が書いた印のファイルがあるときだけ）消してから抽出を始める。
+ *
+ * スクショ抽出器の書き出し先（config.screenshots.outDir）は、解析対象の repo の設定なので信用しない。
+ * build の出力先の中だけにする（confineShotsOutDir。絶対パス・出力先の外は警告して出力先にする）。
  */
 import {
   AtlasConfigError,
@@ -147,6 +150,38 @@ export function formatAdapterSummary(a: V2AdapterReport): string[] {
 
 const isSymlink = (p: string) => lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink() === true;
 
+/** child が dir そのものか、その中か（パスの字面で。リンクは unsafeOutputs で調べる） */
+const insideOrSame = (dir: string, child: string) => {
+  const rel = relative(dir, child);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+};
+
+/**
+ * スクショの書き出し先（config.screenshots.outDir。PNG は <ここ>/shots/ に書く）を決める。
+ * 値は config のあるディレクトリ（repo）基準の相対パスで、build の出力先 outDir そのものかその中だけを受け付ける。
+ * 無ければ outDir。絶対パス・文字列でない・出力先の外（`..` で出るものも）は警告して outDir にする
+ * （解析対象の repo の設定で、PNG を出力先の外の任意の場所に書かせない）
+ */
+export function confineShotsOutDir(
+  repo: string,
+  outDir: string,
+  value: unknown,
+  log?: Logger,
+): string {
+  if (value === undefined) return outDir;
+  const fallback = (why: string) => {
+    log?.warn(
+      `screenshots.outDir ${JSON.stringify(value)} ${why}ので使いません（スクショは出力先 ${outDir} の shots/ に書きます）`,
+    );
+    return outDir;
+  };
+  if (typeof value !== 'string' || !value) return fallback('は文字列でない');
+  if (isAbsolute(value)) return fallback('は絶対パスな');
+  const abs = resolve(repo, value);
+  if (!insideOrSame(outDir, abs)) return fallback('は build の出力先の外を指す');
+  return abs;
+}
+
 /**
  * build が書く・消すパスのうち、シンボリックリンクになっているもの（解析対象の repo が置いたリンクで、repo の外の
  * ファイルを書き換えないため）。調べるのは:
@@ -154,12 +189,18 @@ const isSymlink = (p: string) => lstatSync(p, { throwIfNoEntry: false })?.isSymb
  *   repo の外の出力先（-o で利用者が選んだ場所）は、それ自体がリンクでも調べない
  * - graph.json・graph.v1.json・issues.json・memos.json（--v1 で消す graph.v1.json も。消すのはリンクそのものだが、
  *   リンクがある出力先は信用しない）
- * - スクショの置き場 shots/ とその中の項目（スクショ抽出器は <outDir>/shots/<slug>.png に書く）
+ * - スクショの置き場 shots/ とその中の項目（スクショ抽出器は <shotsOutDir>/shots/<slug>.png に書く。shotsOutDir は
+ *   confineShotsOutDir で outDir かその中に決めたもの。中なら outDir からそこまでの各ディレクトリも）
  * - 画面の置き場 screens/ と、その中の全部（screens 抽出器は <outDir>/screens/<slug>/index.html と
  *   screens/_assets/ に書き、build は前回の screens/ を消す。消すのも書くのも、リンクがあれば止める）
  * - --with-viewer で写すビューアの各ファイル・ディレクトリの写し先（cpSync は写し先のリンクをたどって書く）
  */
-export function unsafeOutputs(repo: string, outDir: string, viewerDist?: string): string[] {
+export function unsafeOutputs(
+  repo: string,
+  outDir: string,
+  viewerDist?: string,
+  shotsOutDir: string = outDir,
+): string[] {
   const found: string[] = [];
   const check = (p: string) => {
     if (isSymlink(p)) found.push(p);
@@ -175,10 +216,26 @@ export function unsafeOutputs(repo: string, outDir: string, viewerDist?: string)
   if (found.length) return found; // 出力先そのものがリンクなら、中は見ない（リンクの先を調べることになる）
   for (const f of ['graph.json', 'graph.v1.json', 'issues.json', 'memos.json'])
     check(join(outDir, f));
-  const shots = join(outDir, 'shots');
-  check(shots);
-  if (!found.includes(shots) && existsSync(shots) && statSync(shots).isDirectory()) {
-    for (const d of readdirSync(shots)) check(join(shots, d));
+  // スクショの書き出し先が出力先の下のディレクトリなら、そこまでの各段も（リンクの先を見ないよう、リンクで止める）
+  let shotsBase: string | undefined = shotsOutDir;
+  const shotsRel = relative(outDir, shotsOutDir);
+  if (shotsRel && insideOrSame(outDir, shotsOutDir)) {
+    let p = outDir;
+    for (const seg of shotsRel.split(sep)) {
+      p = join(p, seg);
+      if (isSymlink(p)) {
+        found.push(p);
+        shotsBase = undefined;
+        break;
+      }
+    }
+  }
+  if (shotsBase) {
+    const shots = join(shotsBase, 'shots');
+    check(shots);
+    if (!found.includes(shots) && existsSync(shots) && statSync(shots).isDirectory()) {
+      for (const d of readdirSync(shots)) check(join(shots, d));
+    }
   }
   const screens = join(outDir, SCREENS_DIR);
   check(screens);
@@ -239,7 +296,21 @@ export async function runBuild(opts: BuildOptions): Promise<number> {
     return 2;
   }
 
-  const unsafe = unsafeOutputs(repo, outDir, opts.withViewer ? viewerDist : undefined);
+  let config: ReturnType<typeof loadConfig>;
+  try {
+    config = loadConfig(repo, log);
+  } catch (e) {
+    if (e instanceof AtlasConfigError) {
+      log.error(e.message);
+      return 2;
+    }
+    throw e;
+  }
+  // スクショ抽出器は <shotsOutDir>/shots/<slug>.png に書き、graph.json からは shots/… で参照する。
+  // そのため既定は graph.json と同じディレクトリ。設定ファイルの値は出力先の中だけ（confineShotsOutDir）
+  const shotsOutDir = confineShotsOutDir(repo, outDir, config.screenshots?.outDir, log);
+
+  const unsafe = unsafeOutputs(repo, outDir, opts.withViewer ? viewerDist : undefined, shotsOutDir);
   if (unsafe.length) {
     log.error(
       `出力先にシンボリックリンクがあるので書きません（リンクの先のファイルを書き換えないため）: ${unsafe.join(', ')}。` +
@@ -250,13 +321,7 @@ export async function runBuild(opts: BuildOptions): Promise<number> {
 
   let res: BuildGraphResult;
   try {
-    const config = loadConfig(repo, log);
-    // スクショ抽出器は <outDir>/shots/<slug>.png に書き、graph.json からは shots/… で参照する。
-    // そのため抽出器の outDir は graph.json と同じディレクトリにする
-    config.screenshots = {
-      ...config.screenshots,
-      outDir: config.screenshots?.outDir ?? outDir,
-    };
+    config.screenshots = { ...config.screenshots, outDir: shotsOutDir };
     // screens 抽出器は <outDir>/screens/ に書き、graph.json からは screens/… で参照する（設定ファイルの outDir は
     // checkConfig が外す。repo の設定で出力先の外に書かせない）
     if (config.screens) config.screens = { ...config.screens, outDir };

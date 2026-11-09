@@ -71,9 +71,10 @@ viewer/wiring
 - **消毒**（許可リスト。自前の字句解析。D63）:
   - 字句から**書き直す**（元の文字列を写さない）。doctype は先頭に残し、CSP の meta を **`<head>` の最初の子**に入れる（`<head>` を決められない文書は出さない）: `default-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; base-uri 'none'; form-action 'none'`
   - タグごとの属性の許可リスト。URL を持つ属性（`src` `href` `srcset` `poster` `background` `xlink:href` `ping` `formaction` `action` `data` `cite`）は全部、文字参照を解き空白・制御文字を除いてから scheme を見る。残すのは相対パスと、画像・フォントの `data:` だけ
-  - まるごと落とす: `script` `noscript` `iframe` `object` `embed` `form` `base` `meta[http-equiv]` `svg` `math` `template` `title` `textarea` `xmp` `noembed` `noframes` `plaintext`、コメント・CDATA、`on*` 属性、`<link>` の `rel=stylesheet` 以外。解析できない所（閉じていないタグ・未知の構文）は要素ごと落とす
+  - まるごと落とす: `script` `noscript` `iframe` `object` `embed` `base` `meta[http-equiv]` `svg` `math` `template` `title` `textarea` `xmp` `noembed` `noframes` `plaintext`、コメント・CDATA、`on*` 属性、`<link>` の `rel=stylesheet` 以外。解析できない所（閉じていないタグ・未知の構文）は要素ごと落とす
+  - `form` は `div` に書き換える（2026-11-09 変更（8-3b）。中身ごと落とすと部品のルート要素の `data-component` が消え、領域が取れない。属性は div の許可リストで、送信に関わる属性は落ちる。CSP の `form-action 'none'` と `allow-forms` 無しはそのまま）
   - CSS（`<style>` の中身・`style` 属性・写す CSS ファイル）は CSS の字句解析を通す。`@import`・`image-set()`・外部の `url()` を落とし、エスケープ（`u\72l(`）は解いてから判定する
-- **資産の写し**: 同じ出所の CSS・フォント・画像（`/_next/static/...`、`public/`）だけ。読む元は realpath にして export のディレクトリと public の中に限り、シンボリックリンクは辿らない。拡張子は許可リスト（css woff woff2 ttf otf png jpg jpeg gif webp avif svg ico）。写した名前は内容のハッシュ（`_assets/<hash>.<ext>`）。外部 URL と落とした要素の数を `issues.json` に出す
+- **資産の写し**: 同じ出所の CSS・フォント・画像（`/_next/static/...`、`public/`）だけ。読む元は realpath にして export のディレクトリと public の中に限り、シンボリックリンクは辿らない。拡張子は許可リスト（css woff woff2 ttf otf png jpg jpeg gif webp avif svg ico）。写した名前は内容のハッシュ（`_assets/<hash>.<ext>`）。**svg はファイルにせず**、画像として読む所（img の src・srcset、CSS の url() など）に `data:image/svg+xml;base64` で埋め込む（上限 256 KB。2026-11-09 変更（8-3b）。ファイルの SVG は応答ヘッダの無い配信で直接開くと script がビューアの origin で動きうる）。外部 URL と落とした要素の数を `issues.json` に出す
 - **regions のカバー率**（docs/14 §3.3 の 4）: route ごとに「HTML の `data-component` で解けた部品の数 ÷ その画面から呼び出しでたどれる部品の数」を `issues.json` に出す。0 なら警告（`data-component` を付けるきっかけ。ビルドは止めない）
 - 出力: `out/screens/<slug>/index.html`、箱の `screen = { html, width, height, source }`。書く先は出力先の中だけで、シンボリックリンクを確かめる（build の既存の検査）
 - `screenshots` 抽出器はそのまま。両方あれば `screen.html` を優先して描く

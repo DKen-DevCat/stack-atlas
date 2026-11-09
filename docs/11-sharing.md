@@ -101,8 +101,10 @@ index.html?graph=https://atlas.example.com/atlas/graph.json&prev=https://atlas.e
 **画面の応答ヘッダ（`screens/*`）**
 
 `screens/` の HTML は消毒してあり（script 無し、`<head>` の最初の子に CSP の meta）、ビューアは `allow-scripts` 無しの sandbox の iframe で描く。
-それでも、HTML や `_assets/` の SVG を**タブで直接開いた**ときに備えて、`stack-atlas serve` と同じ応答ヘッダを付ける（D63。SVG はファイルのまま写すので、
-ヘッダが無いと、直接開いた SVG の中の script がビューアと同じ origin で動きうる）:
+それでも、HTML や `_assets/` を**タブで直接開いた**ときに備えて、`stack-atlas serve` と同じ応答ヘッダを付ける（D63）。
+SVG は `_assets/` にファイルとして置かず、画像として読む所（`<img>` の `src`・`srcset`、CSS の `url()` など）に `data:image/svg+xml;base64,…` で埋め込む
+（上限 256 KB。超えたものは画面に入れず `issues.json` の info に出す）。画像として読む SVG は script を動かさないので、ヘッダを付け忘れた配信（素の S3 など）でも
+SVG の中の script がビューアと同じ origin で動くことは無い。ヘッダは HTML を直接開いたときの備え:
 
 ```
 Content-Security-Policy: sandbox allow-same-origin; default-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; base-uri 'none'; form-action 'none'
@@ -195,7 +197,7 @@ stack-atlas serve out --host 0.0.0.0 --port 4173 --repo /srv/my-app --allowed-ho
 
 - ソースコードは CI のランナー（またはローカル）の中だけで解析する。外部 SaaS に送らない。
 - 配信物は静的ファイル（HTML・JS・graph.json・memos.json・PNG）だけ。graph.json にはコード抜粋（`code`）とファイルパスが入るので、**社内限定の場所に置く**。
-- `screens/` の画面は対象アプリのビルド成果物の写しで、画面の文言（とその画面のデータ）が入る。同じく社内限定に置く。写すときに許可リストで消毒し（script・noscript・iframe・form・外部 URL・`on*`・`javascript:` などを落とす。docs/18 §3.3）、
+- `screens/` の画面は対象アプリのビルド成果物の写しで、画面の文言（とその画面のデータ）が入る。同じく社内限定に置く。写すときに許可リストで消毒し（script・noscript・iframe・外部 URL・`on*`・`javascript:` などを落とし、form は div に書き換える。SVG は data: URL で埋め込む。docs/18 §3.3）、
   ビューアは `allow-scripts` 無しの sandbox の iframe で描く。直接開かれたときのために `screens/*` の応答に sandbox 付きの CSP を付ける（`serve` は自動。CloudFront は上の「画面の応答ヘッダ」）。
   build は `issues.json` に route ごとの「落としたもの」（外部・危険な URL があれば警告）と regions のカバー率を出す
 - `serve --repo` の書き込みは `Content-Type: application/json` の POST だけを受け付ける（他サイトからの単純なフォーム送信で書き換えられないように）。認証は持たないので、公開ネットワークには出さない。

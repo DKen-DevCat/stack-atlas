@@ -4,8 +4,10 @@
  * 字句から組んだ木（html.ts）を、許可した要素・属性だけで**書き直す**（元の文字列は写さない）。
  * - doctype は先頭（いつも `<!DOCTYPE html>`。標準モード）。CSP の meta を `<head>` の最初の子に入れ、その次に `<meta charset="utf-8">`。
  *   `<head>` を決められない文書は出さない
- * - まるごと落とす: script noscript iframe object embed form base meta[http-equiv] svg math template title textarea xmp
+ * - まるごと落とす: script noscript iframe object embed base meta[http-equiv] svg math template title textarea xmp
  *   noembed noframes plaintext（と、許可リストに無い要素）、コメント・CDATA、閉じていない要素。`<link>` は rel=stylesheet だけ
+ * - `<form>` は `<div>` に書き換える（中身は残し、属性は div の許可リスト。action method enctype target novalidate
+ *   autocomplete name などは落ちる）。送信は CSP の form-action 'none' と sandbox（allow-forms 無し）でも止める
  * - 属性はタグごとの許可リスト。`on*` は落とす。URL の属性（src href srcset poster background cite …）は
  *   文字参照を解いた後で呼び出し側の判定（opts.url）を通す。`style` 属性と `<style>` の中身は CSS の消毒（css.ts）を通す
  * - 書き出す CSS には `<` が無く、属性値は `&` `"` `<` `>` を、テキストは `&` `<` `>` をエスケープする
@@ -78,7 +80,6 @@ export const DROP_ELEMENTS = new Set([
   'iframe',
   'object',
   'embed',
-  'form',
   'base',
   'svg',
   'math',
@@ -104,6 +105,12 @@ export const DROP_ELEMENTS = new Set([
   'bgsound',
   'basefont',
 ]);
+
+/**
+ * 別の要素に書き換える要素（中身は残す。属性は書き換えた先の許可リスト）。
+ * form は div に: 部品のルート要素（data-component）になりやすく、落とすと画面の領域が取れない
+ */
+export const REWRITE_ELEMENTS: ReadonlyMap<string, string> = new Map([['form', 'div']]);
 
 /** どの要素にも付けてよい属性（data-* と aria-* は別に通す） */
 const GLOBAL_ATTRS = new Set([
@@ -247,7 +254,7 @@ const ELEMENT_LIST: Record<string, readonly string[]> = {
     'background',
     'nowrap',
   ],
-  // 入力の見た目（送信はしない。form は落とす）
+  // 入力の見た目（送信はしない。form は div に書き換え、formaction などは許可しない）
   button: ['type', 'name', 'value', 'disabled'],
   fieldset: ['disabled', 'name'],
   input: [
@@ -350,8 +357,9 @@ export function sanitizeHtml(input: string, opts: SanitizeOptions): SanitizeResu
     return undefined;
   }
 
-  function attrs(el: ElementNode): Attr[] | undefined {
-    const allowed = ELEMENTS.get(el.tag) ?? [];
+  /** tag は書き出す要素の名前（REWRITE_ELEMENTS で書き換えたもの） */
+  function attrs(el: ElementNode, tag = el.tag): Attr[] | undefined {
+    const allowed = ELEMENTS.get(tag) ?? [];
     const out: Attr[] = [];
     const get = (name: string) => el.attrs.find((a) => a.name === name)?.value;
     for (const a of el.attrs) {
@@ -372,7 +380,7 @@ export function sanitizeHtml(input: string, opts: SanitizeOptions): SanitizeResu
         continue;
       }
       if (URL_ATTRS.has(a.name)) {
-        const kind = urlKindOf(el.tag, a.name, get('type'));
+        const kind = urlKindOf(tag, a.name, get('type'));
         if (kind === undefined) continue;
         if (a.name === 'srcset') {
           const kept: string[] = [];
@@ -391,7 +399,7 @@ export function sanitizeHtml(input: string, opts: SanitizeOptions): SanitizeResu
         const u = judge(a.value, kind);
         if (u === undefined) {
           // stylesheet の link は href が無ければ要素ごと落とす（呼び出し側）
-          if (el.tag === 'link') return undefined;
+          if (tag === 'link') return undefined;
           continue;
         }
         out.push({ name: a.name, value: u });
@@ -408,11 +416,11 @@ export function sanitizeHtml(input: string, opts: SanitizeOptions): SanitizeResu
       drop('(閉じていない)');
       return '';
     }
-    const tag = el.tag;
-    if (DROP_ELEMENTS.has(tag)) {
-      drop(tag);
+    if (DROP_ELEMENTS.has(el.tag)) {
+      drop(el.tag);
       return '';
     }
+    const tag = REWRITE_ELEMENTS.get(el.tag) ?? el.tag;
     if (!ELEMENTS.has(tag) && !CUSTOM_ELEMENT.test(tag)) {
       drop(tag);
       return '';
@@ -440,7 +448,7 @@ export function sanitizeHtml(input: string, opts: SanitizeOptions): SanitizeResu
         return '';
       }
     }
-    const as = attrs(el);
+    const as = attrs(el, tag);
     if (as === undefined) {
       drop(`${tag}（URL を外した）`);
       return '';

@@ -14,8 +14,15 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { AssetStore, toSitePath } from '../assets.js';
-import { confineDir, findSiteFile, readNoFollow, SafeOutput } from '../fsafe.js';
+import { AssetStore, DEFAULT_LIMITS, WRITTEN_EXT, toSitePath } from '../assets.js';
+import {
+  confineDir,
+  findSiteFile,
+  readNoFollow,
+  readNoFollowResult,
+  SafeOutput,
+} from '../fsafe.js';
+import { sanitizeHtml } from '../sanitize.js';
 import { classifyUrl, parseSrcset } from '../urls.js';
 
 const tmp = (p: string) => realpathSync(mkdtempSync(join(tmpdir(), `stack-atlas-screens-${p}-`)));
@@ -171,6 +178,11 @@ describe('AssetStore', () => {
     expect(findSiteFile([site], 'img/link.png')).toEqual({ why: 'symlink' });
     expect(findSiteFile([site], 'out-dir/secret.png')).toEqual({ why: 'symlink' });
     expect(readNoFollow(join(site, 'img', 'link.png'), 100)).toBeUndefined();
+    expect(readNoFollowResult(join(site, 'img', 'link.png'), 100)).toEqual({ why: 'unreadable' });
+    expect(readNoFollowResult(join(site, 'img', 'p.png'), 2)).toEqual({
+      why: 'too-large',
+      size: 3,
+    });
     expect(written()).toEqual([]);
   });
 
@@ -182,11 +194,71 @@ describe('AssetStore', () => {
     expect(v('/_next/static/css/a.css', 'image')).toEqual({ ok: false, why: 'missing' });
     expect(v('/img/p.png', 'style')).toEqual({ ok: false, why: 'missing' });
     expect(written()).toEqual([]);
-    // SVG は画像としてファイルで写す（参照は img と CSS からだけ）
-    const svg = v('/img/q.svg#icon', 'image');
-    expect(svg).toEqual({
-      ok: true,
-      url: `../_assets/${sha('<svg xmlns="http://www.w3.org/2000/svg"/>')}.svg#icon`,
+    // 2026-11-09 変更（8-3b）: SVG はファイルで写していたが、data: URL で埋め込む（下のテスト）。CSS としては読まない
+    expect(v('/img/q.svg', 'style')).toEqual({ ok: false, why: 'missing' });
+    expect(WRITTEN_EXT.has('svg')).toBe(false);
+  });
+
+  describe('SVG はファイルにせず data:image/svg+xml;base64 で埋め込む（直接開ける SVG を出力先に置かない）', () => {
+    const evil =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><script>alert(document.domain)</script>' +
+      '<rect width="8" height="8" fill="#2a62d6"/></svg>';
+    const dataUrl = `data:image/svg+xml;base64,${Buffer.from(evil).toString('base64')}`;
+
+    it('img・srcset・style 属性・<style>・写した CSS の url() から参照しても data: URL だけ。.svg は書かない', () => {
+      const { store, written, out } = setup({
+        'img/evil.svg': evil,
+        'css/b.css': '.x{background:url(../img/evil.svg#frag) no-repeat}',
+      });
+      const r = sanitizeHtml(
+        '<!DOCTYPE html><html><head><link rel="stylesheet" href="/css/b.css">' +
+          '<style>.y{background-image:url("/img/evil.svg")}</style></head><body>' +
+          '<img src="/img/evil.svg" alt="a"><img srcset="/img/evil.svg 1x, img/evil.svg 2x">' +
+          '<span style="background:url(/img/evil.svg)">s</span><input type="image" src="/img/evil.svg">' +
+          '<a href="/img/evil.svg">リンクはたどるだけ</a></body></html>',
+        { url: (raw, kind) => store.verdict(raw, kind, 'index.html', '../_assets/') },
+      );
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.html).toContain(`<img src="${dataUrl}" alt="a">`);
+      expect(r.html).toContain(`<img srcset="${dataUrl} 1x, ${dataUrl} 2x">`);
+      expect(r.html).toContain(`<span style="background:url(&quot;${dataUrl}&quot;)">s</span>`);
+      expect(r.html).toContain(`.y{background-image:url("${dataUrl}")}`);
+      expect(r.html).toContain(`<input type="image" src="${dataUrl}">`);
+      expect(r.html).toContain('<a href="/img/evil.svg">');
+      expect(r.html).not.toContain('<script');
+      // 写した CSS の中も data: URL（断片 #frag は残す）。書いたのは CSS だけ
+      const files = written();
+      expect(files).toHaveLength(1);
+      expect(files[0]).toMatch(/^[0-9a-f]{20}\.css$/);
+      expect(readFileSync(join(out, 'screens', '_assets', files[0]!), 'utf8')).toBe(
+        `.x{background:url("${dataUrl}#frag") no-repeat}\n`,
+      );
+      expect(files.some((f) => f.endsWith('.svg'))).toBe(false);
+      expect(store.inlined).toBe(1); // 同じファイルは 1 回だけ読む
+      expect(store.written).toBe(1);
+    });
+
+    it(`上限（既定 ${DEFAULT_LIMITS.svg / 1024} KB）を超える SVG は写さず oversized に数える`, () => {
+      const base = tmp('svg-limit');
+      tree(join(base, 's'), { 'big.svg': `<svg>${'x'.repeat(100)}</svg>`, 'small.svg': '<svg/>' });
+      const s = new AssetStore({
+        roots: [join(base, 's')],
+        out: new SafeOutput(join(base, 'o')),
+        limits: { svg: 64 },
+      });
+      expect(s.verdict('/big.svg', 'image', 'index.html', '')).toEqual({
+        ok: false,
+        why: 'missing',
+      });
+      expect(s.verdict('big.svg', 'image-or-font', 'index.html', '').ok).toBe(false);
+      expect(s.verdict('/small.svg', 'image', 'index.html', '')).toEqual({
+        ok: true,
+        url: `data:image/svg+xml;base64,${Buffer.from('<svg/>').toString('base64')}`,
+      });
+      expect([...s.oversized]).toEqual([['big.svg', 111]]);
+      expect(existsSync(join(base, 'o'))).toBe(false);
+      expect(DEFAULT_LIMITS.svg).toBe(256 * 1024);
     });
   });
 

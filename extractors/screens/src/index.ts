@@ -22,7 +22,7 @@ import {
 } from '@stack-atlas/core';
 import { findNextDirs, readNextConfig } from '@stack-atlas/extractor-nextjs-app';
 import { routeToUrls, slugify } from '@stack-atlas/extractor-screenshots';
-import { ASSETS_DIR, AssetStore, toSitePath } from './assets.js';
+import { ASSETS_DIR, AssetStore, DEFAULT_LIMITS, toSitePath } from './assets.js';
 import { computeCoverage, type Coverage } from './coverage.js';
 import { confineDir, findSiteFile, readNoFollow, SafeOutput } from './fsafe.js';
 import { sanitizeHtml, type SanitizeStats } from './sanitize.js';
@@ -268,6 +268,13 @@ export const extractor: Extractor = {
         message: `消毒（CSS。${SCREENS_DIR}/${ASSETS_DIR}/${f.name} に写した）: ${sum.text}${sum.warn ? '。外部・危険な URL は読み込まない（画面に出ない）' : ''}`,
       });
     }
+    // SVG は data: URL にして埋め込む（ファイルにしない）。上限を超えたものは画面に入れない（写せない資産に数えてある）
+    for (const [sitePath, size] of store.oversized)
+      issues.push({
+        level: 'info',
+        path: `screens:${sitePath}`,
+        message: `SVG（${Math.ceil(size / 1024)} KB）が data: URL にする上限 ${DEFAULT_LIMITS.svg / 1024} KB を超えるので、画面に入れない（写せない資産に数えた）`,
+      });
     if (nodes.length) {
       out.write(
         [SCREENS_DIR, SCREENS_MARKER],
@@ -281,7 +288,7 @@ export const extractor: Extractor = {
     if (noHtml.length)
       ctx.log.info(`screens: HTML の無いルート（プレースホルダのまま）: ${noHtml.join(', ')}`);
     ctx.log.info(
-      `screens: ${nodes.length} 画面（資産 ${store.written}）を ${SCREENS_DIR}/ に写した`,
+      `screens: ${nodes.length} 画面（資産 ${store.written}、data: URL にした SVG ${store.inlined}）を ${SCREENS_DIR}/ に写した`,
     );
     return { nodes, edges: [], issues };
   },

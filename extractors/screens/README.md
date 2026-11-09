@@ -27,7 +27,7 @@ next.config の `trailingSlash`（`/a` → `a/index.html` を先に）・`basePa
 | 消毒 | `sanitize.ts` | 木から書き直す。doctype → `<head>` の最初の子に CSP の meta → charset。要素・属性の許可リスト、`on*`、URL の属性の判定 |
 | CSS | `css.ts` | `<style>`・`style` 属性・写す CSS ファイル。`@import`・`image-set()`・外部の `url()` を落とし、`<` を書き出さない |
 | URL | `urls.ts` | 文字参照・エスケープを解いた後、空白・制御文字を除き、`\` を `/` にしてから scheme を見る。相対と画像・フォントの `data:` だけ |
-| 資産 | `assets.ts`・`fsafe.ts` | export と public の中だけ（realpath）、シンボリックリンクは辿らない、拡張子の許可リスト、名前は内容のハッシュ（`screens/_assets/<hash>.<ext>`） |
+| 資産 | `assets.ts`・`fsafe.ts` | export と public の中だけ（realpath）、シンボリックリンクは辿らない、拡張子の許可リスト、名前は内容のハッシュ（`screens/_assets/<hash>.<ext>`）。SVG はファイルにせず、画像として読む所（img の src・srcset、CSS の url() など）に `data:image/svg+xml;base64` で埋め込む（上限 256 KB。超えたら入れずに info） |
 | カバー率 | `coverage.ts` | 解けた data-component ÷ route（と包む layout）から uses でたどれる comp / hook |
 
 `issues.json` には route ごとに「消毒で落としたもの」（外部・危険な URL か `@import` があれば warning、ほかは info）と regions のカバー率（0 なら warning）、
@@ -35,7 +35,10 @@ next.config の `trailingSlash`（`/a` → `a/index.html` を先に）・`basePa
 
 ## 落とすもの
 
-`script` `noscript` `iframe` `object` `embed` `form` `base` `meta[http-equiv]` `svg` `math` `template` `title` `textarea` `xmp` `noembed` `noframes` `plaintext`、
+`script` `noscript` `iframe` `object` `embed` `base` `meta[http-equiv]` `svg` `math` `template` `title` `textarea` `xmp` `noembed` `noframes` `plaintext`、
 許可リストに無い要素（カスタム要素 `a-b` は残す）、コメント・CDATA、閉じていない要素、`<link>` の `rel=stylesheet` 以外、`on*`、
 許可リストに無い属性（`ping` `formaction` `action` `data` `xlink:href` などの URL の属性も）、外部・危険な URL、`@import`・`image-set()`・`image()`・`element()`・`expression()`、`behavior`・`-moz-binding`。
 `<html>` の外と `<head>` より前のものは、CSP より前に来るので落とす。`<head>` が無い文書は画面を出さない。
+
+`<form>` は落とさず `<div>` に書き換える（中身の入力の見た目と `data-component` を残す。属性は div の許可リストなので `action` `method` `enctype` `target` `novalidate` `autocomplete` `name` は落ち、
+中の input・button の `formaction` `form` なども許可リストに無いので落ちる）。送信は CSP の `form-action 'none'` と sandbox（`allow-forms` 無し）でも止まる。

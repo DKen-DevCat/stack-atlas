@@ -4,30 +4,40 @@
  * - 写すのは同じ出所の参照だけ: 相対パスと `/` で始まるパス（basePath・assetPrefix を外す）、assetPrefix が URL ならその URL の下
  * - 読む元は export のディレクトリと public のディレクトリ（realpath）の中だけ。シンボリックリンクは辿らない（fsafe.ts）
  * - 拡張子は許可リスト: CSS は `<link rel=stylesheet>` だけ、画像は img・srcset・poster・background・CSS の url()、
- *   フォントは CSS の url()。SVG はファイルとして写すが、参照は img と CSS からだけ（埋め込まない）
+ *   フォントは CSS の url()
+ * - SVG はファイルとして写さず、参照している所（画像として読む所だけ）に `data:image/svg+xml;base64,…` で埋め込む
+ *   （上限 256 KB。超えたら写さずに oversized に数える）。ファイルの SVG は、応答ヘッダの無い配信（素の S3 など）で
+ *   タブで直接開くと中の script がビューアと同じ origin で動きうる。画像として読む SVG は script を動かさない
  * - 書き出す名前は内容のハッシュ（`screens/_assets/<hash>.<ext>`）。CSS は消毒（css.ts）してから中の url() を写した名前に書き換え、
- *   書き換えた後の内容でハッシュを取る
+ *   書き換えた後の内容でハッシュを取る。書き出す拡張子は WRITTEN_EXT だけ（svg は無い）
  */
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import { sanitizeStylesheet } from './css.js';
-import { findSiteFile, readNoFollow, type SafeOutput } from './fsafe.js';
+import { findSiteFile, readNoFollowResult, type SafeOutput } from './fsafe.js';
 import { emptyStats, type SanitizeStats, type UrlKind, type UrlVerdict } from './sanitize.js';
 import { classifyUrl, dataAllowed } from './urls.js';
 
 export type AssetKind = Exclude<UrlKind, 'link'>;
 
-const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg', 'ico'];
+/** ファイルとして写す画像（svg は入れない。INLINE_EXT） */
+const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'ico'];
 const FONT_EXT = ['woff', 'woff2', 'ttf', 'otf'];
+/** ファイルにせず data: URL で埋め込む画像（拡張子 → MIME） */
+export const INLINE_EXT: ReadonlyMap<string, string> = new Map([['svg', 'image/svg+xml']]);
+/** 参照の種類ごとに読んでよい拡張子 */
 export const ASSET_EXT: Record<AssetKind, ReadonlySet<string>> = {
   style: new Set(['css']),
-  image: new Set(IMAGE_EXT),
+  image: new Set([...IMAGE_EXT, ...INLINE_EXT.keys()]),
   font: new Set(FONT_EXT),
-  'image-or-font': new Set([...IMAGE_EXT, ...FONT_EXT]),
+  'image-or-font': new Set([...IMAGE_EXT, ...INLINE_EXT.keys(), ...FONT_EXT]),
 };
+/** `_assets/` にファイルとして書き出してよい拡張子（svg は無い） */
+export const WRITTEN_EXT: ReadonlySet<string> = new Set(['css', ...IMAGE_EXT, ...FONT_EXT]);
 
 export const ASSETS_DIR = '_assets';
-export const DEFAULT_LIMITS = { css: 5 * 1024 * 1024, asset: 20 * 1024 * 1024 };
+/** 大きさの上限（バイト）。svg は data: URL にして参照ごとに埋め込むので小さく */
+export const DEFAULT_LIMITS = { css: 5 * 1024 * 1024, asset: 20 * 1024 * 1024, svg: 256 * 1024 };
 
 /**
  * URL の相対パス（判定済み。scheme も `//` も無い。`\` は `/` にしてある）→ サイトの中のパス（`a/b.css`）。
@@ -88,25 +98,26 @@ export interface AssetStoreOptions {
   dir?: string;
   basePath?: string;
   assetPrefix?: string;
-  limits?: { css: number; asset: number };
+  limits?: Partial<typeof DEFAULT_LIMITS>;
 }
 
-interface Copied {
-  name: string;
-  /** CSS ファイルを消毒したときの数 */
-  stats?: SanitizeStats;
-}
+/** 写した資産: ファイルの名前（`_assets/` の中）か、埋め込む data: URL */
+type Copied = { name: string } | { dataUrl: string };
 
 /** 写した資産の名前と数。同じファイルは 1 回だけ写す */
 export class AssetStore {
   private readonly copied = new Map<string, Copied | null>();
   private readonly prefixes: string[];
   private readonly urlPrefix?: string;
-  private readonly limits: { css: number; asset: number };
+  private readonly limits: typeof DEFAULT_LIMITS;
   /** 写したファイルの数（重複なし） */
   written = 0;
+  /** data: URL にした SVG の数（ファイルごとに 1 つ） */
+  inlined = 0;
   /** 写した CSS ファイル（サイトの中のパス → 書き出した名前と、消毒で落としたものの数）。issues.json にファイルごとに出す */
   readonly cssFiles = new Map<string, { name: string; stats: SanitizeStats }>();
+  /** data: URL の上限を超えたので写さなかった SVG（サイトの中のパス → バイト数）。issues.json に出す */
+  readonly oversized = new Map<string, number>();
 
   constructor(private readonly opts: AssetStoreOptions) {
     const base = normalizePrefix(opts.basePath);
@@ -116,7 +127,7 @@ export class AssetStore {
       asset && asset.startsWith('/') && !asset.startsWith('//') ? asset : undefined,
     ].filter((x): x is string => !!x);
     if (asset && !this.prefixes.includes(asset)) this.urlPrefix = asset;
-    this.limits = opts.limits ?? DEFAULT_LIMITS;
+    this.limits = { ...DEFAULT_LIMITS, ...opts.limits };
   }
 
   /**
@@ -157,8 +168,9 @@ export class AssetStore {
         if (kind === 'link') return { ok: true, url: c.value };
         const copied = this.copy(c.value, kind, docSitePath);
         if (!copied) return { ok: false, why: 'missing' };
-        const fragment = /#[A-Za-z0-9_.:-]*$/.exec(c.value)?.[0] ?? '';
-        return { ok: true, url: `${refPrefix}${copied.name}${kind === 'style' ? '' : fragment}` };
+        const fragment = kind === 'style' ? '' : (/#[A-Za-z0-9_.:-]*$/.exec(c.value)?.[0] ?? '');
+        const url = 'dataUrl' in copied ? copied.dataUrl : `${refPrefix}${copied.name}`;
+        return { ok: true, url: `${url}${fragment}` };
       }
     }
   }
@@ -179,10 +191,22 @@ export class AssetStore {
     const hit = this.copied.get(key);
     if (hit !== undefined) return hit ?? undefined;
     this.copied.set(key, null); // 読みかけ（CSS の中から自分を参照しても回らない）
-    const buf = readNoFollow(found.file, ext === 'css' ? this.limits.css : this.limits.asset);
-    if (!buf) return undefined;
+    const mime = INLINE_EXT.get(ext);
+    const read = readNoFollowResult(
+      found.file,
+      ext === 'css' ? this.limits.css : mime ? this.limits.svg : this.limits.asset,
+    );
+    if (!('data' in read)) {
+      if (mime && read.why === 'too-large') this.oversized.set(sitePath, read.size);
+      return undefined;
+    }
+    const buf = read.data;
     let result: Copied;
-    if (ext === 'css') {
+    if (mime) {
+      // ファイルにしない（直接開ける SVG を出力先に置かない）。画像として読む所にだけ埋め込む
+      result = { dataUrl: `data:${mime};base64,${buf.toString('base64')}` };
+      this.inlined++;
+    } else if (ext === 'css') {
       const stats = emptyStats();
       const css = sanitizeStylesheet(buf.toString('utf8'), {
         url: (raw) => {
@@ -196,12 +220,14 @@ export class AssetStore {
       });
       stats.css = css.stats;
       const data = `${css.css}\n`;
-      result = { name: `${hash(data)}.css`, stats };
-      this.write(result.name, data);
-      this.cssFiles.set(sitePath, { name: result.name, stats });
+      const name = `${hash(data)}.css`;
+      result = { name };
+      this.write(name, data);
+      this.cssFiles.set(sitePath, { name, stats });
     } else {
-      result = { name: `${hash(buf)}.${ext}` };
-      this.write(result.name, buf);
+      const name = `${hash(buf)}.${ext}`;
+      result = { name };
+      this.write(name, buf);
     }
     this.copied.set(key, result);
     return result;
@@ -209,6 +235,8 @@ export class AssetStore {
 
   private readonly names = new Set<string>();
   private write(name: string, data: string | Buffer) {
+    const ext = posix.extname(name).slice(1);
+    if (!WRITTEN_EXT.has(ext)) throw new Error(`_assets/ に書かない拡張子です: ${name}`);
     if (this.names.has(name)) return;
     this.names.add(name);
     this.opts.out.write([this.opts.dir ?? 'screens', ASSETS_DIR, name], data);

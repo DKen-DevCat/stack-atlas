@@ -135,6 +135,13 @@ describe('消毒した画面を Chromium で開く', () => {
         expect(dialogs).toEqual([]);
         expect(page.url()).toBe(`${origin}/screens/index/index.html`);
         expect(r.regions.map((x) => x.name)).toEqual(['TodayIsland']);
+        // ロゴの SVG は data: URL（ファイルにしない）。CSP の img-src data: で画像として描ける（decode が失敗すれば例外）
+        const logo = (await page.evaluate(`(async () => {
+          const img = document.querySelector('img[alt="ロゴ"]');
+          await img.decode();
+          return [img.getAttribute('src').slice(0, 26), img.naturalWidth];
+        })()`)) as [string, number];
+        expect(logo).toEqual(['data:image/svg+xml;base64,', 32]);
       }
       await context.close();
     },

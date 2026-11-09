@@ -120,7 +120,7 @@ describe('fixture-poly（web/export。from: dir、trailingSlash の a/index.html
     });
   });
 
-  it('書くのは screens/ の下だけ: 画面の HTML・資産（CSS・フォント・画像）・印。script・404 は写さない', () => {
+  it('書くのは screens/ の下だけ: 画面の HTML・資産（CSS・フォント・画像）・印。script・404・SVG のファイルは写さない', () => {
     expect(files.every((f) => f.startsWith('screens/'))).toBe(true);
     expect(files.filter((f) => !f.startsWith('screens/_assets/')).sort()).toEqual(
       [
@@ -133,10 +133,11 @@ describe('fixture-poly（web/export。from: dir、trailingSlash の a/index.html
     const assets = files
       .filter((f) => f.startsWith('screens/_assets/'))
       .map((f) => f.split('.').pop());
-    expect(assets.sort()).toEqual(['css', 'png', 'svg', 'woff2']);
+    // 2026-11-09 変更（8-3b）: images/logo.svg はファイルで写していた（svg があった）が、img の src に data: URL で埋め込む
+    expect(assets.sort()).toEqual(['css', 'png', 'woff2']);
     for (const f of files)
       expect(f).toMatch(
-        /^screens\/(_assets\/[0-9a-f]{20}\.(css|png|svg|woff2)|[a-z]+\/index\.html|\.stack-atlas-screens)$/,
+        /^screens\/(_assets\/[0-9a-f]{20}\.(css|png|woff2)|[a-z]+\/index\.html|\.stack-atlas-screens)$/,
       );
   });
 
@@ -161,7 +162,8 @@ describe('fixture-poly（web/export。from: dir、trailingSlash の a/index.html
     }
     const index = readFileSync(join(out, 'screens/index/index.html'), 'utf8');
     expect(index).toContain('<p data-component="TodayIsland">読み込み中</p>');
-    expect(index).toMatch(/<img src="\.\.\/_assets\/[0-9a-f]{20}\.svg" alt="ロゴ"/);
+    const logo = readFileSync(join(web, 'export', 'images', 'logo.svg')).toString('base64');
+    expect(index).toContain(`<img src="data:image/svg+xml;base64,${logo}" alt="ロゴ"`);
     expect(index).toContain('<img alt="外部のバナー" width="120" height="40">');
     expect(index).toContain(
       '<button type="button">閉じる</button><a>詳しく</a><a href="/calendar/">カレンダーへ</a>',
@@ -275,9 +277,15 @@ describe('fixture-repo（site/。相対パスの CSS、動的ルートのサン�
       );
   });
 
-  it('form は中身ごと落とす（EntryForm の領域は取れない）', () => {
+  // 2026-11-09 変更（8-3b）: form は中身ごと落としていた（EntryForm の領域が取れなかった）が、div に書き換える
+  it('form は div に書き換え、中身（入力の見た目）を残す。EntryForm の領域が取れる', () => {
     const admin = readFileSync(join(out, 'screens/admin-entry/index.html'), 'utf8');
-    expect(admin).not.toMatch(/<form|<input|保存/);
+    expect(admin).not.toMatch(/<form/);
+    expect(admin).toContain(
+      '<div data-component="EntryForm"><h1 style="font-size:18px;margin:0">結果を入稿</h1>' +
+        '<input name="raceId" placeholder="大会ID" value="42">',
+    );
+    expect(admin).toContain('<button type="submit">保存</button></div>');
     expect(admin).toContain('data-component="ResultTable"');
   });
 
@@ -291,7 +299,8 @@ describe('fixture-repo（site/。相対パスの CSS、動的ルートのサン�
       'screens:/': 'regions のカバー率 2/4（50%）',
       'screens:/races': 'regions のカバー率 3/5（60%）',
       'screens:/races/[id]': 'regions のカバー率 2/3（67%）',
-      'screens:/admin/entry': 'regions のカバー率 3/5（60%）',
+      // 2026-11-09 変更（8-3b）: form を div に書き換えるので EntryForm が解ける（3/5（60%）→ 4/5。残りは DOM の無い useSession）
+      'screens:/admin/entry': 'regions のカバー率 4/5（80%）',
       'screens:/login': 'regions のカバー率 2/2（100%）',
     });
     expect(g.issues!.filter((i) => i.level === 'warning')).toEqual([]);
@@ -353,6 +362,36 @@ describe('設定と境目', () => {
       routesOf('route:/items/[id]'),
     );
     expect(g2.nodes.map((n) => n.screen?.html)).toEqual(['screens/items-id/index.html']);
+  });
+
+  it('SVG は data: URL で埋め込み、.svg のファイルは書かない。上限（256 KB）を超えるものは入れずに info で報告', async () => {
+    const small = '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>';
+    const root = repo({
+      'site/index.html': page(
+        '<p data-component="A"><img src="img/small.svg" alt="s"><img src="/img/big.svg" alt="b"></p>',
+      ),
+      'site/img/small.svg': small,
+      'site/img/big.svg': `<svg xmlns="http://www.w3.org/2000/svg">${' '.repeat(300 * 1024)}</svg>`,
+    });
+    const out = tmpOut();
+    const { ctx, logs } = ctxFor(root, { screens: { from: 'dir', dir: 'site', outDir: out } });
+    const g = await extractor.extract(ctx, routesOf('route:/'));
+    const html = readFileSync(join(out, 'screens/index/index.html'), 'utf8');
+    expect(html).toContain(
+      `<img src="data:image/svg+xml;base64,${Buffer.from(small).toString('base64')}" alt="s"><img alt="b">`,
+    );
+    expect(listFiles(out).filter((f) => f.endsWith('.svg'))).toEqual([]);
+    expect(g.issues).toContainEqual({
+      level: 'info',
+      path: 'screens:img/big.svg',
+      message:
+        'SVG（301 KB）が data: URL にする上限 256 KB を超えるので、画面に入れない（写せない資産に数えた）',
+    });
+    expect(g.issues!.find((i) => i.path === 'screens:/' && /^消毒/.test(i.message))).toMatchObject({
+      level: 'info',
+      message: '消毒（index.html）: 写せない資産 1',
+    });
+    expect(logs.join('\n')).toContain('1 画面（資産 0、data: URL にした SVG 1）');
   });
 
   it('<head> を決められない HTML は画面を出さず警告', async () => {

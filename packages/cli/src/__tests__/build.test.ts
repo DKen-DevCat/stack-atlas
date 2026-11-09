@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
-import { runBuild } from '../commands/build.js';
+import { confineShotsOutDir, runBuild, unsafeOutputs } from '../commands/build.js';
 import { EXTRACTOR_PACKAGES, loadExtractors } from '../extractors.js';
 
 function repo(): string {
@@ -618,5 +618,134 @@ describe('runBuild（screens の出力先。8-3b）', () => {
     expect(await run(r2, o2)).toBe(2);
     expect(existsSync(join(o2, 'screens', '_assets', 'deep'))).toBe(true);
     expect(readFileSync(join(victim, 'keep.txt'), 'utf8')).toBe('keep');
+  });
+});
+
+describe('スクショの書き出し先（config.screenshots.outDir は build の出力先の中だけ。8-3b）', () => {
+  /** 受け取った screenshots.outDir を覚え、本物と同じく <outDir>/shots/ に書く screenshots の代わり */
+  const shotsStub = (seen: string[]): Extractor => ({
+    name: 'screenshots',
+    detect: async () => true,
+    extract: async (ctx) => {
+      const dir = ctx.config.screenshots!.outDir!;
+      seen.push(dir);
+      mkdirSync(join(dir, 'shots'), { recursive: true });
+      writeFileSync(join(dir, 'shots', 'index.png'), 'PNG');
+      return { nodes: [{ id: 'lib:x', file: 'src/x.ts' }], edges: [] };
+    },
+  });
+  const withShots = (outDir: string) => {
+    const root = repo();
+    writeFileSync(
+      join(root, 'stack-atlas.config.yaml'),
+      `project: { name: demo }\nscreenshots: { baseUrl: "http://localhost:1", outDir: ${JSON.stringify(outDir)} }\n`,
+    );
+    return root;
+  };
+  const build = async (root: string, out?: string) => {
+    const seen: string[] = [];
+    const mlog = createMemoryLogger();
+    const code = await quiet(() =>
+      runBuild({
+        repo: root,
+        ...(out ? { outDir: out } : {}),
+        extractors: [shotsStub(seen)],
+        log: mlog,
+      }),
+    );
+    return { code, seen, warns: mlog.of('warn').join('\n'), errors: mlog.of('error') };
+  };
+
+  it('confineShotsOutDir: 無ければ出力先。repo 基準の相対で出力先そのもの・その中は受け付ける', () => {
+    const repoDir = join(tmpdir(), 'r');
+    const out = join(repoDir, '.stack-atlas', 'out');
+    expect(confineShotsOutDir(repoDir, out, undefined)).toBe(out);
+    expect(confineShotsOutDir(repoDir, out, '.stack-atlas/out')).toBe(out);
+    expect(confineShotsOutDir(repoDir, out, './.stack-atlas/out/sub/')).toBe(join(out, 'sub'));
+    expect(confineShotsOutDir(repoDir, out, '.stack-atlas/out/a/../b')).toBe(join(out, 'b'));
+  });
+
+  it.each([
+    ['/tmp/evil', 'は絶対パスな'],
+    [join(tmpdir(), 'r', '.stack-atlas', 'out'), 'は絶対パスな'], // 出力先と同じでも絶対パスは受け付けない
+    ['../evil', 'は build の出力先の外を指す'],
+    ['.stack-atlas/out/../../../evil', 'は build の出力先の外を指す'],
+    ['.stack-atlas', 'は build の出力先の外を指す'],
+    ['.stack-atlas/outx', 'は build の出力先の外を指す'],
+    ['', 'は文字列でない'],
+    [42, 'は文字列でない'],
+  ])('confineShotsOutDir: %j は警告して出力先にする（%s）', (value, why) => {
+    const repoDir = join(tmpdir(), 'r');
+    const out = join(repoDir, '.stack-atlas', 'out');
+    const mlog = createMemoryLogger();
+    expect(confineShotsOutDir(repoDir, out, value, mlog)).toBe(out);
+    expect(mlog.of('warn')).toEqual([
+      `screenshots.outDir ${JSON.stringify(value)} ${why}ので使いません（スクショは出力先 ${out} の shots/ に書きます）`,
+    ]);
+  });
+
+  it('runBuild: 絶対パス・出力先の外の outDir は使わず、PNG は出力先の shots/ に書く', async () => {
+    const outside = mkdtempSync(join(tmpdir(), 'stack-atlas-shots-evil-'));
+    for (const value of [outside, '../evil-shots']) {
+      const root = withShots(value);
+      const r = await build(root);
+      expect(r.code).toBe(0);
+      expect(r.seen).toEqual([join(root, '.stack-atlas', 'out')]);
+      expect(r.warns).toContain('screenshots.outDir');
+      expect(existsSync(join(root, '.stack-atlas', 'out', 'shots', 'index.png'))).toBe(true);
+      expect(existsSync(join(root, '..', 'evil-shots'))).toBe(false);
+    }
+    expect(existsSync(join(outside, 'shots'))).toBe(false);
+  });
+
+  it('runBuild: 出力先の中の outDir はそのまま（docs/10 の例の .stack-atlas/out は既定の出力先と同じ）', async () => {
+    const root = withShots('.stack-atlas/out');
+    const r = await build(root);
+    expect(r.code).toBe(0);
+    expect(r.seen).toEqual([join(root, '.stack-atlas', 'out')]);
+    expect(r.warns).not.toContain('screenshots.outDir');
+    const root2 = withShots('o/sub');
+    const r2 = await build(root2, join(root2, 'o'));
+    expect(r2.seen).toEqual([join(root2, 'o', 'sub')]);
+    // -o で出力先を変えると、repo 基準の .stack-atlas/out は出力先の外なので出力先にする
+    const root3 = withShots('.stack-atlas/out');
+    const r3 = await build(root3, join(root3, 'o'));
+    expect(r3.seen).toEqual([join(root3, 'o')]);
+    expect(r3.warns).toContain('は build の出力先の外を指す');
+  });
+
+  it('出力先からスクショの書き出し先までの段・shots/・その中がリンクなら書かずに終了コード 2', async () => {
+    const victim = mkdtempSync(join(tmpdir(), 'stack-atlas-victim-'));
+    writeFileSync(join(victim, 'keep.png'), 'keep');
+    // 途中の段（o/sub）がリンク
+    const r1 = withShots('o/sub/deeper');
+    mkdirSync(join(r1, 'o'));
+    symlinkSync(victim, join(r1, 'o', 'sub'));
+    const b1 = await build(r1, join(r1, 'o'));
+    expect(b1.code).toBe(2);
+    expect(b1.errors[0]).toContain(join(r1, 'o', 'sub'));
+    expect(b1.seen).toEqual([]);
+    // 書き出し先の shots/ がリンク
+    const r2 = withShots('o/sub');
+    mkdirSync(join(r2, 'o', 'sub'), { recursive: true });
+    symlinkSync(victim, join(r2, 'o', 'sub', 'shots'));
+    expect((await build(r2, join(r2, 'o'))).code).toBe(2);
+    // shots/ の中のファイルがリンク
+    const r3 = withShots('o/sub');
+    mkdirSync(join(r3, 'o', 'sub', 'shots'), { recursive: true });
+    symlinkSync(join(victim, 'keep.png'), join(r3, 'o', 'sub', 'shots', 'index.png'));
+    expect((await build(r3, join(r3, 'o'))).code).toBe(2);
+    expect(readFileSync(join(victim, 'keep.png'), 'utf8')).toBe('keep');
+    expect(existsSync(join(victim, 'shots'))).toBe(false);
+  });
+
+  it('unsafeOutputs: shotsOutDir を省けば出力先の shots/ を調べる（従来どおり）', () => {
+    const root = repo();
+    const out = join(root, 'o');
+    mkdirSync(out);
+    const victim = mkdtempSync(join(tmpdir(), 'stack-atlas-victim-'));
+    symlinkSync(victim, join(out, 'shots'));
+    expect(unsafeOutputs(root, out)).toEqual([join(out, 'shots')]);
+    expect(unsafeOutputs(root, out, undefined, join(out, 'x'))).toEqual([]);
   });
 });
