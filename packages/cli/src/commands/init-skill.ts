@@ -2,8 +2,11 @@
  * `stack-atlas init --skill [<dir>] [--update]`（docs/19 §3.6）
  *
  * `<dir>`（既定はカレント）に skill（ワークスペースの `harness/skill/`）を `.claude/skills/stack-atlas/` へ写し、雛形
- * （`stack-atlas.config.yaml`・`stack-atlas.overrides.yaml`・`.stack-atlas/views.yaml`・`.stack-atlas/DECISIONS.md`）が
- * 無ければ置く。ネットワークは使わない（コピー元は CLI から import.meta.url で解く。ビューアの dist と同じ。paths.ts）。
+ * （`stack-atlas.config.yaml`・`stack-atlas.overrides.yaml`・`.stack-atlas/DECISIONS.md`）が無ければ置く。ネットワークは
+ * 使わない（コピー元は CLI から import.meta.url で解く。ビューアの dist と同じ。paths.ts）。
+ *
+ * `.stack-atlas/views.yaml` は置かない（2026-11-10 8-4c）: 空の雛形を置くと、skill の手順 4 の `init-views`（既存の
+ * ファイルは上書きしない）が止まり、始点の候補を書けなかった。views.yaml は `init-views` が作る
  *
  * 安全（対象のディレクトリは解析対象の repo で、信用しない）:
  * - `<dir>` が home か `/` なら断る
@@ -49,7 +52,6 @@ export const TEMPLATES: Record<string, { dest: string[]; alt?: string[][] }> = {
     dest: ['stack-atlas.overrides.yaml'],
     alt: [['stack-atlas.overrides.yml']],
   },
-  'views.yaml': { dest: ['.stack-atlas', 'views.yaml'], alt: [['.stack-atlas', 'views.yml']] },
   'DECISIONS.md': { dest: ['.stack-atlas', 'DECISIONS.md'] },
 };
 

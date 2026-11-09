@@ -58,10 +58,13 @@ pnpm dev                    # → http://localhost:5173/?graph=samples/race-site
 | コマンド | 内容 |
 |---|---|
 | `build <repo> [-o <outDir>] [--with-viewer] [--no-screenshots] [--v1] [-v]` | 解析して `graph.json`（v2。配線図）/ `graph.v1.json`（v1。3D の地図）/ `issues.json` / `memos.json`（と `shots/`、ビューア）を `outDir` に出す。`--v1` は従来の v1 の graph.json だけ（v2 は作らない）。検証エラーがあれば終了コード 1。出力先のファイルがシンボリックリンクなら書かずに終了コード 2 |
-| `validate <graph.json...>` | スキーマと参照整合性の検証（`pnpm validate <file>` でも可） |
+| `build <repo> --dry-run --json` / `--strict` | ハーネス用（docs/19）。`--dry-run` は出力先に書かず、`--json` は標準出力を報告の JSON だけにする。`--strict` は埋められる隙間（結べない呼び出し・解けない補いなど）があれば終了コード 1（CI の関門） |
+| `validate [--strict] <graph.json...>` | スキーマと参照整合性の検証（`pnpm validate <file>` でも可）。`--strict` は graph.json の build の報告も読む |
 | `serve <outDir> [--port 4173] [--host 127.0.0.1] [--repo <repo>] [--allowed-host <name>]...` | `outDir` を配信。`--repo` を付けるとビューアのメモ保存が `<repo>/.stack-atlas/memos.json` に書き戻される。Host ヘッダがループバック・`--host`・`--allowed-host` 以外なら 403 |
 | `diff <prev.json> <next.json>` | 2 つの graph.json の追加・削除・変更を表示 |
 | `init-flows <repo> [--out <file>] [--force]` | いまのグラフから `flows.yaml` の雛形（MISS / HIT / 無効化）を書く |
+| `init-views <repo> [--out <file>]` | いまのグラフから `.stack-atlas/views.yaml`（配線図の名前付きの始点）の雛形を書く |
+| `init --skill [<dir>] [--update]` / `--version` | 対象に Claude Code の skill（`harness/skill/` → `.claude/skills/stack-atlas/`）と雛形を置く。手元のエージェントが設定と補いのファイルだけで配線図の隙間を埋める（docs/19。読んだコードは利用者のモデルの API に送られる） |
 
 ## 自分のリポジトリに適用する
 
@@ -71,7 +74,9 @@ pnpm dev                    # → http://localhost:5173/?graph=samples/race-site
 2. **`-v` の `推定` を読んで固定する**: `deploy`（何に何が載るか）・`sql.db`・`api.targets` を書くと警告が消える。`detect()` が外した場所は `terraform.root` / `next.appDir` / `go.entries` / `openapi.files` などで指す
 3. **足りない線を補う**: `stack-atlas.overrides.yaml`（`nodes` / `edges` / `remove` / `deploy`）、`flows.yaml`（`stack-atlas init-flows <repo>` で雛形）、スクショ（`data-component`、[docs/10](docs/10-screenshots-guide.md)）、メモ（`.stack-atlas/memos.json`、[docs/11](docs/11-sharing.md)）、CI（[docs/ci-example.yml](docs/ci-example.yml)）
 
-動く設定の例: [examples/fixture-poly/stack-atlas.config.yaml](examples/fixture-poly/stack-atlas.config.yaml)（2 repo）、[examples/fixture-repo/stack-atlas.config.yaml](examples/fixture-repo/stack-atlas.config.yaml)（1 repo）。業務リポジトリ用の設定・overrides・flows はそのリポジトリ側か非公開の場所に置く。
+配線図（v2）の項目の単位の隙間は、overrides の `v2:`・`.stack-atlas/graph/*.v2.yaml`・`.stack-atlas/views.yaml` で補い、`build --strict` で確かめる。この作業を手元の Claude Code に任せる skill が `init --skill`（[docs/13 §3.6b](docs/13-apply-to-your-repo.md)）。
+
+動く設定の例: [examples/fixture-poly/stack-atlas.config.yaml](examples/fixture-poly/stack-atlas.config.yaml)（2 repo）、[examples/fixture-repo/stack-atlas.config.yaml](examples/fixture-repo/stack-atlas.config.yaml)（1 repo）。隙間を仕込んだ確かめ用は `examples/fixture-gaps/`。業務リポジトリ用の設定・overrides・flows はそのリポジトリ側か非公開の場所に置く。
 
 ## パッケージ
 

@@ -13,6 +13,7 @@ export default tseslint.config(
       'prototype/**',
       'examples/fixture-repo/**',
       'examples/fixture-poly/**',
+      'examples/fixture-gaps/**',
     ],
   },
   js.configs.recommended,

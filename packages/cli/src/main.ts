@@ -25,8 +25,9 @@ export const USAGE = `使い方: stack-atlas <コマンド> [オプション]
   init-views <repo> [--out <file>]
       いまのグラフから .stack-atlas/views.yaml の雛形（始点の候補: 画面・trigger・利用者）を書く。既存のファイルは上書きしない
   init --skill [<dir>] [--update]
-      <dir>（既定はカレント）に Claude Code の skill（.claude/skills/stack-atlas/）と雛形（設定・overrides・views.yaml・
-      DECISIONS.md）を置く。既存のファイルは上書きしない。--update は手で変えていないファイルだけ更新し、変えたものは .new に出す
+      <dir>（既定はカレント）に Claude Code の skill（.claude/skills/stack-atlas/）と雛形（設定・overrides・
+      .stack-atlas/DECISIONS.md）を置く。既存のファイルは上書きしない。--update は手で変えていないファイルだけ更新し、
+      変えたものは .new に出す。views.yaml は init-views で作る
   --version
       ハーネスの版（skill の VERSION と比べる）
   serve <outDir> [--port 4173] [--host 127.0.0.1] [--repo <repo>] [--allowed-host <name>]...

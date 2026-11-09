@@ -123,7 +123,11 @@ Lambda → Go 入口の推定 5 件、DB の推定、Function URL の呼び先�
   - [x] 8-2a TS の言語アダプタ `ts-types`、openapi の endpoint の項目、合流（クライアント側）、mergeV2・group 化、detectBroken をパイプラインに。fixture-poly の TS の側が手で組んだ例と項目まで一致、POST の食い違い 2 件が自動で出る（docs/17 §8）
   - [x] 8-2b Go の言語アダプタ `go-types`、sql の table の口、合流（サーバー側と table）、CI で go を必須に。fixture-poly の項目の型 89%・項目の単位の線 74%、食い違い 4 本が自動で出る（docs/17 §9）
 - [ ] 8-3 表示: 配線図ビューア（層状レイアウト＋直交配線、球、分岐の表、再生バー、折りたたみ）
-- [ ] 8-4 ハーネス: skill と `init --skill`、`validate --strict`
+- [ ] 8-4 ハーネス: skill と `init --skill`、`validate --strict`（設計は docs/19）
+  - [x] 8-4a core: 補い（overrides の `v2:`。段 A / B、意味の参照・指紋）、手書きの部分グラフ、views.yaml、数え直し、`strictIssues`
+  - [x] 8-4b CLI: `build --dry-run --json` / `--strict`、`validate --strict`、`init-views`、`init --skill`、regions.yaml。fixture-poly・fixture-repo は補い無しで strict が通る（docs/19 §8）
+  - [x] 8-4c 前半: `harness/skill/` の本文（SKILL.md・references 8 つ・雛形）、`examples/fixture-gaps/`（隙間 6 つと注入の文 2 つ。補い無しの strict は 3 件で落ち、参照解で通る）、正解表（docs/19 §9・§10）
+  - [ ] 8-4c 後半: ドッグフード（fixture-gaps の写しで skill を実行させ、正解表で適合率・再現率・許可リスト外の書き込み・注入への耐性を測る）
 - [ ] 8-5 実リポジトリへの適用（非公開）
 - [ ] 8-6 地図（3D）との接続
 

@@ -24,6 +24,7 @@
 7. `docs/12-design-generalization.md` — Phase 6・7 の設計（複数 repo、Terraform / Go / OpenAPI / SQL、`classify` / `files` / `kinds`）、決定事項 D14〜D19、末尾に実装結果
 8. `docs/13-apply-to-your-repo.md` — 実リポジトリへの適用ガイド（設定キー一覧、ID の規約、制限）
 8'. **`docs/15-design-dataflow-model.md`** — Phase 8 の設計（箱・口・項目・線のモデル、たどる規則、表示の規則、分岐、型 API による抽出、D27〜D35）。`docs/14-design-harness.md` はハーネス配布・ビルド成果物の画面（層の節は docs/15 に置き換え）。モックは `prototype/dataflow-mock.html`
+8''. **`docs/19-design-harness-v2.md`** — Phase 8-4 のハーネス（補いの `v2:`・手書きの部分グラフ・views.yaml・`build --dry-run --json` / `--strict`・`init --skill`・`init-views`、D67〜D93）。skill の本文は `harness/skill/`（SKILL.md と references/）、隙間を仕込んだ fixture は `examples/fixture-gaps/`、その正解表は §9（**正解表と参照解 `packages/cli/src/__tests__/fixtures/gaps-answers/` を fixture-gaps の中や skill に書かない**。ドッグフードのエージェントが読む）
 9. `docs/10-screenshots-guide.md`（`data-component` と screenshots の設定）、`docs/11-sharing.md`（メモ・差分・配信）、`docs/ci-example.yml`
 10. 必要に応じて `docs/05-viewer-spec.md`（UI 仕様）、`docs/04-extractors.md`（抽出方法）、各 `extractors/*/README.md`
 
@@ -61,7 +62,8 @@
 - graph.json を変えたら `packages/schema/graph.schema.json`・`packages/schema/src/types.ts`・`docs/03-graph-schema.md` を同時に更新し、
   `pnpm validate examples/race-site.graph.json` が通ること（型とスキーマのずれは `pnpm test` で検出される）。
 - コミット前に `pnpm lint && pnpm typecheck && pnpm test` を通す（`pnpm build` も CI と同じ）。ビューアを触ったら `pnpm --filter @stack-atlas/viewer e2e` も（CI で実行される。Chromium が必要）。
-- フィクスチャ（`examples/fixture-repo/`）はワークスペース外。ID の規約は `examples/fixture-repo/README.md`。
+- フィクスチャ（`examples/fixture-repo/`・`fixture-poly/`・`fixture-gaps/`）はワークスペース外。ID の規約は `examples/fixture-repo/README.md`。
+- `harness/skill/` を変えたら `harness/skill/VERSION` を上げる（`init --skill --update` と SKILL.md の版の確かめが使う）。skill の例に fixture-gaps の答えの id を書かない（`harness.test.ts` が確かめる）。
 - プロトタイプ（`prototype/`）は参照用として残す。新実装で置き換えても削除しない。
 - UI の文言は日本語。
 
@@ -79,6 +81,7 @@ packages/
   tf-graph/                        ← IaC 共通: Terraform JSON → infra ノード・エッジ・cache（cdktf / terraform / cloudformation が使う）
   cli/                             ← stack-atlas コマンド（src/commands/ に build / validate / serve / diff / init-flows）
   viewer/                          ← Vite + TypeScript + three.js の静的アプリ（src/graph・layout・scene・screen・ui、e2e/）
+harness/skill/                     ← Claude Code の skill（SKILL.md・references/・templates/・VERSION）。`init --skill` のコピー元（docs/19 §3.5）
 extractors/                        ← 14 個。CLI の順: files → cdktf → terraform → cloudformation → nextjs-app → ts-imports → ts-types → go → go-types → openapi → sql → api-link → cache → screenshots
   files/  cdktf/  terraform/  cloudformation/   ← glob → ノード、インフラ層（CDKtf / HCL / CDK・SAM・CFn）
   nextjs-app/  ts-imports/  ts-types/  go/  go-types/  ← 画面層、TS のコンポーネント／型層、TS と Go の言語アダプタ（v2 の口・項目・線）、Go のパッケージ
@@ -87,6 +90,7 @@ extractors/                        ← 14 個。CLI の順: files → cdktf → 
 examples/
   fixture-repo/                    ← 合成モノレポ（CDKtf ＋ Next on Lambda ＋ TS。config / overrides / flows / memos / 手書き cdk.tf.json / site/）。ワークスペース外
   fixture-poly/                    ← 合成 2 リポジトリ（web: Next 静的エクスポート、platform: Go ＋ Terraform HCL ＋ OpenAPI ＋ SQL）。ワークスペース外
+  fixture-gaps/                    ← fixture-poly に隙間（外部 API・map の body・OpenAPI に無い webhook・機能フラグ・任意のクエリ・PHP）と注入の文を仕込んだもの（ハーネスの確かめ用。正解表は docs/19 §9）
   race-site.graph.json             ← 手書きサンプル（プロトタイプのデータ）
 docs/
   01〜07                           ← ビジョン・アーキテクチャ・スキーマ・抽出器・ビューア仕様・ロードマップ・既存ツール
@@ -97,4 +101,4 @@ prototype/                         ← 単一 HTML のプロトタイプ（three
 scripts/                           ← export-prototype-data / validate-graph（互換ラッパ）/ sync-samples
 ```
 
-主なコマンド: `pnpm atlas build examples/fixture-repo -o out --with-viewer --no-screenshots`（または `examples/fixture-poly`）→ `pnpm atlas serve out`、`pnpm validate <graph.json>`、`pnpm dev`（ビューア開発サーバ）。
+主なコマンド: `pnpm atlas build examples/fixture-repo -o out --with-viewer --no-screenshots`（または `examples/fixture-poly`）→ `pnpm atlas serve out`、`pnpm validate <graph.json>`、`pnpm dev`（ビューア開発サーバ）。ハーネス: `pnpm atlas build <repo> --dry-run --json` / `--strict`、`pnpm atlas init --skill <dir>`、`pnpm atlas init-views <repo>`（docs/13 §3.6b）。

@@ -1,0 +1,8 @@
+views:
+  - id: today-new-card
+    name: "今日の合計（新しいカード）"
+    start: "actor:user"
+    variants: { "comp:TodayIsland#new_total": true }
+  - id: receipt-webhook
+    name: "レシートの取り込み（Webhook）"
+    start: "external:receipt-service"

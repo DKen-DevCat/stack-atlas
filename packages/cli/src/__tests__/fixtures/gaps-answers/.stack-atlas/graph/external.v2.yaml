@@ -1,0 +1,39 @@
+# 外部のサービス（アダプタが箱を出さないもの）。アダプタの箱への線は overrides の v2.wires に書く（reason と指紋のため）
+nodes:
+  - id: "external:weather-api"
+    kind: external
+    name: "天気 API（api.example-weather.test）"
+    runtime: external
+    ports:
+      - id: in
+        dir: in
+        items:
+          - { id: path, name: "GET /v1/today", type: string, wireType: string }
+      - id: out
+        dir: out
+        items:
+          - id: body
+            name: body
+            type: Weather
+            wireType: object
+            children:
+              - { id: condition, name: condition, type: string, wireType: string }
+              - { id: temperature, name: temperature, type: number, wireType: number }
+    links:
+      - { from: in/path, to: out/body, confidence: crude }
+  - id: "external:receipt-service"
+    kind: external
+    name: "レシート取り込みサービス"
+    runtime: external
+    ports:
+      - id: out
+        dir: out
+        items:
+          - id: event
+            name: event
+            type: ReceiptEvent
+            wireType: object
+            children:
+              - { id: merchant, name: merchant, type: string, wireType: string }
+              - { id: amount, name: amount, type: integer, wireType: integer }
+              - { id: receivedAt, name: receivedAt, type: string, wireType: string }

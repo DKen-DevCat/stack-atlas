@@ -252,7 +252,7 @@ v2:
   nodes:      # 箱のパッチ（runtime・host・group・kind・name・file・line・code・cache・screen）
     - { id: "fn:internal/push.Send", host: "infra:lambda_api/notify", reason: "notify からしか呼ばれない" }
   wires:      # 線を足す（via 必須）
-    - from: { call: { in: "fn:getRaces", http: "GET /races" }, path: path }
+    - from: { call: { in: "fn:getRaces", http: "GET /races" }, path: url }   # 子の名前は呼び先の引数名（fetcher(url) の url、fetch(input) の input）
       to: "endpoint:GET /races#in/path"
       via: http
       reason: "ラッパーの引数がテンプレートで、アダプタがパスを読めない"
@@ -303,13 +303,16 @@ views は `.stack-atlas/views.yaml`（docs/16 §8 の形 `{ id, name, descriptio
 ### 3.6b ハーネス（`init --skill`・`build --dry-run --json`・`build --strict`。docs/19）
 
 ```sh
-pnpm atlas init --skill <repo>                 # <repo>/.claude/skills/stack-atlas/ に skill、雛形（設定・overrides・views.yaml・DECISIONS.md）
+pnpm atlas init --skill <repo>                 # <repo>/.claude/skills/stack-atlas/ に skill、雛形（設定・overrides・.stack-atlas/DECISIONS.md）
 pnpm atlas init --skill <repo> --update        # 手で変えていないファイルだけ更新。変えたものは隣に .new
 pnpm atlas build <repo> --dry-run --json       # 出力先に書かず、標準出力は報告の JSON だけ（ログは標準エラー）
 pnpm atlas build <repo> --strict               # 埋められる隙間があれば終了コード 1（CI の関門）
 pnpm atlas validate --strict <out>/graph.json  # graph.json の報告（project.generator.report）を読む補助
 pnpm atlas --version                           # skill の VERSION と比べる
+pnpm atlas init-views <repo>                   # .stack-atlas/views.yaml の雛形（init --skill は置かない）
 ```
+
+**skill**（`harness/skill/`。2026-11-10 8-4c）: `init --skill` で対象に置くと、手元の Claude Code が `stack-atlas` の skill として読む。中身は SKILL.md（禁止事項 6 つと手順 0〜7: 版の確かめ → `build --dry-run --json` → 設定 → 補い → views → 画面 → `build --strict` が通るまで → 抜き取り 3 つと `.stack-atlas/DECISIONS.md`）と `references/`（model・report・supplements・hand-graph・variants・screens・views・checklist）。エージェントが書くのは設定と補いのファイルだけで、対象アプリのコードの変更・ビルドは提案にとどめる。**読んだコードは利用者が契約しているモデルの API に送られる**ので、業務の repo に使うかは人が決める（docs/19 の Q17）。隙間を仕込んだ確かめ用の fixture は `examples/fixture-gaps/`（補い無しの `build --strict` が 3 件で落ちる。正解表は docs/19 §9）。
 
 - `--dry-run`: 抽出から strict の判定まで行い、出力先には書かない（screens は一時ディレクトリで測って消す。screenshots は強制的に無効）
 - `--json` の報告のキー: `checked`（動いた / 飛ばした抽出器。`go-types` の go が無ければ `skipped`）・`adapters` / `contracts`（自動率）・`unjoined`（結べない呼び出し・handler の無い endpoint・OpenAPI に無いルート・結べない SQL）・`undetermined`（`{ group, peer, via, candidates }`）・`opaque`・`estimates`・`screens`（route ごとの HTML の有無とカバー率）・`supplements`・`strict`・`issues`

@@ -1,0 +1,17 @@
+# 静的解析で取れない結線の補正
+nodes:
+  - id: actor:user
+    layer: infra
+    kind: actor
+    name: Browser
+    code: "GET https://expenses.example.com/"
+
+edges:
+  # 利用者 → CloudFront（静的サイトの入口）
+  - { from: actor:user, to: infra:static_site/this, kind: flow }
+  # ブラウザは Function URL を直接叩く（CORS 設定のみで、コード上は環境変数の URL 経由）
+  - { from: actor:user, to: infra:lambda_api/api, kind: http }
+  # Gmail の push 通知は外部から Function URL に届く（コードに現れない）
+  - { from: actor:user, to: infra:lambda_api/gmail_webhook, kind: http }
+  # notify Lambda は Web Push を送る。push パッケージは import されているが、購読は DB 経由
+  - { from: handler:cmd/notify, to: schema:push_subscriptions, kind: uses }

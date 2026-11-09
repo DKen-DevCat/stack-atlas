@@ -1,22 +1,58 @@
-# Stack Atlas の設定（docs/13 §4.1 にキーの一覧）。stack-atlas init --skill が置いた雛形。
-# 例は合成のフィクスチャ（examples/fixture-poly）の形。実際の repo に合わせて直す。
+# Stack Atlas の設定（キーの一覧は Stack Atlas の docs/13 §4.1）。stack-atlas init --skill が置いた雛形。
+# 例は合成の 2 リポジトリ（examples/fixture-poly: Next 静的エクスポート ＋ Go ＋ Terraform HCL ＋ OpenAPI ＋ SQL）の形。
+# 対象に合わせて直し、使わない節は消す。設定が無くても detect() が見つけた範囲は載る。
 project:
   name: my-app
 
-# 複数 repo なら名前 → このファイルからの相対パス（1 つなら消す）
+# 複数 repo なら、名前 → このファイルからの相対パス（1 つなら消す）。repo の外を指す変更は人に提案する
 # repos:
 #   web: ./web
 #   platform: ./platform
 
-# next:
-#   appDir: src/app
-# go:
-#   entries: ["cmd/*"]
-# openapi:
-#   files: [openapi/api.yaml]
-# sql:
-#   migrations: ["migrations/*.up.sql"]
+# terraform:
+#   repo: platform
+#   root: infra/envs/dev
+#   sourceDir: infra
 
-# ビルド成果物の画面（docs/18 §3.3）。静的エクスポートの HTML があるときだけ
+# next:
+#   repo: web
+#   appDir: src/app
+#   tsconfig: tsconfig.json
+
+# ts:
+#   repo: web
+#   tsconfig: [tsconfig.json]
+
+# go:
+#   repo: platform
+#   entries: ["cmd/*"]
+
+# openapi:
+#   files:
+#     - { repo: platform, path: openapi/api.yaml }
+
+# sql:
+#   repo: platform
+#   migrations: ["migrations/*.up.sql"]
+#   db: "infra:aurora/this"            # テーブルを持つ DB の箱（推定のときは報告の estimates に出る）
+
+# api:
+#   repo: web
+#   clients: ["src/lib/fetcher/**/*.ts", "src/feature/**/request.ts"]
+#   callers: ["fetcher"]               # 第 1 引数がパスのラッパー関数
+#   targets: ["infra:lambda_api/api"]
+
+# インフラの箱 → 載っているもの（推定を固定する）
+# deploy:
+#   "infra:static_site/site": { app: next }
+#   "infra:lambda_api/api": { go: cmd/api }
+
+# classify:
+#   - { repo: platform, glob: "internal/domain/**", kind: type }
+#   - { repo: platform, glob: "internal/store/**", kind: schema }
+
+# ビルド成果物の画面（静的エクスポートの HTML が repo にあるときだけ。dir は人が決める）
 # screens:
-#   from: next-export
+#   repo: web
+#   from: next-export                  # か from: dir ＋ dir: <HTML のディレクトリ>
+#   routes: { "/items/[id]": ["sample-1"] }

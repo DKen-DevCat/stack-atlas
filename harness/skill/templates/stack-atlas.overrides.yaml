@@ -1,16 +1,32 @@
-# 静的解析で取れない結線の補い（docs/13 §3.5、v2: は docs/19 §3.1）。stack-atlas init --skill が置いた雛形。
-# v2: の補いは reason が必須。番号の参照（call_1 など）には expect（name・type）を付けるか、意味の参照で書く。
+# 静的解析で取れない結線の補い。stack-atlas init --skill が置いた雛形。
+# 上の nodes / edges は箱の単位（3D の地図と配線図の両方）、v2: は項目の単位（skill の references/supplements.md）。
+# v2: の補いは reason が必須。番号の項目（call_1 など）は意味の参照か expect（指紋）で書く。
+# 例の id は合成のフィクスチャ（examples/fixture-poly）の形。対象の id は build の報告と graph.json で確かめる。
 nodes: []
+#  - { id: "actor:user", layer: infra, kind: actor, name: Browser }
 edges: []
+#  - { from: "actor:user", to: "infra:static_site/this", kind: flow }
 
 v2:
+  nodes: []
+  #  - { id: "fn:internal/push.Send", host: "infra:lambda_api/notify", reason: "notify の Lambda からしか呼ばれない" }
   wires: []
-  # - from: { call: { in: "fn:getRaces", http: "GET /races" } }
-  #   to: "endpoint:GET /races#in/path"
-  #   via: http
-  #   reason: "ラッパーの引数がテンプレートで、アダプタがパスを読めない"
+  #  - from: { call: { in: "fn:getExchangeRate", http: "GET /v2/rates" }, path: input }
+  #    to: "external:fx-api#in/path"          # 箱は .stack-atlas/graph/*.v2.yaml に手書き
+  #    via: http
+  #    reason: "外部 API。自前の OpenAPI に無いので合流できない"
   retarget: []
-  links: []
-  variants: []
-  when: []
+  #  - { group: "handler:cmd/notify", peer: "schema:push_subscriptions", to: ["fn:cmd/notify.main"], reason: "…" }
   items: []
+  #  - at: "fn:internal/api.handleImport#in/body"
+  #    expect: { type: "map[string]any" }
+  #    children: [{ id: amount, name: amount, type: float64, wireType: number }]
+  #    reason: "body を map で受け、amount のキーだけを読む"
+  variants: []
+  #  - { node: "comp:PushToggle", id: push_v2, name: "新しい購読フロー", default: false, reason: "機能フラグで部品を切り替える" }
+  links: []
+  #  - { node: "fn:toDayCells", from: "in/totals", to: "out/return.cells", reason: "…" }
+  when: []
+  #  - { node: "comp:PushToggle", link: { from: "in/props", to: { call: { to: "comp:SubscribeV2" } } }, when: { push_v2: true }, reason: "…" }
+  remove: []
+  # strict の違反を remove で消さない
