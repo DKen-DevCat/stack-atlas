@@ -2,7 +2,8 @@
 // - 規模: 箱の単位の v2（fixture-poly ≒ 48 箱、fixture-repo ≒ 28 箱、race-site）が 1 秒未満で layoutWiring でき、
 //   箱が重ならず、線は直交で箱の内側を通らない
 // - たどり: 画面を選ぶと下流の helper・ハンドラ・テーブルが光り、関係ない画面は光らない（docs/15 §3.5）
-// - 見つかったこと（2026-11-09）: 共有の helper・ハンドラ・テーブルを選ぶと、ほぼ全部が光る（下の describe に事実として固定）
+// - 見つかったこと（2026-11-09）: 共有の helper・ハンドラ・テーブルを選ぶと、ほぼ全部が光った。8-1 のレビューでたどりを直し、
+//   新しい光り方を下の describe に事実として固定した
 import { buildGraph, createMemoryLogger, loadConfig, upgradeGraph } from '@stack-atlas/core';
 import { validateGraphV2, type Graph, type GraphV2 } from '@stack-atlas/schema';
 import {
@@ -34,7 +35,7 @@ async function build(name: string): Promise<GraphV2> {
     commit: false,
   });
   expect(res.issues.filter((i) => i.level === 'error')).toEqual([]);
-  return res.graphV2;
+  return res.graphV2!;
 }
 
 const graphs = new Map<string, GraphV2>();
@@ -230,23 +231,59 @@ describe('たどり: fixture-repo（Next を Lambda に載せた SSR）', () => 
   });
 });
 
-// 見つかったこと（2026-11-09。事実として固定する。直すのは @stack-atlas/wiring のたどり）:
-// 2 段のたどり（D43）は、第 k 回の戻りの絞り込みを「前回の範囲」で判定する。共有の helper・ハンドラ・テーブルから始めると、
-// 第 1 回の範囲はほぼ始点だけなので、第 2 回で始点の先の曖昧な戻り（往復の相手が 2 つ以上の箱）が「相手が 1 つも
-// 前回の範囲にいない → 全員へ」で全部通る。その回で光った箱が次の回の範囲に入るので、絞り込みが効かないまま止まる。
-// 箱の単位の v2 では uses がどれも呼び出しと戻りの対になるので、共有の箱が多く、これが目立つ
-describe('見つかったこと: 共有の箱から始めると、ほぼ全部が光る（2 段のたどりの範囲が前回のもの）', () => {
-  it('fixture-poly: lib:fetcher の下流に、fetcher を使わない PushToggle と push の endpoint が入る', () => {
+// 見つかったこと（2026-11-09）と、その直し（8-1 のレビュー。@stack-atlas/wiring のたどり）:
+// 以前の 2 段のたどり（D43）は、第 k 回の戻りの絞り込みを「前回の範囲」だけで判定していた。共有の helper・ハンドラ・
+// テーブルから始めると、第 1 回の範囲はほぼ始点だけなので、第 2 回で始点の先の曖昧な戻り（往復の相手が 2 つ以上の箱）が
+// 「相手が 1 つも前回の範囲にいない → 全員へ」で、同じ回に相手が光る箱の分まで全部通り、ほぼ全部が光った。
+// 今は曖昧な戻りを保留し、戻り先が光っているものから通し、光る箱が増えなくなってから「全員へ」を決める（docs/15 §3.5）。
+// 共有の箱が呼び出し元を全部光らせるのは正しい（誰も光っていなければ全員へ）ので、残る
+describe('見つかったこと: 共有の箱から始めたときの光り方（「全員へ」を早く決めすぎない）', () => {
+  /** 光る箱の数（上流＋下流 / 下流だけ） */
+  const counts = (g: GraphV2, id: string) => [
+    litBoxes(g, id).size,
+    litBoxes(g, id, { downOnly: true }).size,
+  ];
+
+  it('fixture-poly: lib:fetcher の下流に、fetcher を使わない PushToggle と push の endpoint は入らない', () => {
+    // 8-1 のレビューで変更: 以前は PushToggle と POST /push/subscriptions が入っていた（48 箱中 40 / 下流 33）
     const lit = litBoxes(graphs.get('fixture-poly')!, 'lib:fetcher', { downOnly: true });
-    expect(lit.has('comp:PushToggle')).toBe(true);
-    expect(lit.has('endpoint:POST /push/subscriptions')).toBe(true);
+    expect(lit.has('comp:PushToggle')).toBe(false);
+    expect(lit.has('endpoint:POST /push/subscriptions')).toBe(false);
+    // fetcher を使う部品・endpoint は光る
+    for (const id of [
+      'comp:TodayIsland',
+      'comp:CalendarIsland',
+      'endpoint:GET /today',
+      'endpoint:GET /days',
+    ])
+      expect(lit.has(id), id).toBe(true);
     // 部品は画面へ戻りを返さない（render は片道）ので、下流に画面は入らない
     expect(lit.has('route:/push')).toBe(false);
+    expect(counts(graphs.get('fixture-poly')!, 'lib:fetcher')).toEqual([26, 21]);
   });
 
-  it('fixture-repo: lib:apiClient の下流に、apiClient を使わない /login と Header が入る', () => {
+  it('fixture-repo: lib:apiClient の下流に、apiClient を使わない /login と Header は入らない', () => {
+    // 8-1 のレビューで変更: 以前は /login と Header が入っていた（28 箱中 19 / 下流 18）。
+    // useSession は光っている AuthGuard（入稿画面の部品）へだけ返す
     const lit = litBoxes(graphs.get('fixture-repo')!, 'lib:apiClient', { downOnly: true });
-    expect(lit.has('route:/login')).toBe(true);
-    expect(lit.has('comp:Header')).toBe(true);
+    expect(lit.has('route:/login')).toBe(false);
+    expect(lit.has('comp:Header')).toBe(false);
+    expect(lit.has('comp:AuthGuard')).toBe(true);
+    expect(counts(graphs.get('fixture-repo')!, 'lib:apiClient')).toEqual([17, 16]);
+  });
+
+  it('fixture-poly: テーブルから始めると、store の呼び出し元までで止まる（画面までは光らない）', () => {
+    // 8-1 のレビューで変更: 以前は 38 / 下流 32（web の部品と endpoint まで）。store は誰も光っていないので全員
+    // （cmd/api・internal/api・gmail-webhook・inbound）へ返し、internal/api は光っている cmd/api へだけ返す
+    const g = graphs.get('fixture-poly')!;
+    const lit = litBoxes(g, 'schema:transactions', { downOnly: true });
+    expect(lit.has('handler:internal/api')).toBe(true);
+    expect(lit.has('handler:cmd/gmail-webhook')).toBe(true);
+    expect(lit.has('endpoint:GET /today')).toBe(false);
+    expect(counts(g, 'schema:transactions')).toEqual([14, 13]);
+  });
+
+  it('fixture-poly: 全部の endpoint を受け持つ handler:internal/api は、呼び出し元の endpoint を全部光らせる（変わらない）', () => {
+    expect(counts(graphs.get('fixture-poly')!, 'handler:internal/api')).toEqual([35, 29]);
   });
 });

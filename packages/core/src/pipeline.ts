@@ -52,6 +52,11 @@ export interface BuildGraphOptions {
   config?: StackAtlasConfig;
   /** キャッシュのルール（省略時は DEFAULT_RULES） */
   rules?: Rule[];
+  /**
+   * v1 だけを作る（`stack-atlas build --v1`）。v2 への変換と検証をしない（書かない graph の v2 のエラーで失敗させない）。
+   * このとき結果の graphV2 は無く、v2Warnings は空
+   */
+  v1Only?: boolean;
 }
 
 export type ExtractorStatus = 'ok' | 'disabled' | 'not-detected' | 'failed';
@@ -75,8 +80,8 @@ export interface ExtractorReport extends RepoExtractorReport {
 export interface BuildGraphResult {
   /** graph.json v1（3D の地図。build は graph.v1.json に書く） */
   graph: Graph;
-  /** graph.json v2（箱の単位。docs/16 §10。build は graph.json に書く） */
-  graphV2: GraphV2;
+  /** graph.json v2（箱の単位。docs/16 §10。build は graph.json に書く）。v1Only なら無い */
+  graphV2?: GraphV2;
   /**
    * パイプライン（overrides・flows・層）と validateGraph の問題、v2 への変換と validateGraphV2 のエラー
    * （path は `v2:` で始まる）。level: error が 1 つでもあれば失敗扱い
@@ -241,23 +246,26 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
   const v = validateGraph(graph);
   issues.push(...v.errors);
 
-  // 8. v2 への変換と検証（docs/16 §10）
-  const v2path = (i: ValidationIssue): ValidationIssue => ({ ...i, path: `v2:${i.path}` });
-  const graphV2 = upgradeGraph(graph, { onIssue: (i) => issues.push(v2path(i)) });
-  const v2 = validateGraphV2(graphV2);
-  issues.push(...v2.errors.map(v2path));
-  for (const e of v2.errors) log.error(`graph.json（v2）: ${e.path}: ${e.message}`);
-
-  return {
+  // 8. v2 への変換と検証（docs/16 §10）。v1Only なら作らない。
+  // v2 のエラーは issues にだけ入れる（v1 の検証エラーと同じく、出すのは build の要約。log にも出すと 2 回出る）
+  const result: BuildGraphResult = {
     graph,
-    graphV2,
     issues,
-    v2Warnings: v2.warnings,
+    v2Warnings: [],
     partials,
     reports,
     config,
     repos,
   };
+  if (!opts.v1Only) {
+    const v2path = (i: ValidationIssue): ValidationIssue => ({ ...i, path: `v2:${i.path}` });
+    const graphV2 = upgradeGraph(graph, { onIssue: (i) => issues.push(v2path(i)) });
+    const v2 = validateGraphV2(graphV2);
+    issues.push(...v2.errors.map(v2path));
+    result.graphV2 = graphV2;
+    result.v2Warnings = v2.warnings;
+  }
+  return result;
 }
 
 /** undefined のフィールドを落とし、フィールド順を graph.json の慣例に揃える */

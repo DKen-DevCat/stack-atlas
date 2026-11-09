@@ -71,8 +71,12 @@ code {
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
-/* 隣の graph（build の graph.json = 配線図）を開く文字のリンク */
-.top h1 .alt {
+/*
+ * 隣の graph（build の graph.json ↔ graph.v1.json）を開く文字のリンク（graph/altLink.ts）。3D の地図の題名と配線図の帯で共通。
+ * 配線図の帯はクリックを通す（pointer-events: none）ので、リンクだけ受ける
+ */
+.alt-link {
+  pointer-events: auto;
   margin-left: 8px;
   font-weight: 400;
   font-size: 11px;
@@ -80,7 +84,7 @@ code {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.top h1 .alt:hover {
+.alt-link:hover {
   color: inherit;
 }
 .top h1 small {

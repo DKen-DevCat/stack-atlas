@@ -21,19 +21,6 @@
   pointer-events: none;
   user-select: none;
 }
-/* 隣の graph（build の graph.v1.json = 3D の地図）を開く文字のリンク。帯はクリックを通すので、リンクだけ受ける */
-.wv-top .wv-alt {
-  pointer-events: auto;
-  margin-left: 10px;
-  font-weight: 400;
-  font-size: 11px;
-  color: var(--muted);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.wv-top .wv-alt:hover {
-  color: inherit;
-}
 .wv-top small {
   font-weight: 400;
   color: var(--muted);

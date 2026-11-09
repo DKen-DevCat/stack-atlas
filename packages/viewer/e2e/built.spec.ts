@@ -25,7 +25,8 @@ test('graph.json（v2）は配線図で開き、graph.v1.json があれば「3D 
   await page.goto('?graph=built/graph.json');
   await waitReady(page);
   await expect(page.locator('.wv')).toBeVisible();
-  const toMap = page.locator('.wv-top a.wv-alt');
+  // 8-1 のレビューで変更: リンクは graph/altLink.ts の 1 つの部品になり、class は両方とも .alt-link（以前は .wv-alt と .alt）
+  const toMap = page.locator('.wv-top a.alt-link');
   await expect(toMap).toBeVisible();
   await expect(toMap).toHaveText('3D の地図');
   expect(await toMap.getAttribute('href')).toContain('graph=built%2Fgraph.v1.json');
@@ -34,7 +35,7 @@ test('graph.json（v2）は配線図で開き、graph.v1.json があれば「3D 
   await waitReady(page);
   await expect(page.locator('.top h1')).toBeVisible();
   expect(new URL(page.url()).searchParams.get('graph')).toBe('built/graph.v1.json');
-  const toWiring = page.locator('.top h1 a.alt');
+  const toWiring = page.locator('.top h1 a.alt-link');
   await expect(toWiring).toBeVisible();
   await expect(toWiring).toHaveText('配線図');
 
@@ -53,6 +54,6 @@ test('graph.v1.json が無ければ（手書きの v2・--v1 の build）リン�
   await expect(page.locator('.wv')).toBeVisible();
   // HEAD の応答を待つ
   await page.waitForTimeout(300);
-  await expect(page.locator('.wv-top a.wv-alt')).toBeHidden();
+  await expect(page.locator('.wv-top a.alt-link')).toBeHidden();
   expect(errors).toEqual([]);
 });

@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { formatDiff, runDiff } from '../commands/diff.js';
 import { diffGraphs, upgradeGraph } from '@stack-atlas/core';
 
@@ -42,6 +42,27 @@ describe('stack-atlas diff', () => {
   it('引数不足・読めないファイルは終了コード 2', () => {
     expect(runDiff([SAMPLE])).toBe(2);
     expect(runDiff([SAMPLE, '/nonexistent.json'])).toBe(2);
+  });
+
+  it('スキーマを満たさない v2（口の無い箱）は読めないものとして終了コード 2（落ちない）', () => {
+    // 以前は検証せずに比べたので、itemRefs が n.ports を回して TypeError で落ちた
+    const v2 = upgradeGraph(JSON.parse(readFileSync(SAMPLE, 'utf8')));
+    const broken = structuredClone(v2) as unknown as { nodes: Record<string, unknown>[] };
+    delete broken.nodes[0]!.ports;
+    const dir = mkdtempSync(join(tmpdir(), 'stack-atlas-diff-bad-'));
+    const prev = join(dir, 'prev.json');
+    const next = join(dir, 'next.json');
+    writeFileSync(prev, JSON.stringify(v2));
+    writeFileSync(next, JSON.stringify(broken));
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const out: string[] = [];
+    const code = runDiff([prev, next], (s) => out.push(s));
+    const msg = err.mock.calls.map((c) => String(c[0])).join('\n');
+    err.mockRestore();
+    expect(code).toBe(2);
+    expect(out).toEqual([]);
+    expect(msg).toContain(`${next} は graph.json v2 のスキーマを満たしません`);
+    expect(msg).toContain('/nodes/0');
   });
 
   it('v2 どうしは箱・線・型・項目で比べる', () => {

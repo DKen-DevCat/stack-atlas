@@ -13,6 +13,7 @@ import {
   type VariantState,
   type WiringLayout,
 } from '@stack-atlas/wiring';
+import { createAltLink, type AltLink } from '../graph/altLink';
 import { h } from '../ui/dom';
 import { Player, type BallPosition } from './balls';
 import { createCanvas, type Canvas } from './canvas';
@@ -61,12 +62,6 @@ export interface WiringApp {
    */
   setAltLink(link: AltLink | null): void;
   dispose(): void;
-}
-
-/** 隣の graph を開くリンク（graph/alternate.ts の alternateGraph の結果） */
-export interface AltLink {
-  href: string;
-  label: string;
 }
 
 export interface WiringOptions {
@@ -119,12 +114,11 @@ export function mountWiring(opts: WiringOptions): WiringApp {
   play.hidden = true;
   seek.hidden = true;
   const name = opts.graph.project?.name ?? opts.source;
-  const alt = h('a', { class: 'wv-alt', attrs: { 'data-alt': '' } });
-  alt.hidden = true;
+  const alt = createAltLink();
   const root = h(
     'div',
     { class: 'wv' },
-    h('div', { class: 'wv-top' }, 'Stack Atlas — 配線図', alt, h('small', {}, name)),
+    h('div', { class: 'wv-top' }, 'Stack Atlas — 配線図', alt.el, h('small', {}, name)),
     stage,
     h('div', { class: 'wv-speed' }, play, seek, speed, speedLabel),
   );
@@ -241,12 +235,7 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     index,
     layout,
     debug,
-    setAltLink(link) {
-      alt.hidden = !link;
-      alt.textContent = link?.label ?? '';
-      if (link) alt.setAttribute('href', link.href);
-      else alt.removeAttribute('href');
-    },
+    setAltLink: (link) => alt.set(link),
     dispose() {
       offInteraction();
       player.dispose();

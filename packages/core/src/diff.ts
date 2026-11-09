@@ -106,10 +106,10 @@ const WIRE_COMPARED: Array<[string, (w: WireV2) => unknown]> = [
   ['when', (w) => (w.when ? JSON.stringify(w.when) : undefined)],
 ];
 
-/** 箱の全項目の参照（入れ子を含む） */
+/** 箱の全項目の参照（入れ子を含む）。検証していない graph（口の無い箱）でも落ちない */
 function itemRefs(n: NodeV2): string[] {
   const out: string[] = [];
-  for (const p of n.ports) {
+  for (const p of n.ports ?? []) {
     const walk = (items: ItemV2[] | undefined, prefix: string) => {
       for (const it of items ?? []) {
         const path = prefix + it.id;

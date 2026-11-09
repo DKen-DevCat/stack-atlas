@@ -265,8 +265,9 @@ const anyIn = (set: Set<string> | undefined, lit: Set<string>) =>
   !!set && [...set].some((id) => lit.has(id));
 
 /**
- * 1 回のたどり。`scope` は前の回で光った箱（戻りの絞り込みに使う）。null なら曖昧な戻りを全部切る（第 1 段）。
- * `scoped` は、曖昧な戻り（往復の相手が 2 つ以上の箱の線）に出会って scope を見たか（出会わなければ次の回も同じ結果になる）
+ * 1 回のたどり。曖昧な戻り（往復の相手が 2 つ以上ある箱 X の reply の線。上流では X への行きの線）は、
+ * 戻り先（上流では呼び出し元）が `scope`（前の回で光った箱）にいるか、X が `toAll`（全員へ返すと決めた箱）なら通し、
+ * それ以外は保留する（切る）。`held` は保留した線を持つ箱 X（空なら、次の回も同じ結果になる）
  */
 function traverseOnce(
   index: GraphIndex,
@@ -274,10 +275,11 @@ function traverseOnce(
   cache: EdgeCache,
   starts: IndexedItem[],
   opts: TraverseOptions,
-  scope: Set<string> | null,
-): { lit: Lit; scoped: boolean } {
+  scope: ReadonlySet<string>,
+  toAll: ReadonlySet<string>,
+): { lit: Lit; held: Set<string> } {
   const lit = emptyLit();
-  let scoped = false;
+  const held = new Set<string>();
   const addItem = (it: IndexedItem) => {
     // 項目は必ず祖先ごと入れるので、入っていれば祖先も箱も入っている
     if (lit.items.has(it.ref)) return;
@@ -292,21 +294,23 @@ function traverseOnce(
   };
   for (const s of starts) addItem(s);
 
-  // 複数から呼ばれる箱の戻りの線は、光っている呼び出し元へだけ。誰も光っていなければ全員へ。第 1 段では切る
+  // 複数から呼ばれる箱の戻りの線は、光っている呼び出し元へだけ。誰も光っていなければ全員へ（toAll。traverse が決める）
   const replyAllowed = (w: IndexedWire) => {
-    const rq = index.requesters.get(w.fromNode.id);
+    const x = w.fromNode.id;
+    const rq = index.requesters.get(x);
     if (!rq || rq.size <= 1) return true;
-    scoped = true;
-    if (scope === null) return false;
-    return scope.has(w.toNode.id) || !anyIn(rq, scope);
+    if (scope.has(w.toNode.id) || toAll.has(x)) return true;
+    held.add(x);
+    return false;
   };
   // 複数へ戻す箱の行きの線を逆にたどるときも対称
   const callAllowedUp = (w: IndexedWire) => {
-    const rp = index.repliers.get(w.toNode.id);
+    const x = w.toNode.id;
+    const rp = index.repliers.get(x);
     if (!rp || rp.size <= 1) return true;
-    scoped = true;
-    if (scope === null) return false;
-    return scope.has(w.fromNode.id) || !anyIn(rp, scope);
+    if (scope.has(w.fromNode.id) || toAll.has(x)) return true;
+    held.add(x);
+    return false;
   };
 
   if (opts.down) {
@@ -345,16 +349,21 @@ function traverseOnce(
       }
     }
   }
-  return { lit, scoped };
+  return { lit, held };
 }
 
 const sameSet = (a: Set<string>, b: Set<string>) =>
   a.size === b.size && [...a].every((x) => b.has(x));
 
 /**
- * 始点からたどる。2 段（D43）: まず曖昧な戻り（複数から呼ばれる箱の reply）を切って範囲を求め、
- * その範囲を使って戻りを絞ったたどりを、光る箱が変わらなくなるまで繰り返す（単調に増えるので止まる）。
- * 途中の BFS の順序に依らない。第 1 段で曖昧な戻りに出会わなければ、その結果がそのまま答え（次の回も同じ判断になる）
+ * 始点からたどる。2 段（D43。docs/15 §3.5）: 曖昧な戻り（複数から呼ばれる箱の reply）を保留して範囲を求め、
+ * その範囲で戻りを絞ったたどりを繰り返す。
+ * - 各回は、戻り先が前の回で光っている曖昧な戻りだけを通す
+ * - 光る箱が増えなくなったら、保留している箱のうち往復の相手が 1 つも光っていない箱を「全員へ」（toAll）にして続ける
+ * - 保留が無くなるか、全員へにする箱も無くなったら止まる
+ * 「全員へ」は光る箱が増えなくなってからしか決めない（前の回の範囲が狭いうちに決めると、その回で相手が光る箱まで
+ * 全員へ返し、使っていない画面まで光った。2026-11-09 の 8-1 の確認）。scope も toAll も単調に増え、回の中の判断は
+ * scope と toAll だけで決まるので、止まり、BFS の順序（線の宣言順）に依らない
  */
 export function traverse(
   index: GraphIndex,
@@ -364,13 +373,24 @@ export function traverse(
 ): Lit {
   const active = starts.filter((s) => itemActive(index, state, s));
   const cache = edgeCacheOf(index, state);
-  const first = traverseOnce(index, state, cache, active, opts, null);
-  if (!first.scoped) return first.lit;
-  let lit = first.lit;
-  for (let i = 0; i <= index.nodes.size; i++) {
-    const next = traverseOnce(index, state, cache, active, opts, lit.boxes).lit;
-    if (sameSet(next.boxes, lit.boxes)) return next;
-    lit = next;
+  let scope: Set<string> = new Set();
+  const toAll = new Set<string>();
+  // 各回で scope か toAll が 1 つ以上増えるので、回数は箱の数の 2 倍で足りる
+  for (let i = 0; i <= 2 * index.nodes.size + 1; i++) {
+    const { lit, held } = traverseOnce(index, state, cache, active, opts, scope, toAll);
+    if (!held.size) return lit;
+    if (!sameSet(lit.boxes, scope)) {
+      scope = lit.boxes;
+      continue;
+    }
+    // 光る箱が増えなくなった: 往復の相手が 1 つも光っていない保留の箱は、全員へ返す（requesters と repliers は同じ集合）
+    let added = false;
+    for (const x of held) {
+      if (anyIn(index.requesters.get(x) ?? index.repliers.get(x), lit.boxes)) continue;
+      toAll.add(x);
+      added = true;
+    }
+    if (!added) return lit;
   }
-  return lit;
+  return traverseOnce(index, state, cache, active, opts, scope, toAll).lit;
 }

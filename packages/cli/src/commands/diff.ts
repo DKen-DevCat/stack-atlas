@@ -8,7 +8,13 @@ import {
   type GraphDiffV2,
   type WireRef,
 } from '@stack-atlas/core';
-import { detectGraphVersion, type Edge, type Graph, type GraphV2 } from '@stack-atlas/schema';
+import {
+  detectGraphVersion,
+  validateGraphV2,
+  type Edge,
+  type Graph,
+  type GraphV2,
+} from '@stack-atlas/schema';
 import { readFileSync } from 'node:fs';
 
 const edge = (e: Edge) => `${e.from} → ${e.to}（${e.kind}${e.label ? `: ${e.label}` : ''}）`;
@@ -94,7 +100,18 @@ function readGraph(file: string): Loaded {
     if (!Array.isArray(g?.nodes) || !Array.isArray(g?.wires)) {
       throw new Error(`${file} は graph.json v2 ではありません（nodes / wires がありません）`);
     }
-    return { version: 2, graph: json as GraphV2 };
+    // 形の崩れた v2（口の無い箱など）で比べると落ちるので、スキーマを通らなければ読めないものとして扱う。
+    // 参照切れ（無い箱への線など）は比べられるので通す（stack-atlas validate で一覧）
+    const r = validateGraphV2(json);
+    if (!r.graph) {
+      const shown = r.errors
+        .slice(0, 3)
+        .map((e) => `${e.path}: ${e.message}`)
+        .join('; ');
+      const more = r.errors.length > 3 ? ` ほか ${r.errors.length - 3} 件` : '';
+      throw new Error(`${file} は graph.json v2 のスキーマを満たしません（${shown}${more}）`);
+    }
+    return { version: 2, graph: r.graph };
   }
   if (!Array.isArray(g?.nodes) || !Array.isArray(g?.edges)) {
     throw new Error(`${file} は graph.json ではありません（nodes / edges がありません）`);

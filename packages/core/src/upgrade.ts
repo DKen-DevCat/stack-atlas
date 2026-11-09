@@ -29,6 +29,7 @@
  */
 import {
   RUNTIMES,
+  UPGRADE_GENERATOR,
   type CacheV2,
   type Edge,
   type Graph,
@@ -124,20 +125,30 @@ export interface InfraProfile {
   edgeFn?: boolean;
 }
 
+/** Lambda@Edge の名前（`Lambda@Edge`・`lambda_edge`・`cloudfront_lambda_edge` など） */
+const LAMBDA_EDGE_NAME = /lambda[\s_-]*@?[\s_-]*edge|@edge/i;
+
 /**
- * infra の型（`meta.infra.type` か `meta.cdktf.type`）と、型が無いとき（手書きの graph）の名前の規則。上から順に最初に合ったもの
+ * infra の型（`meta.infra.type` か `meta.cdktf.type`）と、型が無いとき（手書きの graph）の名前の規則。上から順に最初に合ったもの。
+ * 名前の規則は具体的なものを先に置く（CloudFront Function・Lambda@Edge は名前に cloudfront を含みうるので、
+ * CloudFront のディストリビューションより前）。`type` の無い行は名前だけで決める（Lambda@Edge の型は aws_lambda_function
+ * なので、型があるときは cache の関連付けで決める。infraProfileOf）
  */
-export const INFRA_PROFILES: ReadonlyArray<{ type: RegExp; name: RegExp; profile: InfraProfile }> =
+export const INFRA_PROFILES: ReadonlyArray<{ type?: RegExp; name: RegExp; profile: InfraProfile }> =
   [
+    {
+      type: /^aws_cloudfront_function$/,
+      name: /cloudfront[\s_-]*functions?(?![a-z])/i,
+      profile: { name: 'CloudFront Function', kind: 'infra', runtime: 'edge', edgeFn: true },
+    },
+    {
+      name: LAMBDA_EDGE_NAME,
+      profile: { name: 'Lambda@Edge', kind: 'infra', runtime: 'edge', host: 'fn', edgeFn: true },
+    },
     {
       type: /^aws_cloudfront_distribution$/,
       name: /cloudfront|\bcdn\b/i,
       profile: { name: 'CloudFront', kind: 'cache', runtime: 'edge' },
-    },
-    {
-      type: /^aws_cloudfront_function$/,
-      name: /cloudfront function/i,
-      profile: { name: 'CloudFront Function', kind: 'infra', runtime: 'edge', edgeFn: true },
     },
     {
       type: /^(aws_lambda_function|google_cloudfunctions2?_function)$/,
@@ -199,18 +210,29 @@ export function infraProfileOf(
   const text = `${n.id.replace(/^[a-z]+:/, '')} ${n.name}`;
   let found: InfraProfile | undefined;
   for (const p of INFRA_PROFILES) {
-    if (type !== undefined ? p.type.test(type) : p.name.test(text)) {
+    if (type !== undefined ? !!p.type?.test(type) : p.name.test(text)) {
       found = p.profile;
       break;
     }
   }
   const profile = found ?? DEFAULT_INFRA;
   // Lambda を cache が関連付けていれば Lambda@Edge（エッジで動く）
-  if (profile.host === 'fn' && !profile.edgeFn && (edgeAssoc || /@edge/i.test(text))) {
+  if (profile.host === 'fn' && !profile.edgeFn && (edgeAssoc || LAMBDA_EDGE_NAME.test(text))) {
     return { ...profile, name: 'Lambda@Edge', runtime: 'edge', edgeFn: true };
   }
   return profile;
 }
+
+/** map のキーの配列に足す（配列を写さない） */
+function pushTo<K, V>(map: Map<K, V[]>, key: K, value: V) {
+  const arr = map.get(key);
+  if (arr) arr.push(value);
+  else map.set(key, [value]);
+}
+
+/** v1 の project.generator（あれば残し、v2 の印を足す） */
+const generatorOf = (p: Graph['project']) =>
+  isPlainObject(p?.generator) ? (p.generator as Record<string, unknown>) : {};
 
 const ITEM_ANY: ItemV2 = { id: '_', name: '値', type: 'unknown', wireType: 'unknown' };
 const item = (id: string, name: string, typeRef?: string): ItemV2 => ({
@@ -301,8 +323,8 @@ export function upgradeGraph(v1: Graph, opts: UpgradeOptions = {}): GraphV2 {
   const edgesFrom = new Map<string, Edge[]>();
   const edgesTo = new Map<string, Edge[]>();
   for (const e of edges) {
-    edgesFrom.set(e.from, [...(edgesFrom.get(e.from) ?? []), e]);
-    edgesTo.set(e.to, [...(edgesTo.get(e.to) ?? []), e]);
+    pushTo(edgesFrom, e.from, e);
+    pushTo(edgesTo, e.to, e);
   }
   const outOf = (id: string, kind: string) =>
     (edgesFrom.get(id) ?? []).filter((e) => e.kind === kind);
@@ -354,7 +376,7 @@ export function upgradeGraph(v1: Graph, opts: UpgradeOptions = {}): GraphV2 {
     const x = boxes.get(e.to);
     if (!x || !hostable(h)) continue;
     if (e.kind === 'deploy') {
-      if (x.kind === 'endpoint') served.set(h.id, [...(served.get(h.id) ?? []), x]);
+      if (x.kind === 'endpoint') pushTo(served, h.id, x);
       else if (x.host === undefined && x.kind !== 'table') {
         x.host = h.id;
         x.direct = true;
@@ -372,8 +394,8 @@ export function upgradeGraph(v1: Graph, opts: UpgradeOptions = {}): GraphV2 {
     if (!b.host || !INHERITS_HOST.has(b.kind)) continue;
     const seen = new Set<string>([b.id]);
     const q = [b.id];
-    while (q.length) {
-      const id = q.shift()!;
+    for (let qi = 0; qi < q.length; qi++) {
+      const id = q[qi]!;
       for (const e of outOf(id, 'uses')) {
         const t = boxes.get(e.to);
         if (!t || seen.has(t.id) || !INHERITS_HOST.has(t.kind)) continue;
@@ -392,8 +414,7 @@ export function upgradeGraph(v1: Graph, opts: UpgradeOptions = {}): GraphV2 {
   }
   /** 枠 → 中の箱（宣言順） */
   const members = new Map<string, Box[]>();
-  for (const b of boxes.values())
-    if (b.host) members.set(b.host, [...(members.get(b.host) ?? []), b]);
+  for (const b of boxes.values()) if (b.host) pushTo(members, b.host, b);
 
   // --- 3. 口の形 ---
   for (const b of boxes.values()) {
@@ -603,10 +624,17 @@ export function upgradeGraph(v1: Graph, opts: UpgradeOptions = {}): GraphV2 {
     if (!h || !x || x.host === h.id) return;
     if (x.kind === 'endpoint' && isFrame(h) && served.get(h.id)?.includes(x)) return;
     if (isFrame(h)) {
+      // 線にしない理由は箱ごとに違う: テーブルは deploy では枠に入れない（DB からの schema で入る）。ほかは別の枠に載っている
+      const why =
+        x.kind === 'table'
+          ? 'テーブルで、deploy では枠に入れません（テーブルは DB からの schema のエッジで枠に入る）'
+          : x.host !== undefined
+            ? `別の枠（${x.host}）に載っています`
+            : '枠に入れられません';
       onIssue({
         level: 'warning',
         path: `edge:${e.from}->${e.to}`,
-        message: `"${x.id}" は別の枠（${x.host ?? 'なし'}）に載っているので、deploy "${h.id}" → "${x.id}" は線にしません`,
+        message: `"${x.id}" は${why}。deploy "${h.id}" → "${x.id}" は線にしません`,
       });
       return;
     }
@@ -628,6 +656,9 @@ export function upgradeGraph(v1: Graph, opts: UpgradeOptions = {}): GraphV2 {
     // 時刻・キューからは event、それ以外（インフラどうし・利用者から）は http（docs/16 §4）
     const via: WireVia = a.kind === 'trigger' || a.kind === 'queue' ? 'event' : 'http';
     const label = e.label ? { label: e.label } : {};
+    // エッジの関数（CloudFront Function・Lambda@Edge）かは、枠の中の箱へ引き直す前の箱で決める（コードを載せた
+    // Lambda@Edge は枠になり、引き直し先の箱は profile を持たない）
+    const edgeFn = !!b.profile?.edgeFn;
     const sources = sourcesOf(a);
     if (!sources.length && isFrame(a)) {
       const list = unwired.get(a.id) ?? [];
@@ -640,7 +671,7 @@ export function upgradeGraph(v1: Graph, opts: UpgradeOptions = {}): GraphV2 {
         const d = callee(t);
         addWire(caller(s).send, d.recv, via, label);
         // cache → オリジン: オリジンの戻りは cache の in/value へ（エッジの関数は脇で動くので戻さない）
-        if (s.shape === 'cache' && !t.profile?.edgeFn && t.shape !== 'source') {
+        if (s.shape === 'cache' && !edgeFn && t.shape !== 'source') {
           addWire(d.send, ref(s, 'in', 'value'), t.profile?.storage ? 'deliver' : 'http', {
             reply: true,
           });
@@ -678,9 +709,16 @@ export function upgradeGraph(v1: Graph, opts: UpgradeOptions = {}): GraphV2 {
 
   // --- 8. views（flows の置き換え。docs/15 §3.9） ---
   const views: ViewV2[] = [];
+  /** view の始点にする箱。枠（口が無く線も無い）は、直に載っている最初の箱（無ければ受け持つ endpoint） */
+  const entryOf = (b: Box): string => {
+    if (!isFrame(b)) return b.id;
+    const direct = (members.get(b.id) ?? []).find((m) => m.direct);
+    return direct?.id ?? served.get(b.id)?.[0]?.id ?? b.id;
+  };
   for (const f of v1.flows ?? []) {
-    const start = f.steps.map((s) => s.node).find((id) => boxes.has(id));
-    if (!start) continue;
+    const first = f.steps.map((s) => boxes.get(s.node)).find((b): b is Box => !!b);
+    if (!first) continue;
+    const start = entryOf(first);
     const view: ViewV2 = { id: f.id, name: f.name, start };
     const caches = [...new Set(f.steps.map((s) => s.node))].filter(
       (id) => boxes.get(id)?.shape === 'cache',
@@ -691,10 +729,11 @@ export function upgradeGraph(v1: Graph, opts: UpgradeOptions = {}): GraphV2 {
     views.push(view);
   }
 
-  // フィールドの順は graph.json v2 の慣例（version, project, types, nodes, wires, views）
+  // フィールドの順は graph.json v2 の慣例（version, project, types, nodes, wires, views）。
+  // project.generator.v2 は「v1 から変換した箱の単位の graph」の印（ビューアが箱の単位で必ず出る警告を畳む。docs/16 §10）
   const out: GraphV2 = {
     version: 2,
-    ...(v1.project ? { project: { ...v1.project } } : {}),
+    project: { ...v1.project, generator: { ...generatorOf(v1.project), v2: UPGRADE_GENERATOR } },
     ...(types.length ? { types } : {}),
     nodes,
     wires,

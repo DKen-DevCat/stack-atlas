@@ -14,7 +14,7 @@ import {
   prevUrlFromSearch,
   loadGraphFromFile,
   loadGraphFromUrl,
-  isBoxLevelWarning,
+  wiringIssues,
   type LoadResult,
 } from './graph/load';
 import { alternateGraph, graphExists } from './graph/alternate';
@@ -126,10 +126,8 @@ let shownSeq = 0;
 function showResult(res: LoadResult, shared: SharedMemoSource, prev: PrevGraph = {}) {
   shownSeq++;
   overlays.replaceChildren();
-  // 配線図は、箱の単位の v2 で必ず出る警告（口の単位・置き場の項目の wireType unknown）を一覧に出さない
-  const issues0 = res.v2
-    ? res.issues.filter((i) => !isBoxLevelWarning(i, res.graphV2))
-    : res.issues;
+  // 配線図は、v1 から変換した箱の単位の v2 で必ず出る警告（口の単位・置き場の項目の wireType unknown）を一覧に出さない
+  const issues0 = res.v2 ? wiringIssues(res) : res.issues;
   const allIssues = prev.issue ? [...issues0, prev.issue] : issues0;
   const issues = createIssuesBox(allIssues, res.versionWarning, !!(res.graph ?? res.graphV2));
   if (issues) overlays.append(issues);

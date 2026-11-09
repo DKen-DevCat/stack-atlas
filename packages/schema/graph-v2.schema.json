@@ -18,7 +18,13 @@
         "repo": { "type": "string", "description": "リポジトリURLやパス" },
         "commit": { "type": "string", "description": "抽出時のコミットSHA" },
         "generatedAt": { "type": "string", "format": "date-time" },
-        "sources": { "type": "array", "items": { "type": "string" } }
+        "sources": { "type": "array", "items": { "type": "string" } },
+        "generator": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "graph を作ったもの。v2: \"upgrade\" は core の upgradeGraph が v1 から変換した箱の単位の graph（docs/16 §10）。ビューアはこの印のある graph だけ、箱の単位で必ず出る警告を一覧から畳む",
+          "properties": { "v2": { "type": "string" } }
+        }
       }
     },
     "types": {

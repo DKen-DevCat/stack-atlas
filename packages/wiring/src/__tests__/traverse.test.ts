@@ -151,6 +151,68 @@ describe('2 段のたどり（D43）: 複数から呼ばれる箱の戻り', () 
   });
 });
 
+describe('2 段のたどり: 「全員へ」は光る箱が増えなくなってから決める（8-1 のレビュー）', () => {
+  /**
+   * 箱の単位の小さな graph（fixture-repo の apiClient / useSession の形）:
+   * 共有の S を A と B が呼ぶ（call / return）。A は部品 C を描き（render）、C と D は共有の H を呼ぶ（call / return）。
+   * D（Header）は S を使わない
+   */
+  const box = (id: string, kind: 'fn' | 'helper' | 'component') =>
+    N(id, kind, 'browser', [
+      P('in', 'in', [I('_', 'unknown')]),
+      P('out', 'out', [I('_', 'unknown')]),
+    ]);
+  const sharedGraph = (): GraphV2 => ({
+    version: 2,
+    nodes: [
+      box('fn:A', 'fn'),
+      box('fn:B', 'fn'),
+      box('helper:S', 'helper'),
+      box('comp:C', 'component'),
+      box('helper:H', 'helper'),
+      box('comp:D', 'component'),
+    ],
+    wires: [
+      W('fn:A#out/_', 'helper:S#in/_', 'call'),
+      W('helper:S#out/_', 'fn:A#in/_', 'return', true),
+      W('fn:B#out/_', 'helper:S#in/_', 'call'),
+      W('helper:S#out/_', 'fn:B#in/_', 'return', true),
+      W('fn:A#out/_', 'comp:C#in/_', 'render'),
+      W('comp:C#out/_', 'helper:H#in/_', 'call'),
+      W('helper:H#out/_', 'comp:C#in/_', 'return', true),
+      W('comp:D#out/_', 'helper:H#in/_', 'call'),
+      W('helper:H#out/_', 'comp:D#in/_', 'return', true),
+    ],
+  });
+
+  it('S の下流: S は全員（A・B）へ返すが、H は光っている C へだけ返し、S を使わない D は光らない', () => {
+    // 以前は第 k 回の判断を前の回の範囲だけで行い、C が光るのと同じ回に H の戻りを「相手が誰も光っていない → 全員へ」で
+    // 通していたので D まで光った（fixture-repo の lib:apiClient で /login と Header が光った件）
+    const idx = indexGraph(sharedGraph());
+    const lit = select(idx, defaultState(idx), { kind: 'box', id: 'helper:S', downOnly: true })!;
+    expect([...lit.boxes].sort()).toEqual(['comp:C', 'fn:A', 'fn:B', 'helper:H', 'helper:S']);
+    expect(lit.items.has('comp:D#in/_')).toBe(false);
+  });
+
+  it('線の宣言順を逆にしても同じ', () => {
+    const g = sharedGraph();
+    g.wires.reverse();
+    const idx = indexGraph(g);
+    const lit = select(idx, defaultState(idx), { kind: 'box', id: 'helper:S', downOnly: true })!;
+    expect([...lit.boxes].sort()).toEqual(['comp:C', 'fn:A', 'fn:B', 'helper:H', 'helper:S']);
+  });
+
+  it('共有の H から始めると、呼び出し元の C と D は全部光る（上流も下流も。誰も光っていなければ全員へ）', () => {
+    const idx = indexGraph(sharedGraph());
+    const st = defaultState(idx);
+    const both = select(idx, st, { kind: 'box', id: 'helper:H' })!;
+    expect(both.boxes.has('comp:C')).toBe(true);
+    expect(both.boxes.has('comp:D')).toBe(true);
+    const down = select(idx, st, { kind: 'box', id: 'helper:H', downOnly: true })!;
+    expect([...down.boxes].sort()).toEqual(['comp:C', 'comp:D', 'helper:H']);
+  });
+});
+
 describe('分岐（variants / when）', () => {
   it('login=false: LoginPrompt が光り、TodayIsland は光らない', () => {
     const state = { ...state0, 'screen:/today#login': false };

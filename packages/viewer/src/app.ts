@@ -12,6 +12,7 @@ import {
   type DiffMarks,
   type GraphDiff,
 } from './graph/diff';
+import type { AltLink } from './graph/altLink';
 import type { GraphModel } from './graph/model';
 import { resolveAssetUrl, type LoadResult } from './graph/load';
 import { placeGhosts, plateWithGhosts } from './layout/ghosts';
@@ -318,7 +319,7 @@ export class Viewer {
   }
 
   /** 題名の横の、隣の graph（build の graph.json = 配線図）へのリンク（main.ts が有無を確かめてから呼ぶ） */
-  setAltLink(link: { href: string; label: string } | null): void {
+  setAltLink(link: AltLink | null): void {
     this.topbar.setAltLink(link);
   }
 

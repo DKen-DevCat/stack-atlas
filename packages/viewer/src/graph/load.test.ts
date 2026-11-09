@@ -9,6 +9,7 @@ import {
   parseGraphText,
   resolveAssetUrl,
   summarizeIssues,
+  wiringIssues,
 } from './load';
 import { SAMPLE_PATH, SAMPLE_V2_PATH } from './testSample';
 
@@ -203,5 +204,48 @@ describe('isBoxLevelWarning（箱の単位の v2 で必ず出る警告。配線�
     expect(
       isBoxLevelWarning(w('/nodes/0/ports/0/items(in/_)', 'wireType が unknown です'), undefined),
     ).toBe(false);
+  });
+});
+
+describe('wiringIssues（配線図の検証の一覧。箱の単位の警告を畳むのは変換した graph だけ）', () => {
+  const node = {
+    id: 'lib:a',
+    kind: 'helper' as const,
+    name: 'a',
+    runtime: 'browser' as const,
+    ports: [
+      {
+        id: 'in',
+        dir: 'in' as const,
+        items: [{ id: '_', name: '値', type: 'unknown', wireType: 'unknown' as const }],
+      },
+    ],
+  };
+  const issues = [
+    { level: 'warning' as const, path: '/wires/0', message: '線 "a" → "b" は口の単位です' },
+    {
+      level: 'warning' as const,
+      path: '/nodes/0/ports/0/items(in/_)',
+      message: '項目 "lib:a#in/_" の wireType が unknown です',
+    },
+    { level: 'warning' as const, path: '/nodes/0/links', message: '不透明な箱' },
+    { level: 'error' as const, path: '/wires/1', message: '口の単位' },
+  ];
+
+  it('v1 から変換した graph（project.generator.v2: upgrade）は、箱の単位で必ず出る警告を畳む', () => {
+    const graphV2: GraphV2 = {
+      version: 2,
+      project: { name: 'p', generator: { v2: 'upgrade' } },
+      nodes: [node],
+      wires: [],
+    };
+    expect(wiringIssues({ issues, graphV2 })).toEqual([issues[2], issues[3]]);
+  });
+
+  it('手書き・言語アダプタの v2（印なし）は全部出す', () => {
+    // 以前は v2 なら必ず畳んでいたので、手書きの graph の口の単位の線や wireType unknown が一覧に出なかった
+    const graphV2: GraphV2 = { version: 2, project: { name: 'p' }, nodes: [node], wires: [] };
+    expect(wiringIssues({ issues, graphV2 })).toEqual(issues);
+    expect(wiringIssues({ issues: issues.slice(0, 1) })).toEqual(issues.slice(0, 1));
   });
 });

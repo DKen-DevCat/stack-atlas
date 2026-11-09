@@ -207,7 +207,8 @@
 ### 実装結果（Phase 8-1。2026-11-09）
 
 **結論**: `upgradeGraph(v1) → GraphV2`（`packages/core/src/upgrade.ts`。純関数）を作り、`buildGraph` は `graph`（v1）と `graphV2` の両方を返す。
-`stack-atlas build` は **`graph.json` = v2**、**`graph.v1.json` = v1** を書く（`--v1` で従来どおり graph.json に v1 だけ）。
+`stack-atlas build` は **`graph.json` = v2**、**`graph.v1.json` = v1** を書く（`--v1` で従来どおり graph.json に v1 だけ。v2 への変換と検証もしない）。
+変換した graph の `project.generator.v2` は `"upgrade"`（箱の単位の graph の印。手書きや言語アダプタの v2 と見分ける）。
 v2 の検証は 3 つともエラー 0（警告は全部「口の単位」と、置き場の項目の `wireType unknown`）:
 
 | graph | 箱（うち枠） | 線 | 型 | view | 警告 |
@@ -219,7 +220,8 @@ v2 の検証は 3 つともエラー 0（警告は全部「口の単位」と、
 周辺: `validate` は version を見て検証器を選ぶ（8-0 のまま）。`diff` は両方 v1 ならノード・エッジ、どちらかが v2 なら箱・線・型・項目（`diffGraphsV2`。v1 の側は変換して比べる）。
 `init-flows` は v1 の graph を読むまま（v2 では最初の箱が view の始点になる旨を出力に足した）。`serve` は変更なし（graph.v1.json も静的に配る）。
 ビューアは build の graph.json（v2）の隣に graph.v1.json があれば（HEAD で確かめる）左上に「3D の地図」、3D の地図は graph.v1.json を開いていて graph.json があれば「配線図」を出す。
-配線図の検証の一覧には、箱の単位で必ず出る警告（口の単位、type も unknown の項目の wireType unknown）を出さない（`validate` では全部出る）。
+配線図の検証の一覧には、変換した graph（`project.generator.v2: "upgrade"`）に限って、箱の単位で必ず出る警告（口の単位、type も unknown の項目の wireType unknown）を出さない（`validate` では全部出る。手書きの v2 は配線図でも全部出る）。
+`build` は出力先（既定は解析対象の repo の中の `.stack-atlas/out`）のシンボリックリンクを書く前に確かめ、あれば書かずに終了コード 2（repo が置いたリンクで repo の外のファイルを書き換えないため。graph.json・graph.v1.json・issues.json・memos.json・shots/ の中・`--with-viewer` の写し先、repo の中の出力先のディレクトリ）。
 
 **§10 の表から踏み込んだ所・変えた所**（表は箱の単位で引くと決まらない所があった）:
 
@@ -237,16 +239,16 @@ v2 の検証は 3 つともエラー 0（警告は全部「口の単位」と、
 | 10 | schema のエッジは、元が DB（枠になりうる infra）ならテーブルの `host`。それ以外は `sql` の線 | §10 の「`via: sql`」は D42（Aurora / RDS / DynamoDB はテーブルの枠）と食い違う。枠には線を付けられない |
 | 11 | v1 の `schema` のうち、コード由来（`meta.go` / `meta.ts`）で schema のエッジに指されず `meta.sql` も無いもの（Go の `internal/store` を classify で schema にしたもの）は `table` ではなく `helper` | 「テーブル」ではなくデータアクセスのパッケージ |
 | 12 | runtime の優先順: `meta.runtime`（明示）> host（Lambda → server、Lambda@Edge → edge、DB → data）> infra の型 > Go（server）> kind の既定。誰からも呼ばれずサーバー側だけを呼ぶ helper は server（Lambda の入口のファイル）。**静的エクスポートの画面は browser**（`build` にしない） | §10 の「静的エクスポートなら build」は D42 改訂の「画面はブラウザで動く」と 8-0 の手組み（`route:/` は browser）と食い違う。v1 には `'use client'` の情報が無く、部品の server / build は決められない（`meta.runtime` で明示できる） |
-| 13 | S3 の前に cache があれば、S3 → cache の `in/value`（deliver、reply）、cache の `out/value` → S3 が配る画面（deliver、reply）。cache の前に無ければ S3 → 画面へ直接 deliver。cache のほかのオリジン（枠の中の画面、API Gateway）からの戻りは `in/value` へ（http、reply）。CloudFront Function・Lambda@Edge（関連付けのラベル `*function_association*`）へは戻りを引かない | D42 改訂の「HIT でも画面以下が光る」。エッジの関数は脇で動く |
+| 13 | S3 の前に cache があれば、S3 → cache の `in/value`（deliver、reply）、cache の `out/value` → S3 が配る画面（deliver、reply）。cache の前に無ければ S3 → 画面へ直接 deliver。cache のほかのオリジン（枠の中の画面、API Gateway）からの戻りは `in/value` へ（http、reply）。CloudFront Function・Lambda@Edge（関連付けのラベル `*function_association*`。型の無い graph では名前）へは戻りを引かない。エッジの関数かは枠の中の箱へ引き直す前の箱で決める（コードを載せた Lambda@Edge は枠になる）。名前の規則は CloudFront Function・Lambda@Edge をディストリビューションより先に見る | D42 改訂の「HIT でも画面以下が光る」。エッジの関数は脇で動く |
 | 14 | 型: OpenAPI にもある型は file を OpenAPI のファイル（複数 repo の修飾つき）、元の場所を `meta.copies` に（D37）。`source` は openapi > sql > go > typescript。uses の相手は `meta.usedBy`。テーブルの行型は `table:<meta.sql.table か id の識別子>` | — |
-| 15 | views: 最初の**箱**のステップ（型は飛ばす）を start、`tone: cache-hit` は経路上の cache の `hit: true`（それ以外は false）。箱が 1 つも無いフローは落とす | §3.9 |
+| 15 | views: 最初の**箱**のステップ（型は飛ばす）を start、`tone: cache-hit` は経路上の cache の `hit: true`（それ以外は false）。start が枠なら直に載っている最初の箱（無ければ受け持つ endpoint）。箱が 1 つも無いフローは落とす | §3.9。枠は口も線も無いので、始点にすると何も流れない（fixture-poly の「メール取り込み」は `handler:cmd/gmail-webhook` から） |
 | 16 | v1 の `kinds`・`layers`・`position`（x / z）は捨てる。語彙に無い kind（config.kinds で足したもの）は v1 の層で決め（infra → infra、routes → screen、components → helper、types → helper / server）、元の kind を `meta.kindV1` に。handler は `meta.api` から `meta.route` | — |
 | 17 | 同じ (from, to) の線は先に引いたもの。コードのエッジ（uses / http / schema）→ deploy → flow の順に引く（sql が flow の http に勝つ）。ラベルは同じ via のときだけ補う | — |
 
 **見つかったこと**（`packages/cli/src/__tests__/upgrade-wiring.test.ts` に事実として固定した）:
 
 - **画面のクリックは期待どおり**: fixture-poly の `route:/` は TodayIsland → spend の request / transformer → fetcher → 3 つの endpoint → `handler:internal/api` → store → テーブルと、上流の CloudFront・S3・利用者の 20 箱。`route:/calendar` / `route:/push` / `layout:/` は光らない。fixture-repo（Next on Lambda）の各画面も他の画面を光らせない
-- **共有の箱から始めると、ほぼ全部が光る**（2 段のたどり、D43）: `lib:fetcher` は 48 箱（うち枠 4）中 40、`handler:internal/api` は 35、`schema:transactions` は 38（`route:/` は 20）。fixture-repo の `lib:apiClient` は 28 箱中 19 で、使っていない `/login` と Header も入る。第 k 回の戻りの絞り込みは「前回の範囲」で判定するので、第 1 回の範囲がほぼ始点だけだと、第 2 回で先の曖昧な戻りが「相手が 1 つも前回の範囲にいない → 全員へ」で全部通り、その回で光った箱が次の回の範囲に入って絞り込みが効かないまま止まる。箱の単位では uses がどれも往復の対になり共有の箱が多いので目立つ。直すのは `@stack-atlas/wiring` のたどり（案: 曖昧な戻りを保留し、戻り先が光っているものから先に通し、どれも通せなくなってから「全員へ」を通す）
+- **共有の箱から始めると、ほぼ全部が光った**（2 段のたどり、D43）: `lib:fetcher` は 48 箱（うち枠 4）中 40、`handler:internal/api` は 35、`schema:transactions` は 38（`route:/` は 20）。fixture-repo の `lib:apiClient` は 28 箱中 19 で、使っていない `/login` と Header も入った。第 k 回の戻りの絞り込みを「前回の範囲」で判定していたので、第 1 回の範囲がほぼ始点だけだと、第 2 回で先の曖昧な戻りが「相手が 1 つも前回の範囲にいない → 全員へ」で全部通り、その回で光った箱が次の回の範囲に入って絞り込みが効かないまま止まった。**8-1 のレビューで `@stack-atlas/wiring` のたどりを直した**（曖昧な戻りを保留し、戻り先が光っているものから通し、光る箱が増えなくなってから「全員へ」を決める。docs/15 §3.5）: `lib:fetcher` は 26（下流 21。PushToggle と push の endpoint は入らない）、`schema:transactions` は 14（store の呼び出し元まで）、`lib:apiClient` は 17（/login と Header は入らない）。`handler:internal/api` は 35 のまま（全部の endpoint から呼ばれるので、呼び出し元を全部光らせるのが正しい）。画面のクリックは変わらない
 - **CloudFront の HIT**: fixture-poly（静的エクスポート）は HIT でも画面へ届く。fixture-repo（SSR）は HIT で CDN で止まる（画面はオリジン）。fixture-poly では利用者 → Lambda の http（overrides）が endpoint へ直接入るので、利用者のクリックは HIT でも API まで光る
 - **配線図が縦に長い**: fixture-poly は 3204 × 7538（箱の高さの合計は 2,500 ほど）。隙間は線の数（最大 12 本 ≈ 96px）ではなく、左のレーンの相手に揃える重心の配置が下へ連鎖して空く（データのレーンの最初の箱が y ≈ 6300）。重なり・箱を横切る線は無く、layout は数 ms。build 時に埋める ELK 相当のレイアウト（本節「core と周辺の変更」）で直す
 

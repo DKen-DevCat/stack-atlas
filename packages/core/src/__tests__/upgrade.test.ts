@@ -1,5 +1,6 @@
 // v1 → v2 の変換（docs/16 §10）。対応表・infra の型・線の規則・host の枠・runtime・views・型を固定する
 import {
+  isUpgradedGraph,
   validateGraphV2,
   type Edge,
   type Graph,
@@ -166,6 +167,30 @@ describe('infra の型（infraProfileOf）', () => {
     });
   });
 
+  it('名前の規則は具体的なものが先: CloudFront Function・Lambda@Edge は CloudFront（cache）にしない', () => {
+    // 以前は CloudFront のディストリビューションの規則（/cloudfront/）が先にあり、どちらも cache になっていた
+    for (const name of ['CloudFront Function (rewrite)', 'cloudfront_function_rewrite']) {
+      expect(byName(name), name).toMatchObject({
+        name: 'CloudFront Function',
+        kind: 'infra',
+        runtime: 'edge',
+        edgeFn: true,
+      });
+    }
+    for (const name of ['cloudfront_lambda_edge', 'CloudFront Lambda@Edge (auth)', 'lambda-edge']) {
+      expect(byName(name), name).toMatchObject({
+        name: 'Lambda@Edge',
+        kind: 'infra',
+        runtime: 'edge',
+        host: 'fn',
+        edgeFn: true,
+      });
+    }
+    // ディストリビューションはそのまま cache
+    expect(byName('cloudfront_distribution').kind).toBe('cache');
+    expect(byName('CDN')).toMatchObject({ kind: 'cache' });
+  });
+
   it('型の無い手書きの infra は id と名前で決める', () => {
     expect(byName('CloudFront').kind).toBe('cache');
     expect(byName('Lambda@Edge (auth)')).toMatchObject({ runtime: 'edge', edgeFn: true });
@@ -268,7 +293,8 @@ describe('箱と口', () => {
       { kinds: { lib: { name: 'ライブラリ' } }, project: { name: 'p' } },
     );
     const v2 = up(v1);
-    expect(v2.project).toEqual({ name: 'p' });
+    // 8-1 のレビューで変更: 変換した graph には印 project.generator.v2 = "upgrade" を付ける（ビューアが箱の単位の警告を畳む）
+    expect(v2.project).toEqual({ name: 'p', generator: { v2: 'upgrade' } });
     expect(Object.keys(v2)).toEqual(['version', 'project', 'nodes', 'wires']);
     const x = node(v2, 'lib:x');
     expect(x).toMatchObject({
@@ -562,6 +588,58 @@ describe('host の枠（D42 改訂）', () => {
     });
   });
 
+  it('コードを載せた Lambda@Edge（枠）: cache からの要求は中の箱へ引き直すが、戻りは cache へ引かない', () => {
+    // 以前は引き直し先の箱（profile が無い）で判定していたので、Lambda@Edge の中の箱から cache の in/value へ戻りを引いていた
+    const h = up(
+      G(
+        [
+          infra('infra:cdn', 'aws_cloudfront_distribution'),
+          infra('infra:edge', 'aws_lambda_function'),
+          N('handler:auth', 'handler'),
+        ],
+        [
+          E(
+            'infra:cdn',
+            'infra:edge',
+            'flow',
+            'default_cache_behavior.lambda_function_association.lambda_arn',
+          ),
+          E('infra:edge', 'handler:auth', 'deploy'),
+        ],
+      ),
+    );
+    expect(node(h, 'infra:edge')).toMatchObject({ runtime: 'edge', ports: [] });
+    expect(node(h, 'handler:auth')).toMatchObject({ host: 'infra:edge', runtime: 'edge' });
+    expect(wires(h)).toEqual(['http infra:cdn#out/key -> handler:auth#in/_']);
+  });
+
+  it('枠の deploy を線にしない理由: テーブルは deploy で枠に入れない、ほかは別の枠に載っている', () => {
+    // 以前はどちらも「別の枠（なし）に載っている」と出ていた（テーブルは host が無いので「なし」）
+    const issues: string[] = [];
+    upgradeGraph(
+      G(
+        [
+          infra('infra:a', 'aws_lambda_function'),
+          infra('infra:b', 'aws_lambda_function'),
+          N('handler:a', 'handler'),
+          N('handler:b', 'handler'),
+          N('schema:t', 'schema', { meta: { sql: { table: 't' } } }),
+        ],
+        [
+          E('infra:a', 'handler:a', 'deploy'),
+          E('infra:b', 'handler:b', 'deploy'),
+          E('infra:a', 'handler:b', 'deploy'),
+          E('infra:a', 'schema:t', 'deploy'),
+        ],
+      ),
+      { onIssue: (i) => issues.push(i.message) },
+    );
+    expect(issues).toEqual([
+      '"handler:b" は別の枠（infra:b）に載っています。deploy "infra:a" → "handler:b" は線にしません',
+      '"schema:t" はテーブルで、deploy では枠に入れません（テーブルは DB からの schema のエッジで枠に入る）。deploy "infra:a" → "schema:t" は線にしません',
+    ]);
+  });
+
   it('2 つの枠からたどれる helper は枠に入れない（使う側ごとの複製は 8-2）', () => {
     const h = up(
       G(
@@ -624,6 +702,19 @@ describe('runtime（docs/16 §4 の優先順）', () => {
       G([N('schema:internal/store', 'schema', { meta: { go: { pkg: 'internal/store' } } })], []),
     );
     expect(node(g, 'schema:internal/store')).toMatchObject({ kind: 'helper', runtime: 'server' });
+  });
+});
+
+describe('変換した graph の印（project.generator.v2）', () => {
+  it('project が無い v1 にも付け、v1 の generator のほかの値は残す。isUpgradedGraph で見分けられる', () => {
+    const bare = up(G([N('lib:x', 'lib')], []));
+    expect(bare.project).toEqual({ generator: { v2: 'upgrade' } });
+    expect(isUpgradedGraph(bare)).toBe(true);
+    const kept = up(G([], [], { project: { name: 'p', generator: { tool: 'x' } } }));
+    expect(kept.project).toEqual({ name: 'p', generator: { tool: 'x', v2: 'upgrade' } });
+    // 手書きの v2（印なし）は変換したものではない
+    expect(isUpgradedGraph({ project: { name: 'p' } })).toBe(false);
+    expect(isUpgradedGraph(undefined)).toBe(false);
   });
 });
 
@@ -692,6 +783,40 @@ describe('型と views', () => {
       { id: 'hit', name: 'HIT', start: 'actor:user', variants: { 'infra:cdn#hit': true } },
     ]);
   });
+
+  it('最初の箱が枠（口も線も無い）なら、直に載っている最初の箱を start にする', () => {
+    // 以前は枠をそのまま start にしていたので、何も流れない view になった（fixture-poly の「メール取り込み」）
+    const g = up(
+      G(
+        [
+          infra('infra:webhook', 'aws_lambda_function'),
+          N('lib:parser', 'lib', { meta: { go: { pkg: 'internal/parser' } } }),
+          N('handler:webhook', 'handler'),
+          N('handler:main', 'handler'),
+        ],
+        [
+          E('infra:webhook', 'handler:webhook', 'deploy'),
+          E('infra:webhook', 'handler:main', 'deploy'),
+          E('handler:webhook', 'lib:parser', 'uses'),
+        ],
+        {
+          flows: [
+            {
+              id: 'inbound',
+              name: '取り込み',
+              steps: [
+                { node: 'infra:webhook', text: 'a' },
+                { node: 'lib:parser', text: 'b' },
+              ],
+            },
+          ],
+        },
+      ),
+    );
+    expect(node(g, 'infra:webhook').ports).toEqual([]);
+    expect(node(g, 'lib:parser').host).toBe('infra:webhook');
+    expect(g.views).toEqual([{ id: 'inbound', name: '取り込み', start: 'handler:webhook' }]);
+  });
 });
 
 describe('examples/race-site.graph.json', () => {
@@ -747,6 +872,17 @@ describe('examples/race-site.graph.json', () => {
 
 describe('diffGraphsV2', () => {
   const v1 = JSON.parse(readFileSync(RACE, 'utf8')) as Graph;
+
+  it('口の無い箱（検証していない graph）でも落ちない', () => {
+    // 以前は n.ports をそのまま回していたので TypeError で落ちた（CLI の diff は今は v2 を検証してから比べる）
+    const a = upgradeGraph(v1);
+    const b = structuredClone(a);
+    delete (b.nodes[0] as Partial<NodeV2>).ports;
+    const d = diffGraphsV2(a, b);
+    expect(d.removedItems.length).toBeGreaterThan(0);
+    expect(d.removedItems.every((r) => r.startsWith(`${a.nodes[0]!.id}#`))).toBe(true);
+  });
+
   it('同じなら空。箱・線・型・項目の増減と、箱・線の変更を出す', () => {
     const a = upgradeGraph(v1);
     expect(isEmptyDiffV2(diffGraphsV2(a, a))).toBe(true);

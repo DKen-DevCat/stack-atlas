@@ -1,7 +1,15 @@
 import type { Extractor } from '@stack-atlas/core';
 import { createMemoryLogger } from '@stack-atlas/core';
 import { validateGraph, validateGraphV2 } from '@stack-atlas/schema';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -77,6 +85,139 @@ describe('runBuild', () => {
     await quiet(() => run(true));
     expect(JSON.parse(readFileSync(join(out, 'graph.json'), 'utf8')).version).toBe(1);
     expect(existsSync(join(out, 'graph.v1.json'))).toBe(false);
+  });
+
+  /** v1 では正しいが、v2 では型 ID の形が違う（kind type で接頭辞が type: でない）ので v2 の検証エラーになる */
+  const v2Bad: Extractor = {
+    name: 'bad',
+    detect: async () => true,
+    extract: async () => ({ nodes: [{ id: 'comp:T', kind: 'type', name: 'T' }], edges: [] }),
+  };
+
+  it('--v1 は v2 を作らないので、v2 だけのエラーでは失敗しない（既定の build は終了コード 1）', async () => {
+    // 以前は --v1 でも v2 に変換して検証し、書かない graph のエラーで終了コード 1 になっていた
+    const root = repo();
+    const out = join(root, 'out');
+    const run = (v1Only: boolean) =>
+      quiet(() =>
+        runBuild({
+          repo: root,
+          outDir: out,
+          extractors: [v2Bad],
+          log: createMemoryLogger(),
+          v1Only,
+        }),
+      );
+    expect(await run(false)).toBe(1);
+    expect(await run(true)).toBe(0);
+    expect(JSON.parse(readFileSync(join(out, 'graph.json'), 'utf8')).version).toBe(1);
+    expect(JSON.parse(readFileSync(join(out, 'issues.json'), 'utf8'))).toEqual([]);
+  });
+
+  it('v2 の検証エラーは要約に 1 回だけ出る（log には出さない）', async () => {
+    // 以前は buildGraph が log.error にも出していたので、要約と合わせて 2 回出ていた
+    const root = repo();
+    const mlog = createMemoryLogger();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const code = await runBuild({
+      repo: root,
+      outDir: join(root, 'out'),
+      extractors: [v2Bad],
+      log: mlog,
+    });
+    const printed = [
+      ...log.mock.calls.map((c) => String(c[0])),
+      ...mlog.records.map((r) => r.msg),
+    ].join('\n');
+    log.mockRestore();
+    expect(code).toBe(1);
+    // 要約は `v2:/types/0/id`、以前の log は `graph.json（v2）: /types/0/id` と書いていた
+    expect(printed.split('/types/0/id').length - 1).toBe(1);
+  });
+
+  describe('出力先のシンボリックリンク（解析対象の repo が置いたリンクで repo の外を書き換えない）', () => {
+    /** repo の外の「書き換えられてはいけない」ファイル */
+    const victim = () => {
+      const dir = mkdtempSync(join(tmpdir(), 'stack-atlas-victim-'));
+      const file = join(dir, 'victim.txt');
+      writeFileSync(file, 'keep');
+      return { dir, file };
+    };
+    const run = (root: string, extra: Partial<Parameters<typeof runBuild>[0]> = {}) => {
+      const mlog = createMemoryLogger();
+      return quiet(() => runBuild({ repo: root, extractors: [stub], log: mlog, ...extra })).then(
+        (code) => ({ code, errors: mlog.of('error') }),
+      );
+    };
+
+    it.each(['graph.json', 'graph.v1.json', 'issues.json', 'memos.json'])(
+      '既定の出力先の %s がリンクなら書かずに終了コード 2',
+      async (name) => {
+        const root = repo();
+        const v = victim();
+        const out = join(root, '.stack-atlas', 'out');
+        mkdirSync(out, { recursive: true });
+        symlinkSync(v.file, join(out, name));
+        const { code, errors } = await run(root);
+        expect(code).toBe(2);
+        expect(errors[0]).toContain('シンボリックリンク');
+        expect(errors[0]).toContain(join(out, name));
+        expect(readFileSync(v.file, 'utf8')).toBe('keep');
+      },
+    );
+
+    it('--v1 で消す graph.v1.json がリンクでも止める', async () => {
+      const root = repo();
+      const v = victim();
+      const out = join(root, 'out');
+      mkdirSync(out);
+      symlinkSync(v.file, join(out, 'graph.v1.json'));
+      const { code } = await run(root, { outDir: out, v1Only: true });
+      expect(code).toBe(2);
+      expect(existsSync(join(out, 'graph.json'))).toBe(false);
+      expect(readFileSync(v.file, 'utf8')).toBe('keep');
+    });
+
+    it('repo の中の出力先のディレクトリ（.stack-atlas/out）や shots/ の中身がリンクでも止める', async () => {
+      const root = repo();
+      const v = victim();
+      symlinkSync(v.dir, join(root, '.stack-atlas', 'out'));
+      expect((await run(root)).code).toBe(2);
+      expect(existsSync(join(v.dir, 'graph.json'))).toBe(false);
+
+      const root2 = repo();
+      const shots = join(root2, 'o', 'shots');
+      mkdirSync(shots, { recursive: true });
+      symlinkSync(v.file, join(shots, 'home.png'));
+      expect((await run(root2, { outDir: join(root2, 'o') })).code).toBe(2);
+      expect(readFileSync(v.file, 'utf8')).toBe('keep');
+    });
+
+    it('--with-viewer で写すビューアのファイルの写し先がリンクでも止める（cpSync はリンクの先に書く）', async () => {
+      const root = repo();
+      const v = victim();
+      const viewer = mkdtempSync(join(tmpdir(), 'stack-atlas-viewer-'));
+      mkdirSync(join(viewer, 'assets'));
+      writeFileSync(join(viewer, 'index.html'), '<p>v</p>');
+      writeFileSync(join(viewer, 'assets', 'app.js'), '');
+      const out = join(root, 'o');
+      mkdirSync(join(out, 'assets'), { recursive: true });
+      symlinkSync(v.file, join(out, 'assets', 'app.js'));
+      const { code, errors } = await run(root, {
+        outDir: out,
+        withViewer: true,
+        viewerDist: viewer,
+      });
+      expect(code).toBe(2);
+      expect(errors[0]).toContain(join(out, 'assets', 'app.js'));
+      expect(readFileSync(v.file, 'utf8')).toBe('keep');
+    });
+
+    it('リンクの無い出力先は今までどおり書く', async () => {
+      const root = repo();
+      expect((await run(root)).code).toBe(0);
+      expect(existsSync(join(root, '.stack-atlas', 'out', 'graph.json'))).toBe(true);
+    });
   });
 
   it('リポジトリの memos.json が無くなったら、前回の build の out/memos.json も消す', async () => {
