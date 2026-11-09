@@ -120,6 +120,10 @@ await browser.close();
 - HTTP エラー（404 など）は警告を出したうえで、そのまま撮る。
 - Chromium は `playwright` パッケージ（1.63.0）のものを使う。入っていなければ `pnpm exec playwright install chromium`。
 
+### Chromium のサンドボックス
+
+Chromium は**サンドボックスありで起動する**（`chromiumSandbox: true`。2026-11-10、8-4 のセキュリティレビュー）。撮るページは解析対象の repo の設定（`baseUrl`）が決めるので、サンドボックスの無いブラウザで開かない。サンドボックスの使えない Linux（AppArmor で非特権のユーザー名前空間が止められている GitHub の ubuntu の runner など）では起動に失敗するので、**信頼できる baseUrl だけを撮るとき**に限り `STACK_ATLAS_CHROMIUM_NO_SANDBOX=1` で外す（警告が出る）。撮らないなら `--no-screenshots`。
+
 ### 制限
 
 - ビューポート 1 枚のみ。スクロールしないと見えない要素は、見えている部分だけ領域にする（完全に外なら捨てる）。

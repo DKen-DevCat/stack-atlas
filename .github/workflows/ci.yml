@@ -36,6 +36,9 @@ jobs:
       - run: pnpm test
         env:
           STACK_ATLAS_REQUIRE_GO: '1'
+          # ubuntu の runner は AppArmor でサンドボックスありの Chromium が起動しない。screenshots の e2e が撮るのは
+          # このリポジトリの fixture のサイトだけなので、明示して外す（利用者の既定はサンドボックスあり。8-4）
+          STACK_ATLAS_CHROMIUM_NO_SANDBOX: '1'
       - run: pnpm build
         env:
           STACK_ATLAS_REQUIRE_GO: '1'
