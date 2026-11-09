@@ -32,7 +32,8 @@ export function isSecretFile(file: string): boolean {
   const base = segs[segs.length - 1] ?? '';
   if (!base) return false;
   if (base.startsWith('.')) return true; // dotfile（.env・.env.local・.npmrc・.netrc・.pgpass など）
-  if (/^id_/i.test(base)) return true; // ssh の鍵（id_rsa・id_ed25519 など）
+  // ssh の鍵（id_rsa・id_ed25519・id_ecdsa_sk など。.pub も）。`id_generator.ts` のようなソースは外さない（2026-11-10）
+  if (/^id_(rsa|dsa|ecdsa|ed25519)(_sk)?(\.pub)?$/i.test(base)) return true;
   if (SECRET_EXT.test(base)) return true;
   return SECRET_NAME.test(base);
 }
