@@ -81,6 +81,7 @@ type Box struct {
 	Links     []Link         `json:"links,omitempty"`
 	Meta      map[string]any `json:"meta,omitempty"`
 	Reach     []string       `json:"reach,omitempty"`
+	PkgRefs   []string       `json:"pkgRefs,omitempty"`
 	Truncated bool           `json:"truncated,omitempty"`
 
 	fn      *types.Func
@@ -293,6 +294,7 @@ func (a *analyzer) run() Output {
 		a.buildLinks(b)
 	}
 	a.closure()
+	a.pkgRefs()
 	out := Output{Module: a.l.module, GoVersion: a.l.goVersion, Wires: a.wires}
 	if out.Wires == nil {
 		out.Wires = []Wire{}
@@ -807,5 +809,38 @@ func unparen(e ast.Expr) ast.Expr {
 			return e
 		}
 		e = p.X
+	}
+}
+
+// pkgRefs: 箱（関数）がシグネチャと本体で参照する、モジュールの中の別のパッケージ（関数・型・定数・変数の識別子）。
+// パッケージ相対パス（Box.Pkg と同じ形）で、重複なし・辞書順。TS の側が go 抽出器のパッケージの箱の id にして
+// PartialGraphV2.refs に出す（掃除で、group になった v1 のパッケージの箱に残った線の付け替え先を決める手がかり。D53。
+// 2026-11-09 8-2b: 型だけを参照する import（push.Subscription）の線が、パッケージの全部の関数へ付け替わっていた）
+func (a *analyzer) pkgRefs() {
+	relOf := map[string]string{}
+	for _, p := range a.l.modulePkgs {
+		relOf[p.Path] = a.rel(p.Dir)
+	}
+	for _, b := range a.boxes {
+		own := b.fn.Pkg()
+		seen := map[string]bool{}
+		ast.Inspect(b.decl, func(n ast.Node) bool {
+			id, ok := n.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			obj := b.info.Uses[id]
+			if obj == nil || obj.Pkg() == nil || obj.Pkg() == own {
+				return true
+			}
+			if rel, ok := relOf[obj.Pkg().Path()]; ok && rel != b.Pkg {
+				seen[rel] = true
+			}
+			return true
+		})
+		for rel := range seen {
+			b.PkgRefs = append(b.PkgRefs, rel)
+		}
+		sort.Strings(b.PkgRefs)
 	}
 }

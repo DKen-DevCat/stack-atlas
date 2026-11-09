@@ -95,7 +95,50 @@ export function mergePartialNodeV2(a: PartialNodeV2, b: PartialNodeV2): PartialN
   return out;
 }
 
-/** v2 の部分グラフの和（箱は id、線は (from, to)、型は id、groups はキーで、先に出たものを残す。refs は箱ごとの和） */
+/** 契約の出どころ（D65。言語アダプタの型より正） */
+const CONTRACT_SOURCES = new Set(['openapi', 'sql']);
+const isContractType = (t: NamedType) => CONTRACT_SOURCES.has(t.source ?? '');
+const locationOf = (t: NamedType) =>
+  t.file ? (t.line !== undefined ? `${t.file}:${t.line}` : t.file) : undefined;
+
+/**
+ * 同じ id の型 2 つから 1 つを選ぶ（D65。2026-11-09 8-2b の決定）: 契約（openapi・sql）が言語アダプタ（typescript・go）に
+ * 勝つ。同じ側どうしは先のもの。meta は勝った側が先の和（配列は連結）、負けた側の宣言の場所（`file:line`）は勝った側の
+ * `meta.copies` に足す（手で組んだ例の `type:Transaction` の copies と同じ。他言語の写しの場所）
+ */
+export function pickNamedType(first: NamedType, second: NamedType): NamedType {
+  const swap = isContractType(second) && !isContractType(first);
+  const win = swap ? second : first;
+  const lose = swap ? first : second;
+  const out: NamedType = clone(win);
+  if (lose.meta || win.meta)
+    out.meta = deepMerge(win.meta ?? {}, lose.meta ?? {}, { prefer: 'target' });
+  const loc = locationOf(lose);
+  if (loc && lose.file !== win.file) {
+    const copies = Array.isArray(out.meta?.copies) ? (out.meta.copies as unknown[]) : [];
+    if (!copies.includes(loc)) out.meta = { ...(out.meta ?? {}), copies: [...copies, loc] };
+  }
+  return out;
+}
+
+/** 型の並びの和（id で 1 つ。pickNamedType。順は先に出た位置） */
+export function mergeNamedTypes(a: readonly NamedType[], b: readonly NamedType[]): NamedType[] {
+  const out = a.map((t) => clone(t));
+  const at = new Map(out.map((t, i) => [t.id, i]));
+  for (const t of b) {
+    const i = at.get(t.id);
+    if (i === undefined) {
+      at.set(t.id, out.length);
+      out.push(clone(t));
+    } else out[i] = pickNamedType(out[i]!, t);
+  }
+  return out;
+}
+
+/**
+ * v2 の部分グラフの和（箱は id、線は (from, to)、groups はキーで、先に出たものを残す。型は id で、契約が言語アダプタに
+ * 勝つ（D65）。refs は箱ごとの和）
+ */
 export function mergePartialV2(
   parts: ReadonlyArray<PartialGraphV2 | undefined>,
 ): PartialGraphV2 | undefined {
@@ -103,7 +146,7 @@ export function mergePartialV2(
   if (!present.length) return undefined;
   const nodes = new Map<string, PartialNodeV2>();
   const wires = new Map<string, WireV2>();
-  const types = new Map<string, NamedType>();
+  let types: NamedType[] = [];
   let groups: Record<string, string> | undefined;
   const refs = new Map<string, Set<string>>();
   for (const p of present) {
@@ -117,14 +160,14 @@ export function mergePartialV2(
       nodes.set(n.id, prev ? mergePartialNodeV2(prev, n) : clone(n));
     }
     for (const w of p.wires) if (!wires.has(wireKey(w))) wires.set(wireKey(w), clone(w));
-    for (const t of p.types ?? []) if (!types.has(t.id)) types.set(t.id, clone(t));
+    if (p.types?.length) types = mergeNamedTypes(types, p.types);
     for (const [k, v] of Object.entries(p.groups ?? {})) {
       groups ??= {};
       if (!(k in groups)) groups[k] = v;
     }
   }
   const out: PartialGraphV2 = { nodes: [...nodes.values()], wires: [...wires.values()] };
-  if (types.size) out.types = [...types.values()];
+  if (types.length) out.types = types;
   if (groups) out.groups = groups;
   if (refs.size) out.refs = Object.fromEntries([...refs].map(([k, v]) => [k, [...v]]));
   return out;

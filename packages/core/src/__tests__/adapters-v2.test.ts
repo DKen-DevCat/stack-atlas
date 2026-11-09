@@ -20,7 +20,8 @@ import {
 import { mergePartialGraphs } from '../merge.js';
 import { prefixRepoFiles } from '../repo.js';
 import { cleanupV2, coverageV2, mergeV2, removeOverrideWiresV2 } from '../merge-v2.js';
-import { joinEndpoints } from '../join.js';
+import { handlerRoutes, joinAll, joinEndpoints } from '../join.js';
+import { mergeNamedTypes, mergePartialV2 } from '../v2-parts.js';
 import { writeBroken } from '../broken-v2.js';
 import { createMemoryLogger } from '../logger.js';
 import { buildGraph } from '../pipeline.js';
@@ -946,5 +947,627 @@ describe('自動率（coverageV2。CLI の build の要約）', () => {
     expect(c.exactLinks).toBe(1);
     expect(c.items).toBeGreaterThan(c.unknownItems);
     expect(c.opaqueBoxes).toBeGreaterThan(0); // handler:api（箱の単位のまま）
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// 8-2b: サーバー側と table の合流、D59（役割ごとの欠け）、D65（型）、D66（テーブルの読む線）、掃除の付け替え
+// ---------------------------------------------------------------------------------------------------------------
+
+/** endpoint（openapi の 4 口）・Go の handler と store（go-types）・テーブル（sql）の小さな graph（upgrade は空） */
+function serverWorld(): GraphV2 {
+  const tx = (wt: 'datetime' | 'string' = 'datetime') => [
+    I('id', 'string', { wireType: 'string' }),
+    I('amount', 'integer', { wireType: 'integer' }),
+    I('occurredAt', 'string', { wireType: wt }),
+  ];
+  const col = (id: string, wireType: ItemV2['wireType'], extra: Partial<ItemV2> = {}) =>
+    I(id, 'TEXT', { wireType, typeRef: 'table:transactions', ...extra });
+  const cols = (extra: Partial<ItemV2> = {}) => [
+    col('id', 'string'),
+    col('amount', 'integer', extra),
+    col('occurred_at', 'datetime', extra),
+  ];
+  const endpoint = (method: string, path: string, req: ItemV2[], res: ItemV2[]): NodeV2 => ({
+    id: `endpoint:${method} ${path}`,
+    kind: 'endpoint',
+    name: `${method} ${path}`,
+    runtime: 'server',
+    ports: [
+      P('in', 'in', req),
+      P('req', 'out', structuredClone(req)),
+      P('res', 'in', res),
+      P('out', 'out', structuredClone(res)),
+    ],
+  });
+  return {
+    version: 2,
+    nodes: [
+      box('infra:api', 'infra', { runtime: 'server', ports: [] }),
+      box('infra:other', 'infra', { runtime: 'server', ports: [] }),
+      endpoint(
+        'GET',
+        '/tx',
+        [I('path')],
+        [I('body', 'Tx[]', { wireType: 'array', children: tx().slice(0, 2) })],
+      ),
+      endpoint(
+        'POST',
+        '/tx',
+        [I('path'), I('body', 'Tx', { wireType: 'object', children: tx() })],
+        [I('status', '201', { wireType: 'integer' })],
+      ),
+      endpoint(
+        'DELETE',
+        '/tx/{id}',
+        [I('path', 'string', { children: [I('id')] })],
+        [I('status', '204', { wireType: 'integer' })],
+      ),
+      {
+        id: 'fn:api.list',
+        kind: 'fn',
+        name: 'api.list',
+        runtime: 'server',
+        host: 'infra:api',
+        meta: {
+          route: { method: 'GET', path: '/tx' },
+          auth: 'login',
+          authBy: { fn: 'fn:auth.Middleware', header: 'Authorization', status: 401 },
+        },
+        ports: [
+          P('in', 'in', [
+            I('r', '*http.Request', { wireType: 'unknown' }),
+            I('ret_1', '[]Tx', { wireType: 'array', children: tx() }),
+          ]),
+          P('out', 'out', [
+            I('call_1', '[]Tx', { wireType: 'array' }),
+            I('txs', '[]Tx', { wireType: 'array', meta: { http: 'response' }, children: tx() }),
+          ]),
+        ],
+      },
+      {
+        id: 'fn:api.create',
+        kind: 'fn',
+        name: 'api.create',
+        runtime: 'server',
+        meta: { route: 'POST /tx', auth: 'login' },
+        ports: [
+          P('in', 'in', [
+            I('body', 'Tx', { wireType: 'object', meta: { http: 'body' }, children: tx() }),
+          ]),
+          P('out', 'out', [
+            I('status', 'http.StatusCreated', { wireType: 'integer', meta: { http: 'status' } }),
+          ]),
+        ],
+      },
+      {
+        id: 'fn:api.remove',
+        kind: 'fn',
+        name: 'api.remove',
+        runtime: 'server',
+        meta: { routes: [{ path: '/tx/{id}' }] },
+        ports: [
+          P('in', 'in', [
+            I('path', 'path', { wireType: 'object', meta: { http: 'path' }, children: [I('id')] }),
+          ]),
+          P('out', 'out', [
+            I('status', 'http.StatusNoContent', { wireType: 'integer', meta: { http: 'status' } }),
+          ]),
+        ],
+      },
+      {
+        id: 'fn:api.orphan',
+        kind: 'fn',
+        name: 'api.orphan',
+        runtime: 'server',
+        meta: { route: { method: 'GET', path: '/nowhere' } },
+        ports: [P('in', 'in', [I('r', '*http.Request', { wireType: 'unknown' })])],
+      },
+      {
+        id: 'fn:store.list',
+        kind: 'fn',
+        name: 'store.list',
+        runtime: 'server',
+        ports: [
+          P('in', 'in', [
+            I('day', 'time.Time', { wireType: 'datetime' }),
+            // SELECT occurred_at::date, SUM(amount) … の 1 行（id・amount は選んでいない。sum は式）
+            I('row', 'record', {
+              wireType: 'object',
+              meta: { sql: { table: 'transactions', query: 'query_1' } },
+              children: [
+                col('occurred_at', 'datetime'),
+                I('sum', 'SUM(amount)', { wireType: 'unknown', meta: { expr: 'SUM(amount)' } }),
+              ],
+            }),
+          ]),
+          P('out', 'out', [
+            I('query_1', 'SELECT …', {
+              wireType: 'object',
+              meta: {
+                sql: {
+                  table: 'transactions',
+                  op: 'select',
+                  row: 'row',
+                  where: ['occurred_at'],
+                  item: 'query_1',
+                },
+              },
+              children: [col('occurred_at', 'datetime')],
+            }),
+            I('query_2', 'SELECT * …', {
+              wireType: 'object',
+              meta: {
+                sql: { table: 'public.Transactions', op: 'select', where: [], item: 'query_2' },
+              },
+            }),
+            I('query_3', 'SELECT … FROM missing', {
+              wireType: 'object',
+              meta: { sql: { table: 'missing', op: 'select', where: [], item: 'query_3' } },
+            }),
+          ]),
+        ],
+      },
+      {
+        id: 'fn:store.write',
+        kind: 'fn',
+        name: 'store.write',
+        runtime: 'server',
+        ports: [
+          P('out', 'out', [
+            I('insert_1', 'INSERT …', {
+              wireType: 'object',
+              meta: { sql: { table: 'transactions', op: 'insert', where: [], item: 'insert_1' } },
+              children: [col('id', 'string'), col('amount', 'integer')],
+            }),
+            I('update_1', 'UPDATE … SET amount = $1 WHERE id = $2', {
+              wireType: 'object',
+              meta: {
+                sql: { table: 'transactions', op: 'update', where: ['id'], item: 'update_1' },
+              },
+              children: [col('amount', 'integer')],
+            }),
+          ]),
+        ],
+      },
+      {
+        id: 'schema:transactions',
+        kind: 'table',
+        name: 'transactions',
+        runtime: 'data',
+        meta: { sql: { table: 'transactions' } },
+        ports: [
+          P('key', 'in', cols()),
+          // occurred_at は DEFAULT now()（INSERT で省ける）
+          P('write', 'in', [
+            I('row', 'record', {
+              wireType: 'object',
+              children: [
+                col('id', 'string'),
+                col('amount', 'integer'),
+                col('occurred_at', 'datetime', { optional: true }),
+              ],
+            }),
+          ]),
+          P('read', 'out', [I('row', 'record', { wireType: 'object', children: cols() })]),
+        ],
+      },
+      // クライアント（TS）: body を送らない POST（D59）と、GET
+      {
+        id: 'comp:Toggle',
+        kind: 'component',
+        name: 'Toggle',
+        runtime: 'browser',
+        ports: [
+          P('in', 'in', [I('props', '{}'), I('ret_1', 'Response', { wireType: 'object' })]),
+          P('out', 'out', [
+            I('call_1', 'fetch()', {
+              wireType: 'object',
+              meta: { http: { method: 'POST', path: '/tx' } },
+              children: [I('input', 'string', { wireType: 'string', meta: { http: 'path' } })],
+            }),
+          ]),
+        ],
+      },
+    ],
+    wires: [],
+  };
+}
+
+describe('合流（サーバー側・table・D59。8-2b）', () => {
+  it('handler のルート: { method, path }・"METHOD path"・method の無いもの（ANY）・apiRoutes', () => {
+    expect(handlerRoutes({ meta: { route: { method: 'get', path: '/a' } } })).toEqual([
+      { method: 'GET', path: '/a' },
+    ]);
+    expect(handlerRoutes({ meta: { route: 'POST /b', routes: ['/c', { path: '/d' }] } })).toEqual([
+      { method: 'POST', path: '/b' },
+      { method: 'ANY', path: '/c' },
+      { method: 'ANY', path: '/d' },
+    ]);
+    expect(
+      handlerRoutes({
+        meta: {
+          route: 'GET /r/{id}',
+          apiRoutes: [
+            { method: 'GET', path: '/r/{id}' },
+            { method: 'GET', path: '/r' },
+          ],
+        },
+      }),
+    ).toEqual([
+      { method: 'GET', path: '/r/{id}' },
+      { method: 'GET', path: '/r' },
+    ]);
+    expect(handlerRoutes({ meta: { route: 'not a route' } })).toEqual([]);
+  });
+
+  it('サーバー側: 役割ごとに親 1 本（path の子は名前で）、項目の無い handler は req/path → in/r、応答は res/body・res/status（reply）', () => {
+    const g = serverWorld();
+    const r = joinAll(g);
+    const got = (pred: (w: WireV2) => boolean) =>
+      g.wires.filter(pred).map((w) => `${w.from} → ${w.to} (${w.via}${w.reply ? ', reply' : ''})`);
+    expect(got((w) => w.from.startsWith('endpoint:') && w.via === 'call')).toEqual([
+      'endpoint:GET /tx#req/path → fn:api.list#in/r (call)',
+      'endpoint:POST /tx#req/body → fn:api.create#in/body (call)',
+      'endpoint:DELETE /tx/{id}#req/path → fn:api.remove#in/path (call)',
+    ]);
+    expect(got((w) => w.to.startsWith('endpoint:') && w.via === 'return')).toEqual([
+      'fn:api.list#out/txs → endpoint:GET /tx#res/body (return, reply)',
+      'fn:api.create#out/status → endpoint:POST /tx#res/status (return, reply)',
+      'fn:api.remove#out/status → endpoint:DELETE /tx/{id}#res/status (return, reply)',
+    ]);
+    // method の無いルート（ANY）は DELETE に合う。endpoint に無い handler のルートは数えて警告
+    expect(r.server).toEqual({
+      matched: 3,
+      unmatched: ['fn:api.orphan GET /nowhere'],
+      withoutHandler: [],
+      login: 2,
+    });
+    expect(r.issues.some((i) => i.message.includes('fn:api.orphan GET /nowhere'))).toBe(true);
+    // 合流した箱の対（掃除で細かい線があるものとして数える）
+    expect(r.pairs.has('endpoint:GET /tx\u0000fn:api.list')).toBe(true);
+    expect(r.pairs.has('fn:api.list\u0000endpoint:GET /tx')).toBe(true);
+    writeBroken(g, { fixed: r.fixedBroken });
+    // 送る側（handler の応答）だけにある occurredAt は「受ける側に無い」（例の GET /today と同じ）
+    const list = g.wires.find((w) => w.from === 'fn:api.list#out/txs')!;
+    expect(list.broken?.map((b) => [b.path, b.level])).toEqual([['occurredAt', 'error']]);
+    expect(validateGraphV2(g).errors).toEqual([]);
+  });
+
+  it('認証: handler の meta.auth = login → endpoint に login の分岐と in → req の links の when（線には付けない）', () => {
+    const g = serverWorld();
+    joinAll(g);
+    const ep = g.nodes.find((n) => n.id === 'endpoint:POST /tx')!;
+    expect(ep.variants).toEqual([{ id: 'login', name: 'ログイン済み', default: true }]);
+    expect(ep.links).toEqual([
+      { from: 'in/path', to: 'req/path', when: { login: true } },
+      { from: 'in/body', to: 'req/body', when: { login: true } },
+      { from: 'res/status', to: 'out/status' },
+    ]);
+    expect(ep.meta?.auth).toBe('login');
+    const list = g.nodes.find((n) => n.id === 'endpoint:GET /tx')!;
+    expect(list.meta?.auth).toBe('auth.Middleware（Authorization ヘッダ）');
+    // 認証の無い handler（remove）の endpoint には付けない
+    expect(g.nodes.find((n) => n.id === 'endpoint:DELETE /tx/{id}')!.variants).toBeUndefined();
+    expect(g.wires.filter((w) => w.when)).toEqual([]);
+    expect(validateGraphV2(g).errors).toEqual([]);
+  });
+
+  it('handler が複数合うときは、endpoint を受け持つインフラと host が合うものを優先する（合わなければ全部と結んで警告）', () => {
+    const g = serverWorld();
+    const twin = structuredClone(g.nodes.find((n) => n.id === 'fn:api.list')!);
+    twin.id = 'fn:other.list';
+    twin.host = 'infra:other';
+    g.nodes.push(twin);
+    const r = joinAll(g, { endpointHosts: new Map([['endpoint:GET /tx', ['infra:api']]]) });
+    expect(g.wires.filter((w) => w.from === 'endpoint:GET /tx#req/path').map((w) => w.to)).toEqual([
+      'fn:api.list#in/r',
+    ]);
+    expect(r.server.matched).toBe(3);
+    const g2 = serverWorld();
+    g2.nodes.push(twin);
+    const r2 = joinAll(g2);
+    expect(
+      g2.wires
+        .filter((w) => w.from === 'endpoint:GET /tx#req/path')
+        .map((w) => w.to)
+        .sort(),
+    ).toEqual(['fn:api.list#in/r', 'fn:other.list#in/r']);
+    expect(r2.issues.some((i) => i.message.includes('合う handler が 2 つ'))).toBe(true);
+  });
+
+  it('箱の単位の handler（`_` しか無い v1 の箱）と skip した箱（group）はサーバー側の合流に使わない', () => {
+    const g = serverWorld();
+    g.nodes.push(
+      box('handler:internal/api', 'fn', {
+        runtime: 'server',
+        meta: { apiRoutes: [{ method: 'GET', path: '/tx' }] },
+      }),
+    );
+    const r = joinAll(g, { skip: new Set(['fn:api.create']) });
+    expect(g.wires.some((w) => w.to.startsWith('handler:internal/api'))).toBe(false);
+    expect(g.wires.some((w) => w.to.startsWith('fn:api.create'))).toBe(false);
+    expect(r.server.withoutHandler).toEqual(['endpoint:POST /tx']);
+  });
+
+  it('table: WHERE のカラム → key/<col>、WHERE の無い SELECT → key/_、INSERT・UPDATE → write/row（親 1 本）、1 行 → in/row（reply）', () => {
+    const g = serverWorld();
+    const r = joinAll(g);
+    expect(
+      g.wires
+        .filter((w) => w.via === 'sql')
+        .map((w) => `${w.from} → ${w.to}${w.reply ? ' (reply)' : ''}`),
+    ).toEqual([
+      'fn:store.list#out/query_1.occurred_at → schema:transactions#key/occurred_at',
+      'schema:transactions#read/row → fn:store.list#in/row (reply)',
+      // `public.Transactions` は最後の段で、大文字小文字を区別せずに引く
+      'fn:store.list#out/query_2 → schema:transactions#key/_',
+      'fn:store.write#out/insert_1 → schema:transactions#write/row',
+      'fn:store.write#out/update_1 → schema:transactions#write/row',
+    ]);
+    expect(r.table).toEqual({ matched: 4, unmatched: ['fn:store.list#out/query_3 missing'] });
+    // WHERE の無い SELECT のために key に `_` を足した
+    const t = g.nodes.find((n) => n.id === 'schema:transactions')!;
+    expect(t.ports.find((p) => p.id === 'key')!.items.map((i) => i.id)).toContain('_');
+    // table の箱に書く口が無い（sql の v2 が無い 8-1 の箱の単位）なら INSERT は結ばず、数えず、対にもしない
+    const g2 = serverWorld();
+    const t2 = g2.nodes.find((n) => n.id === 'schema:transactions')!;
+    t2.ports = t2.ports.filter((p) => p.id !== 'write');
+    const r2 = joinAll(g2);
+    expect(r2.table.unmatched).toEqual([
+      'fn:store.list#out/query_3 missing',
+      'fn:store.write#out/insert_1 transactions',
+      'fn:store.write#out/update_1 transactions',
+    ]);
+    expect(r2.pairs.has('fn:store.write\u0000schema:transactions')).toBe(false);
+  });
+
+  it('D66: 読む線は受ける側（SELECT のカラム）だけ、UPDATE は送る側（SET のカラム）だけを比べる。INSERT は必須の欠けが error', () => {
+    const g = serverWorld();
+    const r = joinAll(g);
+    writeBroken(g, { fixed: r.fixedBroken });
+    const brokenOf = (from: string, to: string) =>
+      g.wires.find((w) => w.from === from && w.to === to)!.broken?.map((b) => [b.path, b.level]);
+    // テーブルにしか無い id・amount（選んでいない）と、式の sum は「受ける側に無い」「送る側に無い」にしない
+    expect(brokenOf('schema:transactions#read/row', 'fn:store.list#in/row')).toBeUndefined();
+    // UPDATE は id・occurred_at を書かなくてよい
+    expect(
+      brokenOf('fn:store.write#out/update_1', 'schema:transactions#write/row'),
+    ).toBeUndefined();
+    // INSERT は occurred_at（DEFAULT で optional）を省けるが、必須のカラムを省くと error
+    expect(
+      brokenOf('fn:store.write#out/insert_1', 'schema:transactions#write/row'),
+    ).toBeUndefined();
+    const ins = g.nodes.find((n) => n.id === 'fn:store.write')!.ports[0]!.items[0]!;
+    ins.children = ins.children!.filter((c) => c.id !== 'id');
+    writeBroken(g, { fixed: r.fixedBroken });
+    expect(brokenOf('fn:store.write#out/insert_1', 'schema:transactions#write/row')).toEqual([
+      ['id', 'error'],
+    ]);
+    // 選んだカラムの型が食い違えば読む線も error（受ける側の子は比べる）
+    const row = g.nodes.find((n) => n.id === 'fn:store.list')!.ports[0]!.items[1]!;
+    row.children![0]!.wireType = 'boolean';
+    writeBroken(g, { fixed: r.fixedBroken });
+    expect(brokenOf('schema:transactions#read/row', 'fn:store.list#in/row')).toEqual([
+      ['occurred_at', 'error'],
+    ]);
+  });
+
+  it('D59: 必須の body を丸ごと送っていない呼び出しは、親の call_n から in/body へ線を引いて線そのもの（path ""）を error に', () => {
+    const g = serverWorld();
+    const r = joinAll(g);
+    expect(r.client).toEqual({ matched: 1, direct: 0, unmatched: [], missing: 1 });
+    const w = g.wires.find((x) => x.from === 'comp:Toggle#out/call_1')!;
+    expect(w).toMatchObject({ to: 'endpoint:POST /tx#in/body', via: 'http' });
+    expect(w.broken).toEqual([{ path: '', level: 'error', reason: '送る側に無い（必須の body）' }]);
+    // writeBroken は照合し直さない（子の照合では出ないので消さない）
+    expect(writeBroken(g, { fixed: r.fixedBroken })).toBeGreaterThanOrEqual(1);
+    expect(w.broken).toHaveLength(1);
+    expect(validateGraphV2(g).errors).toEqual([]);
+    // 任意の body（requestBody が required でない）なら引かない
+    const g2 = serverWorld();
+    const body = g2.nodes.find((n) => n.id === 'endpoint:POST /tx')!.ports[0]!.items[1]!;
+    body.optional = true;
+    expect(joinAll(g2).client.missing).toBe(0);
+  });
+
+  it('OpenAPI の無いとき: endpoint に合わない呼び出しは、ルートを持つ handler と直接結ぶ（入口の項目へ path の子から、戻りは return）', () => {
+    const g: GraphV2 = {
+      version: 2,
+      nodes: [
+        {
+          id: 'fn:api.getRaces',
+          kind: 'fn',
+          name: 'api.getRaces',
+          runtime: 'browser',
+          ports: [
+            P('in', 'in', [I('q', 'Q'), I('ret_1', 'R')]),
+            P('out', 'out', [
+              I('call_1', 'Promise<R>', {
+                meta: { http: { method: 'GET', path: '/races' } },
+                children: [I('path', 'string', { meta: { http: 'path' } })],
+              }),
+            ]),
+          ],
+        },
+        {
+          id: 'handler:getRaces',
+          kind: 'fn',
+          name: 'getRaces',
+          runtime: 'server',
+          meta: {
+            route: 'GET /races/{id}',
+            apiRoutes: [
+              { method: 'GET', path: '/races/{id}' },
+              { method: 'GET', path: '/races' },
+            ],
+          },
+          ports: [
+            P('in', 'in', [I('e', 'any', { wireType: 'unknown' })]),
+            P('out', 'out', [I('return', 'R')]),
+          ],
+        },
+      ],
+      wires: [],
+    };
+    const r = joinAll(g);
+    expect(r.client).toEqual({ matched: 0, direct: 1, unmatched: [], missing: 0 });
+    expect(g.wires.map((w) => `${w.from} → ${w.to} (${w.via}${w.reply ? ', reply' : ''})`)).toEqual(
+      [
+        'fn:api.getRaces#out/call_1.path → handler:getRaces#in/e (http)',
+        'handler:getRaces#out/return → fn:api.getRaces#in/ret_1 (http, reply)',
+      ],
+    );
+    // handler の無い呼び出しは結べない（警告は 1 回）
+    g.nodes[0]!.ports[1]!.items[0]!.meta = { http: { method: 'GET', path: '/elsewhere' } };
+    g.wires = [];
+    const r2 = joinAll(g);
+    expect(r2.client.unmatched).toEqual(['fn:api.getRaces GET /elsewhere']);
+    expect(r2.issues.filter((i) => i.message.includes('結べない HTTP 呼び出し'))).toHaveLength(1);
+  });
+});
+
+describe('掃除と型（8-2b）', () => {
+  it('mergeV2: 複数の入口から使う関数（meta.hosts）は group の host を受け継がない', () => {
+    const upgraded: GraphV2 = {
+      version: 2,
+      nodes: [
+        box('schema:internal/store', 'helper', {
+          runtime: 'server',
+          host: 'infra:api',
+          meta: { go: { pkg: 'internal/store' } },
+        }),
+      ],
+      wires: [],
+    };
+    const fn = (id: string, meta: Record<string, unknown>): PartialNodeV2 => ({
+      id,
+      kind: 'fn',
+      name: id,
+      runtime: 'server',
+      ports: [P('in', 'in', [I('x')])],
+      meta: { go: { pkg: 'internal/store' }, ...meta },
+    });
+    const state = mergeV2(upgraded, {
+      nodes: [
+        fn('fn:internal/store.Insert', { hosts: ['infra:api', 'infra:hook'] }),
+        fn('fn:internal/store.List', {}),
+      ],
+      wires: [],
+    });
+    const byId = new Map(state.graph.nodes.map((n) => [n.id, n]));
+    expect(byId.get('fn:internal/store.Insert')!.host).toBeUndefined();
+    expect(byId.get('fn:internal/store.List')!.host).toBe('infra:api');
+    expect(byId.get('fn:internal/store.Insert')!.group).toBe('schema:internal/store');
+  });
+
+  it('掃除: group の v1 の箱からテーブルへの線は、SQL でそのテーブルを使う中の関数の箱へ（無ければ中の全部へ、数える）', () => {
+    const table = (id: string): NodeV2 => ({
+      id,
+      kind: 'table',
+      name: id.slice('schema:'.length),
+      runtime: 'data',
+      meta: { sql: { table: id.slice('schema:'.length) } },
+      ports: [P('key', 'in', [{ ...ANY }]), P('read', 'out', [{ ...ANY }])],
+    });
+    const upgraded: GraphV2 = {
+      version: 2,
+      nodes: [
+        box('handler:cmd/notify', 'fn', { runtime: 'server', meta: { go: { pkg: 'cmd/notify' } } }),
+        box('schema:internal/store', 'helper', {
+          runtime: 'server',
+          meta: { go: { pkg: 'internal/store' } },
+        }),
+        table('schema:subs'),
+        table('schema:other'),
+      ],
+      wires: [
+        W('handler:cmd/notify#out/_', 'schema:subs#key/_', 'sql'),
+        W('schema:subs#read/_', 'handler:cmd/notify#in/_', 'sql', { reply: true }),
+        W('schema:internal/store#out/_', 'schema:other#key/_', 'sql'),
+      ],
+    };
+    const fn = (id: string, pkg: string, items: ItemV2[] = []): PartialNodeV2 => ({
+      id,
+      kind: 'fn',
+      name: id,
+      runtime: 'server',
+      ports: [
+        P('in', 'in', [I('call', 'void')]),
+        P('out', 'out', items.length ? items : [I('return', 'x')]),
+      ],
+      meta: { go: { pkg } },
+    });
+    const sqlItem = (table: string) =>
+      I('query_1', 'SELECT', {
+        meta: { sql: { table, op: 'delete', where: [], item: 'query_1' } },
+      });
+    const part: PartialGraphV2 = {
+      nodes: [
+        fn('fn:cmd/notify.main', 'cmd/notify'),
+        fn('fn:internal/store.A', 'internal/store'),
+        // B は other を SQL で使う（合流では key/_ へ。WHERE が無い DELETE）
+        fn('fn:internal/store.B', 'internal/store', [sqlItem('other')]),
+      ],
+      wires: [],
+    };
+    const state = mergeV2(upgraded, part);
+    const joined = joinAll(state.graph, { skip: new Set(state.groups.keys()) });
+    const cleaned = cleanupV2(state, { pairs: joined.pairs });
+    const wires = cleaned.graph.wires.map((w) => `${w.from} → ${w.to}`);
+    expect(wires).toEqual(
+      expect.arrayContaining([
+        // notify の中に SQL で subs を使う関数は無い → 中の全部（main）へ付け替え、決められない線として数える
+        'fn:cmd/notify.main#out/_ → schema:subs#key/_',
+        'schema:subs#read/_ → fn:cmd/notify.main#in/_',
+        // 合流の線（B → other）がある
+        'fn:internal/store.B#out/query_1 → schema:other#key/_',
+      ]),
+    );
+    // store → other の箱の単位の線は合流の線で置き換わり、A へは付け替えない
+    expect(wires.some((w) => w.startsWith('fn:internal/store.A'))).toBe(false);
+    expect(cleaned.undetermined).toBe(2);
+  });
+
+  it('D65: 同じ id の型は契約（openapi・sql）が言語アダプタ（typescript・go）に勝ち、負けた側の宣言は copies に', () => {
+    const go = {
+      id: 'type:Transaction',
+      name: 'Transaction',
+      file: 'platform/internal/domain/transaction.go',
+      line: 7,
+      source: 'go',
+    };
+    const oa = {
+      id: 'type:Transaction',
+      name: 'Transaction',
+      file: 'platform/openapi/today.yaml',
+      line: 127,
+      source: 'openapi',
+      meta: { usedBy: ['endpoint:POST /transactions'] },
+    };
+    for (const merged of [mergeNamedTypes([go], [oa]), mergeNamedTypes([oa], [go])]) {
+      expect(merged).toEqual([
+        {
+          ...oa,
+          meta: {
+            usedBy: ['endpoint:POST /transactions'],
+            copies: ['platform/internal/domain/transaction.go:7'],
+          },
+        },
+      ]);
+    }
+    // 言語どうしは先のもの
+    const ts = { id: 'type:X', name: 'X', file: 'web/x.ts', line: 1, source: 'typescript' };
+    const gx = { id: 'type:X', name: 'X', file: 'p/x.go', line: 2, source: 'go' };
+    expect(mergeNamedTypes([ts], [gx])[0]).toMatchObject({
+      source: 'typescript',
+      meta: { copies: ['p/x.go:2'] },
+    });
+    // 抽出器どうしのマージ（mergePartialV2）も同じ（go-types が openapi より先に走る）
+    const merged = mergePartialV2([
+      { nodes: [], wires: [], types: [go] },
+      { nodes: [], wires: [], types: [oa] },
+    ]);
+    expect(merged!.types![0]!.source).toBe('openapi');
   });
 });

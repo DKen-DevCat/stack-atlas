@@ -107,6 +107,7 @@ export {
   removeOverrideWiresV2,
   type MergeV2Options,
   type MergedV2,
+  type CleanupV2Options,
   type CleanupV2Result,
   type CoverageV2,
 } from './merge-v2.js';
@@ -117,6 +118,8 @@ export {
   mergeLinkLists,
   mergePartialNodeV2,
   mergeVariants,
+  mergeNamedTypes,
+  pickNamedType,
   itemId,
   walkItems,
   itemAt,
@@ -127,14 +130,24 @@ export {
   UNDERSCORE,
 } from './v2-parts.js';
 export {
+  joinAll,
   joinEndpoints,
+  joinHandlers,
+  joinTables,
   endpointRoute,
+  handlerRoutes,
   httpCallOf,
+  sqlOf,
+  usesTable,
   HTTP_ROLES,
+  LOGIN_VARIANT,
+  type HttpCall,
   type HttpRole,
+  type JoinOptions,
+  type JoinReport,
   type JoinResult,
 } from './join.js';
-export { writeBroken, isJoinWire } from './broken-v2.js';
+export { writeBroken, isJoinWire, type WriteBrokenOptions } from './broken-v2.js';
 export {
   upgradeGraph,
   infraProfileOf,

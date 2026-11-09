@@ -23,7 +23,7 @@ import type {
   PartialNodeV2,
   RepoContext,
 } from '@stack-atlas/core';
-import { sectionFor } from '@stack-atlas/core';
+import { isMultiRepo, sectionFor } from '@stack-atlas/core';
 import { analyzeGo, infraType, lambdaHints, lambdaMatchesEntry } from '@stack-atlas/extractor-go';
 import {
   DEFAULT_MIGRATIONS,
@@ -57,6 +57,8 @@ export interface HelperBox {
   links?: LinkV2[];
   meta?: Record<string, unknown>;
   reach?: string[];
+  /** シグネチャと本体で参照するモジュールの中の別のパッケージ（パッケージ相対パス） */
+  pkgRefs?: string[];
   truncated?: boolean;
 }
 
@@ -205,10 +207,30 @@ export function fillSqlColumns(
   return { filled, unknownTables: [...unknown].sort() };
 }
 
-/** helper の出力 → v2 の部分グラフ */
+/**
+ * パッケージ相対パス → go 抽出器のパッケージの箱の id（上流の v1 の箱の meta.go.pkg。複数 repo なら file が
+ * `<repo>/` で始まるものだけ）。refs（掃除の付け替え先の手がかり）に使う
+ */
+export function packageBoxes(
+  ctx: Pick<RepoContext, 'repos' | 'repoName'>,
+  upstream: Readonly<PartialGraph>,
+): Map<string, string> {
+  const multi = isMultiRepo(ctx);
+  const out = new Map<string, string>();
+  for (const n of upstream.nodes) {
+    const go = n.meta?.['go'] as { pkg?: unknown } | undefined;
+    if (typeof go?.pkg !== 'string' || out.has(go.pkg)) continue;
+    if (multi && !(n.file ?? '').startsWith(`${ctx.repoName}/`)) continue;
+    out.set(go.pkg, n.id);
+  }
+  return out;
+}
+
+/** helper の出力 → v2 の部分グラフ（pkgBoxes: パッケージ → v1 の箱 id。refs に使う） */
 export function toPartialV2(
   out: HelperOutput,
   hosts: Map<string, string>,
+  pkgBoxes: ReadonlyMap<string, string> = new Map(),
 ): { v2: PartialGraphV2; multiHost: number } {
   let multiHost = 0;
   const nodes: PartialNodeV2[] = out.boxes.map((b) => {
@@ -250,6 +272,15 @@ export function toPartialV2(
   const types: NamedType[] = out.types.map((t) => ({ ...t, source: 'go' }));
   const v2: PartialGraphV2 = { nodes, wires: out.wires };
   if (types.length) v2.types = types;
+  // 箱 → 参照するパッケージの v1 の箱（掃除で、group の v1 の箱に残った線の付け替え先を決める。D53。graph.json には出ない）
+  const refs: Record<string, string[]> = {};
+  for (const b of out.boxes) {
+    const list = [
+      ...new Set((b.pkgRefs ?? []).map((p) => pkgBoxes.get(p)).filter((x): x is string => !!x)),
+    ];
+    if (list.length) refs[b.id] = list;
+  }
+  if (Object.keys(refs).length) v2.refs = refs;
   return { v2, multiHost };
 }
 
@@ -258,6 +289,7 @@ const requireGoFromEnv = (env: NodeJS.ProcessEnv) => env['STACK_ATLAS_REQUIRE_GO
 export function createGoTypesExtractor(opts: GoTypesOptions = {}): Extractor {
   return {
     name: NAME,
+    v2Role: 'language',
     async detect(ctx) {
       if (ctx.config.go?.repo) return sectionFor(ctx, ctx.config.go) !== undefined;
       return existsSync(ctx.resolve('go.mod'));
@@ -319,7 +351,7 @@ export function createGoTypesExtractor(opts: GoTypesOptions = {}): Extractor {
           `go-types: SQL のテーブル ${sql.unknownTables.join(', ')} がマイグレーションにありません（カラムの型は unknown）`,
         );
       const hosts = entryHosts(ctx, upstream, entries);
-      const { v2, multiHost } = toPartialV2(out, hosts);
+      const { v2, multiHost } = toPartialV2(out, hosts, packageBoxes(ctx, upstream));
       let items = 0;
       for (const n of v2.nodes) for (const p of n.ports) itemsWalk(p.items, () => items++);
       const links = v2.nodes.flatMap((n) => n.links ?? []);

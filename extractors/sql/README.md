@@ -44,3 +44,8 @@ text / varchar / char / uuid → string、boolean → boolean、timestamp / time
 json / jsonb → object、配列（`text[]` / `ARRAY`）→ array、ほか unknown。
 
 `readTables(root, globs)`（テーブル ＋ `parseColumnDefs` のカラムの定義）は go-types も使う（関数の SQL の項目の型を埋める）。
+
+線は引かない（契約。`v2Role: contract`）。関数の SQL の項目（go-types の `meta.sql`）との線は、パイプラインの合流の段（core の `joinTables`）が
+テーブル名（大文字小文字を区別しない。`schema.table` は最後の段でも）で引く: SELECT / DELETE の WHERE のカラム → `key/<col>`（WHERE の無い SELECT は
+`key/_`）、INSERT / UPDATE → `write/row`（親 1 本）、SELECT / RETURNING の 1 行 `read/row` → 関数の `in/row`（reply）。食い違いの照合（D66）は、
+読む線は受ける側（SELECT のカラム）だけ、UPDATE は送る側（SET のカラム）だけ、INSERT は両側（必須のカラムの欠けは error）。

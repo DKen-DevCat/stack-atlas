@@ -6,6 +6,8 @@
 //   新しい光り方を下の describe に事実として固定した
 // - Phase 8-2a から build には言語アダプタ（ts-types・openapi の v2）が重なる。TS の側は項目の単位になり、Go の側は箱の単位のまま
 //   （8-2b）。変わった期待値はテストの中に何が変わったかを書いた
+// - Phase 8-2b から go-types（Go の関数の箱）・sql（table の口）と、サーバー側・table の合流が重なる。go が無ければ Go の側は
+//   v1 のパッケージの箱のまま（D51）なので、Go の箱 id は goId で選ぶ（CI は STACK_ATLAS_REQUIRE_GO=1 で go が必須）
 import { buildGraph, createMemoryLogger, loadConfig, upgradeGraph } from '@stack-atlas/core';
 import { validateGraphV2, type Graph, type GraphV2 } from '@stack-atlas/schema';
 import {
@@ -22,6 +24,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { loadExtractors } from '../extractors.js';
+import { hasGo } from './go-env.js';
+
+/**
+ * 2026-11-09 変更（8-2b）: go-types の関数の箱が v1 の Go のパッケージの箱（handler:・lib:・schema:）を置き換えて group に
+ * した（D53）。go があれば関数の箱、無ければ v1 のパッケージの箱
+ */
+const goId = (fn: string, pkg: string) => (hasGo ? fn : pkg);
 
 const example = (p: string) => fileURLToPath(new URL(`../../../../examples/${p}`, import.meta.url));
 
@@ -154,8 +163,10 @@ describe('たどり: 画面を選ぶと下流が光り、関係ない画面は�
       'fn:toTodayView',
       'lib:fetcher',
       'endpoint:GET /today',
-      'handler:internal/api',
-      'schema:internal/store',
+      // 2026-11-09 変更（8-2b）: handler:internal/api → handleToday（GET /today の handler）、schema:internal/store →
+      // ListByDate（handleToday が呼ぶ store の関数）。どちらも項目の単位（route:/ → … → transactions の往復）
+      goId('fn:internal/api.handleToday', 'handler:internal/api'),
+      goId('fn:internal/store.ListByDate', 'schema:internal/store'),
       'schema:transactions',
       // 上流: CloudFront（MISS）と S3、利用者
       'infra:static_site/this',
@@ -173,8 +184,17 @@ describe('たどり: 画面を選ぶと下流が光り、関係ない画面は�
       'endpoint:GET /days',
       'endpoint:GET /entries',
       'endpoint:POST /transactions',
-      'handler:cmd/api',
-      'handler:cmd/gmail-webhook',
+      goId('fn:cmd/api.main', 'handler:cmd/api'),
+      goId('fn:cmd/gmail-webhook.main', 'handler:cmd/gmail-webhook'),
+      // 2026-11-09 追加（8-2b）: 関数の単位なので、同じパッケージの別の handler・store の関数は光らない
+      ...(hasGo
+        ? [
+            'fn:internal/api.handleEntries',
+            'fn:internal/api.handleCreateTransaction',
+            'fn:internal/store.InsertTransaction',
+            'fn:internal/store.ListRecent',
+          ]
+        : []),
     ])
       expect(lit.has(id), id).toBe(false);
   });
@@ -197,13 +217,18 @@ describe('たどり: 画面を選ぶと下流が光り、関係ない画面は�
 
   it('Scheduler から始めると notify → push_subscriptions だけ（画面を通らない流れ）', () => {
     const lit = litBoxes(poly(), 'infra:scheduler_notify/daily');
-    expect([...lit].sort()).toEqual([
-      'handler:cmd/notify',
-      'infra:app',
-      'infra:aurora/db',
-      'infra:scheduler_notify/daily',
-      'schema:push_subscriptions',
-    ]);
+    // 2026-11-09 変更（8-2b）: handler:cmd/notify → fn:cmd/notify.main（cmd/notify の唯一の関数）。overrides の
+    // notify → push_subscriptions（uses）は、SQL で push_subscriptions を使う関数が中に無いので中の全部（main 1 つ）へ
+    // 付け替わる（付け替え先を決められない線として数える）
+    expect([...lit].sort()).toEqual(
+      [
+        goId('fn:cmd/notify.main', 'handler:cmd/notify'),
+        'infra:app',
+        'infra:aurora/db',
+        'infra:scheduler_notify/daily',
+        'schema:push_subscriptions',
+      ].sort(),
+    );
   });
 });
 
@@ -218,15 +243,22 @@ describe('たどり: fixture-repo（Next を Lambda に載せた SSR）', () => 
     'layout:/',
   ];
 
-  it.each(['route:/', 'route:/races/[id]', 'route:/admin/entry'])(
-    '%s を選んでも他の画面は光らない',
-    (id) => {
-      const lit = litBoxes(repo(), id);
-      expect(lit.has('lib:apiClient')).toBe(true);
-      expect(lit.has('schema:RaceItem')).toBe(true);
-      for (const r of ROUTES) if (r !== id) expect(lit.has(r), r).toBe(false);
-    },
-  );
+  // 2026-11-09 変更（8-2b）: apiClient の `export const api = { getRaces, getRace, postResult }` のメソッドが関数の箱
+  // （fn:api.<メソッド>。server component と client の両方から使うので @server / @browser の複製）になり、lib:apiClient は
+  // group になって箱としては消えた。画面は自分が呼ぶメソッドの箱から handler（OpenAPI が無いので直接の合流）とテーブルまで光る
+  it.each([
+    ['route:/', ['fn:api.getRaces@browser', 'handler:getRaces']],
+    ['route:/races/[id]', ['fn:api.getRace@server', 'handler:getRaces']],
+    [
+      'route:/admin/entry',
+      ['fn:api.getRace@server', 'fn:api.postResult@server', 'handler:postResult'],
+    ],
+  ])('%s を選んでも他の画面は光らない', (id, calls) => {
+    const lit = litBoxes(repo(), id);
+    for (const c of calls) expect(lit.has(c), c).toBe(true);
+    expect(lit.has('schema:RaceItem')).toBe(true);
+    for (const r of ROUTES) if (r !== id) expect(lit.has(r), r).toBe(false);
+  });
 
   it('入稿画面の CDN 無効化（overrides の http）は cache の in/purge で止まり、全部のオリジン（画面）へ広がらない', () => {
     const lit = litBoxes(repo(), 'route:/admin/entry', { downOnly: true });
@@ -265,41 +297,125 @@ describe('見つかったこと: 共有の箱から始めたときの光り方�
     // Phase 8-2a で変更: 以前は fetcher の下流に endpoint（GET /today・GET /days）とその先のハンドラ・テーブルが
     // 入っていた（26 / 下流 21）。項目の単位では HTTP の線はパスのリテラルを持つ呼び出し元（getToday の call_1.url）から
     // endpoint へ直接引き、fetcher は脇に置く（D45）ので、fetcher の下流は戻りを受ける呼び出し元とその先だけになった
-    for (const id of ['endpoint:GET /today', 'endpoint:GET /days', 'handler:internal/api'])
+    for (const id of [
+      'endpoint:GET /today',
+      'endpoint:GET /days',
+      goId('fn:internal/api.handleToday', 'handler:internal/api'),
+    ])
       expect(lit.has(id), id).toBe(false);
     // 部品は画面へ戻りを返さない（render は片道）ので、下流に画面は入らない
     expect(lit.has('route:/push')).toBe(false);
     expect(counts(graphs.get('fixture-poly')!, 'lib:fetcher')).toEqual([18, 13]);
   });
 
-  it('fixture-repo: lib:apiClient の下流に、apiClient を使わない /login と Header は入らない', () => {
+  it('fixture-repo: 共有の api.getRace（2 つの画面から呼ぶ）の下流に、使わない /login と Header は入らない', () => {
     // 8-1 のレビューで変更: 以前は /login と Header が入っていた（28 箱中 19 / 下流 18）。
     // useSession は光っている AuthGuard（入稿画面の部品）へだけ返す
-    const lit = litBoxes(graphs.get('fixture-repo')!, 'lib:apiClient', { downOnly: true });
+    // 2026-11-09 変更（8-2b）: lib:apiClient はメソッドの関数の箱（fn:api.getRaces / getRace / postResult の @server・@browser）
+    // の group になり、箱としては消えた（以前は 17 / 下流 16）。共有の箱は api.getRace@server（route:/races/[id] と
+    // route:/admin/entry の server component から呼ぶ）。誰も光っていないので戻りは呼び出し元の両方へ、その先は
+    // ResultTable だけ（AuthGuard・useSession は postResult 側でも getRace 側でもないので入らない）
+    const lit = litBoxes(graphs.get('fixture-repo')!, 'fn:api.getRace@server', { downOnly: true });
     expect(lit.has('route:/login')).toBe(false);
     expect(lit.has('comp:Header')).toBe(false);
-    expect(lit.has('comp:AuthGuard')).toBe(true);
-    expect(counts(graphs.get('fixture-repo')!, 'lib:apiClient')).toEqual([17, 16]);
+    expect(lit.has('route:/races/[id]')).toBe(true);
+    expect(lit.has('route:/admin/entry')).toBe(true);
+    expect(lit.has('handler:getRaces')).toBe(true);
+    expect(lit.has('fn:api.getRaces@browser')).toBe(false);
+    expect(counts(graphs.get('fixture-repo')!, 'fn:api.getRace@server')).toEqual([8, 6]);
   });
 
-  it('fixture-poly: テーブルから始めると、store の呼び出し元までで止まる（画面までは光らない）', () => {
-    // 8-1 のレビューで変更: 以前は 38 / 下流 32（web の部品と endpoint まで）。store は誰も光っていないので全員
-    // （cmd/api・internal/api・gmail-webhook・inbound）へ返し、internal/api は光っている cmd/api へだけ返す
-    const g = graphs.get('fixture-poly')!;
-    const lit = litBoxes(g, 'schema:transactions', { downOnly: true });
-    expect(lit.has('handler:internal/api')).toBe(true);
-    expect(lit.has('handler:cmd/gmail-webhook')).toBe(true);
-    expect(lit.has('endpoint:GET /today')).toBe(false);
-    expect(counts(g, 'schema:transactions')).toEqual([14, 13]);
-  });
+  it.skipIf(hasGo)(
+    'fixture-poly（go が無いとき）: テーブルから始めると、store の呼び出し元までで止まる（画面までは光らない）',
+    () => {
+      // 8-1 のレビューで変更: 以前は 38 / 下流 32（web の部品と endpoint まで）。store は誰も光っていないので全員
+      // （cmd/api・internal/api・gmail-webhook・inbound）へ返し、internal/api は光っている cmd/api へだけ返す
+      const g = graphs.get('fixture-poly')!;
+      const lit = litBoxes(g, 'schema:transactions', { downOnly: true });
+      expect(lit.has('handler:internal/api')).toBe(true);
+      expect(lit.has('handler:cmd/gmail-webhook')).toBe(true);
+      expect(lit.has('endpoint:GET /today')).toBe(false);
+      expect(counts(g, 'schema:transactions')).toEqual([14, 13]);
+    },
+  );
 
-  it('fixture-poly: 全部の endpoint を受け持つ handler:internal/api は、呼び出し元の endpoint を全部光らせる（変わらない）', () => {
-    // Phase 8-2a で変更: 35 → 36。v1 のファイルの箱 4 つ（lib:web/src/feature/*/{request,transformer}.ts）が関数の箱 6 つ
-    // （fn:getToday など）になり、endpoint の戻りは呼び出し元へ直接返る（D45）ので lib:fetcher は入らなくなった（+6 −4 −1）
-    const g = graphs.get('fixture-poly')!;
-    expect(counts(g, 'handler:internal/api')).toEqual([36, 29]);
-    const lit = litBoxes(g, 'handler:internal/api');
-    expect(lit.has('fn:getToday')).toBe(true);
-    expect(lit.has('lib:fetcher')).toBe(false);
-  });
+  it.skipIf(!hasGo)(
+    'fixture-poly: テーブルから始めると、読んだ行が戻りで表示する部品まで届く（画面と書く側は光らない）',
+    () => {
+      // 2026-11-09 変更（8-2b）: 上の go の無いときの事実（store の呼び出し元までで止まる）から変わった。項目の単位では
+      // テーブルの read/row → SELECT した関数（ListByDate・ListRecent・DailyTotals）→ handler → endpoint → 呼び出し元の
+      // 戻りの線が 1 本ずつつながり、読んだ行が TotalCard・EntryList・CalendarGrid まで流れる。画面は render が片道なので
+      // 光らず、INSERT・DELETE の側（POST /transactions・gmail-webhook）は行を受けないので下流に入らない
+      const g = graphs.get('fixture-poly')!;
+      const lit = litBoxes(g, 'schema:transactions', { downOnly: true });
+      for (const id of [
+        'fn:internal/store.ListByDate',
+        'fn:internal/store.ListRecent',
+        'fn:internal/store.DailyTotals',
+        'fn:internal/api.handleToday',
+        'endpoint:GET /today',
+        'fn:getToday',
+        'comp:TotalCard',
+        'comp:EntryList',
+        'comp:CalendarGrid',
+      ])
+        expect(lit.has(id), id).toBe(true);
+      for (const id of [
+        'route:/',
+        'route:/calendar',
+        'fn:internal/store.InsertTransaction',
+        'fn:internal/api.handleCreateTransaction',
+        'endpoint:POST /transactions',
+        'fn:internal/inbound.ServeHTTP',
+      ])
+        expect(lit.has(id), id).toBe(false);
+      // 上流も含めると書く側（INSERT・DELETE と、その呼び出し元）も光る
+      const all = litBoxes(g, 'schema:transactions');
+      for (const id of [
+        'fn:internal/store.InsertTransaction',
+        'fn:internal/inbound.ServeHTTP',
+        'fn:createTransaction',
+      ])
+        expect(all.has(id), id).toBe(true);
+      expect(counts(g, 'schema:transactions')).toEqual([35, 21]);
+    },
+  );
+
+  it.skipIf(!hasGo)(
+    'fixture-poly: handler（handleToday）は自分の endpoint と、その呼び出し元・戻りの先だけを光らせる',
+    () => {
+      // 2026-11-09 変更（8-2b）: 下の go の無いときの handler:internal/api（全部の endpoint を受け持つパッケージの箱）は、
+      // handler ごとの関数の箱（fn:internal/api.handleToday など）に分かれた。handleToday は GET /today だけを受け持つ
+      const g = graphs.get('fixture-poly')!;
+      const lit = litBoxes(g, 'fn:internal/api.handleToday');
+      for (const id of [
+        'endpoint:GET /today',
+        'fn:getToday',
+        'comp:TodayIsland',
+        'schema:transactions',
+      ])
+        expect(lit.has(id), id).toBe(true);
+      for (const id of [
+        'endpoint:GET /days',
+        'endpoint:GET /entries',
+        'endpoint:POST /transactions',
+        'lib:fetcher',
+      ])
+        expect(lit.has(id), id).toBe(false);
+      expect(counts(g, 'fn:internal/api.handleToday')).toEqual([14, 10]);
+    },
+  );
+
+  it.skipIf(hasGo)(
+    'fixture-poly（go が無いとき）: 全部の endpoint を受け持つ handler:internal/api は、呼び出し元の endpoint を全部光らせる（変わらない）',
+    () => {
+      // Phase 8-2a で変更: 35 → 36。v1 のファイルの箱 4 つ（lib:web/src/feature/*/{request,transformer}.ts）が関数の箱 6 つ
+      // （fn:getToday など）になり、endpoint の戻りは呼び出し元へ直接返る（D45）ので lib:fetcher は入らなくなった（+6 −4 −1）
+      const g = graphs.get('fixture-poly')!;
+      expect(counts(g, 'handler:internal/api')).toEqual([36, 29]);
+      const lit = litBoxes(g, 'handler:internal/api');
+      expect(lit.has('fn:getToday')).toBe(true);
+      expect(lit.has('lib:fetcher')).toBe(false);
+    },
+  );
 });

@@ -65,3 +65,15 @@ host: 入口から、呼び出し・関数の値の参照（`HandleFunc` に渡�
   （`status` はその前に戻った呼び出しの `ret_n` からも）
 - 線（同じ言語の中。D49）: `call_n.<引数> → 呼び先#in/<引数>`（call）、`呼び先#out/return → ret_n`（return、reply）。最も粗い単位（D41）。
   HTTP・SQL の線（endpoint・table）は合流の段（core の join）が `meta.route` / `meta.auth` / `meta.sql` と項目から引く
+- refs（8-2b）: 関数がシグネチャと本体で参照するモジュールの中の別のパッケージ（helper の `pkgRefs`。関数・型・定数・変数の識別子）を、go 抽出器の
+  パッケージの箱の id にして `PartialGraphV2.refs` に出す（graph.json には出ない）。mergeV2 が group にした v1 のパッケージの箱に残った線（型だけを使う
+  import など）を、実際に参照している関数の箱へ付け替える手がかり（D53。無いとパッケージの全部の関数へ付け替わる）
+
+## 合流の段が引く線（core の join。8-2b）
+
+- サーバー側（`joinHandlers`）: endpoint（OpenAPI）ごとに `meta.route` が合う handler（method の無いルートは ANY、最も具体的なもの、複数なら endpoint を
+  受け持つインフラと host・`meta.hosts` が合うもの）。役割ごとに親 1 本 `endpoint#req/<path|query|body> → handler#in/<その役割の項目>`（レシピの項目が無ければ
+  `req/path → in/r`）、`handler#out/<Encode> → endpoint#res/body`・`out/status → res/status`（reply）。`meta.auth = "login"` の handler の endpoint には
+  分岐 `login`（ログイン済み、既定 true）と、`in → req` の links に `when: { login: true }`
+- table（`joinTables`）: `meta.sql` の SELECT / DELETE の WHERE → `table#key/<col>`、INSERT / UPDATE → `table#write/row`、`table#read/row` → `in/row`（reply）
+- CLI の build は ts-types と同じく言語アダプタ（`v2Role: language`）として go の直後に走る

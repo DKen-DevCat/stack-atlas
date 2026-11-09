@@ -88,14 +88,30 @@ describe.skipIf(!hasGo)('go-types: fixture-poly の platform と手で組んだ�
       repos,
       configDir: fixture,
     });
-    // host の枠になる Lambda（terraform 抽出器が出すもの）
+    // host の枠になる Lambda（terraform 抽出器が出すもの）と、go 抽出器のパッケージの箱（refs の宛先。8-2b）
     const upstream: PartialGraph = {
-      nodes: ['api', 'gmail_webhook', 'notify'].map((n) => ({
-        id: `infra:lambda_api/${n}`,
-        kind: 'infra',
-        name: n,
-        meta: { infra: { type: 'aws_lambda_function' } },
-      })),
+      nodes: [
+        ...['api', 'gmail_webhook', 'notify'].map((n) => ({
+          id: `infra:lambda_api/${n}`,
+          kind: 'infra',
+          name: n,
+          meta: { infra: { type: 'aws_lambda_function' } },
+        })),
+        ...[
+          ['handler:internal/api', 'internal/api'],
+          ['lib:internal/push', 'internal/push'],
+          ['schema:internal/store', 'internal/store'],
+          ['type:internal/domain', 'internal/domain'],
+          // 別の repo の同じパッケージ（複数 repo では file の <repo>/ で見分ける）
+          ['lib:other/internal/push', 'internal/push', 'web/internal/push/x.go'],
+        ].map(([id, pkg, file]) => ({
+          id: id!,
+          kind: 'lib',
+          name: pkg!,
+          file: file ?? `platform/${pkg}/x.go`,
+          meta: { go: { pkg } },
+        })),
+      ],
       edges: [],
     };
     expect(await extractor.detect(ctx)).toBe(true);
@@ -235,6 +251,23 @@ describe.skipIf(!hasGo)('go-types: fixture-poly の platform と手で組んだ�
       { from: 'in/tx.occurredAt', to: 'out/insert_1.occurred_at', confidence: 'crude' },
       { from: 'in/tx', to: 'out/return', confidence: 'crude' },
     ]);
+  });
+
+  it('refs（掃除の付け替え先の手がかり。2026-11-09 8-2b）: 関数がシグネチャと本体で参照する別のパッケージの v1 の箱', () => {
+    const refs = part.v2!.refs!;
+    // 型だけを使う import（push.Subscription）も参照。関数の呼び出し（s.store.ListByDate）も
+    expect(refs['fn:internal/api.handleSubscribe']).toEqual([
+      'lib:internal/push',
+      'schema:internal/store',
+    ]);
+    expect(refs['fn:internal/store.SaveSubscription']).toEqual(['lib:internal/push']);
+    expect(refs['fn:internal/api.handleToday']).toEqual([
+      'type:internal/domain',
+      'schema:internal/store',
+    ]);
+    // 自分のパッケージと標準ライブラリは数えない
+    expect(refs['fn:internal/store.New']).toBeUndefined();
+    expect(refs['fn:cmd/notify.main']).toBeUndefined();
   });
 
   it('全体の数（fixture-poly。テストで固定）', () => {

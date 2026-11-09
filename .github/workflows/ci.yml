@@ -25,16 +25,30 @@ jobs:
       - name: Install Playwright Chromium
         run: pnpm --filter @stack-atlas/viewer exec playwright install --with-deps chromium
 
+      # go-types（Go の言語アダプタ）は ubuntu の runner に入っている go を使う（actions/setup-go は足さない。docs/17 D48）。
+      # helper の go.mod は go 1.21 で、GOTOOLCHAIN=local なので runner の go がそれ以上なら動く。
+      # STACK_ATLAS_REQUIRE_GO=1 で go が無いことを失敗にする（Go の側のテストと合流を黙って飛ばさない。D51）
+      - name: Go（runner に入っているもの）
+        run: go version
+
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+        env:
+          STACK_ATLAS_REQUIRE_GO: '1'
       - run: pnpm build
+        env:
+          STACK_ATLAS_REQUIRE_GO: '1'
       - run: pnpm validate examples/race-site.graph.json examples/fixture-poly.today.v2.json
 
       # フィクスチャ（単一 repo / 2 repo）を実際にビルドして検証する。graph.json は v2（配線図）、
       # graph.v1.json は v1（3D の地図）。validate は version を見て検証器を選ぶ（docs/16 §10）
       - run: pnpm atlas build examples/fixture-repo -o out/fixture-repo --no-screenshots
+        env:
+          STACK_ATLAS_REQUIRE_GO: '1'
       - run: pnpm atlas build examples/fixture-poly -o out/fixture-poly --no-screenshots
+        env:
+          STACK_ATLAS_REQUIRE_GO: '1'
       - run: >-
           pnpm validate
           out/fixture-repo/graph.json out/fixture-repo/graph.v1.json
