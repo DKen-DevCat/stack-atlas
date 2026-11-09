@@ -4,7 +4,8 @@ import { indexGraph } from '../graph-index.js';
 import { select } from '../select.js';
 import { traverse } from '../traverse.js';
 import { defaultState } from '../variants.js';
-import { cycleGraph, todayGraph } from './fixture.js';
+import type { GraphV2 } from '@stack-atlas/schema';
+import { cycleGraph, I, L, N, P, todayGraph, W } from './fixture.js';
 
 const index = indexGraph(todayGraph());
 const state0 = defaultState(index);
@@ -216,5 +217,151 @@ describe('循環', () => {
     });
     expect([...lit.boxes].sort()).toEqual(['fn:A', 'fn:B']);
     expect(lit.wires.size).toBe(4);
+  });
+});
+
+describe('往復の相手（requesters / repliers。docs/15 §3.5）', () => {
+  /** テーブル T へ A は書くだけ（call、戻り無し）、B は読む（call ＋ reply）。B の読んだ値は C へ */
+  const writeReadGraph = (): GraphV2 => ({
+    version: 2,
+    nodes: [
+      N('fn:A', 'fn', 'server', [P('out', 'out', [I('row', 'Row')])]),
+      N(
+        'fn:B',
+        'fn',
+        'server',
+        [
+          P('in', 'in', [I('row', 'Row')]),
+          P('out', 'out', [I('date', 'string'), I('total', 'int')]),
+        ],
+        { links: [L('in/row', 'out/total')] },
+      ),
+      N(
+        'table:T',
+        'table',
+        'data',
+        [
+          P('key', 'in', [I('date', 'date')]),
+          P('write', 'in', [I('row', 'record')]),
+          P('read', 'out', [I('row', 'record')]),
+        ],
+        { links: [L('key/date', 'read/row'), L('write/row', 'read/row')] },
+      ),
+      N('comp:C', 'component', 'browser', [P('in', 'in', [I('total', 'int')])]),
+    ],
+    wires: [
+      W('fn:A#out/row', 'table:T#write/row', 'sql'),
+      W('fn:B#out/date', 'table:T#key/date', 'sql'),
+      W('table:T#read/row', 'fn:B#in/row', 'sql', true),
+      W('fn:B#out/total', 'comp:C#in/total', 'props'),
+    ],
+  });
+
+  it('書くだけの箱は往復の相手に数えない: A を選んでも T → B の戻りは切れない', () => {
+    const idx = indexGraph(writeReadGraph());
+    expect([...idx.requesters.get('table:T')!]).toEqual(['fn:B']);
+    const lit = select(idx, defaultState(idx), { kind: 'box', id: 'fn:A' })!;
+    expect(lit.boxes.has('table:T')).toBe(true);
+    expect(lit.boxes.has('fn:B')).toBe(true);
+    expect(lit.boxes.has('comp:C')).toBe(true);
+    expect(lit.items.has('fn:B#out/total')).toBe(true);
+  });
+
+  /** X は P から呼ばれ、P と Q へ戻す（Q は X を呼ばない） */
+  const replyOnlyGraph = (): GraphV2 => ({
+    version: 2,
+    nodes: [
+      N('fn:P', 'fn', 'server', [P('in', 'in', [I('r', 'int')]), P('out', 'out', [I('q', 'int')])]),
+      N('fn:X', 'fn', 'server', [P('in', 'in', [I('q', 'int')]), P('out', 'out', [I('r', 'int')])]),
+      N('fn:Q', 'fn', 'server', [P('in', 'in', [I('r', 'int')])]),
+    ],
+    wires: [
+      W('fn:P#out/q', 'fn:X#in/q', 'call'),
+      W('fn:X#out/r', 'fn:P#in/r', 'return', true),
+      W('fn:X#out/r', 'fn:Q#in/r', 'return', true),
+    ],
+  });
+
+  it('戻りを受けるだけの箱も相手に数えない: Q から上流へたどると、X を呼んだ P に届く（上流の対称）', () => {
+    const idx = indexGraph(replyOnlyGraph());
+    expect([...idx.repliers.get('fn:X')!]).toEqual(['fn:P']);
+    const lit = select(idx, defaultState(idx), { kind: 'box', id: 'fn:Q' })!;
+    expect(lit.boxes.has('fn:X')).toBe(true);
+    expect(lit.boxes.has('fn:P')).toBe(true);
+    expect(lit.items.has('fn:P#out/q')).toBe(true);
+  });
+});
+
+describe('親子の写し: 自分の辺を持たない中間の項目', () => {
+  /**
+   * F の in/rows → out/entries（親の links）と、孫の改名 in/rows.meta.ts → out/entries.meta.stamp。
+   * out/entries.meta の子はそれぞれ G へ線を持つ。H は in/rows.meta.other へ線を引く
+   */
+  const nestedGraph = (): GraphV2 => ({
+    version: 2,
+    nodes: [
+      N('fn:H', 'fn', 'server', [P('out', 'out', [I('other', 'string')])]),
+      N(
+        'fn:F',
+        'fn',
+        'server',
+        [
+          P('in', 'in', [
+            I('rows', 'Row[]', {
+              children: [I('meta', 'Meta', { children: [I('ts', 'time'), I('other', 'string')] })],
+            }),
+          ]),
+          P('out', 'out', [
+            I('entries', 'Entry[]', {
+              children: [
+                I('meta', 'Meta', { children: [I('stamp', 'time'), I('other', 'string')] }),
+              ],
+            }),
+          ]),
+        ],
+        { links: [L('in/rows', 'out/entries'), L('in/rows.meta.ts', 'out/entries.meta.stamp')] },
+      ),
+      N('fn:G', 'fn', 'server', [P('in', 'in', [I('stamp', 'time'), I('other', 'string')])]),
+    ],
+    wires: [
+      W('fn:H#out/other', 'fn:F#in/rows.meta.other', 'call'),
+      W('fn:F#out/entries.meta.stamp', 'fn:G#in/stamp', 'call'),
+      W('fn:F#out/entries.meta.other', 'fn:G#in/other', 'call'),
+    ],
+  });
+  const idx = indexGraph(nestedGraph());
+  const st = defaultState(idx);
+
+  it('in/rows.meta（自分の辺なし、孫に改名あり）: 祖先の辺で out/entries.meta へ写り、meta.other の線も流れる', () => {
+    const lit = select(idx, st, { kind: 'item', ref: 'fn:F#in/rows.meta', downOnly: true })!;
+    expect(lit.items.has('fn:F#out/entries.meta')).toBe(true);
+    expect(lit.items.has('fn:F#out/entries.meta.other')).toBe(true);
+    expect(lit.items.has('fn:G#in/other')).toBe(true);
+    // 孫の改名の links も使う
+    expect(lit.items.has('fn:F#out/entries.meta.stamp')).toBe(true);
+    expect(lit.items.has('fn:G#in/stamp')).toBe(true);
+    const mapped = [...lit.links.values()].find(
+      (s) => s.from.ref === 'fn:F#in/rows.meta' && s.to.ref === 'fn:F#out/entries.meta',
+    );
+    expect(mapped).toBeDefined();
+  });
+
+  it('in/rows.meta.ts（自分の改名の辺あり）: 改名の links だけを使い、親の links では写らない', () => {
+    const lit = select(idx, st, { kind: 'item', ref: 'fn:F#in/rows.meta.ts', downOnly: true })!;
+    expect(lit.items.has('fn:F#out/entries.meta.stamp')).toBe(true);
+    expect(lit.items.has('fn:G#in/stamp')).toBe(true);
+    expect(lit.items.has('fn:F#out/entries.meta.other')).toBe(false);
+    expect(lit.items.has('fn:G#in/other')).toBe(false);
+    expect(lit.boxes.has('fn:H')).toBe(false);
+  });
+
+  it('上流も対称: out/entries.meta から上流へは祖先の辺で in/rows.meta に写り、H に届く', () => {
+    const lit = traverse(idx, st, [idx.items.get('fn:F#out/entries.meta')!], {
+      up: true,
+      down: false,
+    });
+    expect(lit.items.has('fn:F#in/rows.meta')).toBe(true);
+    expect(lit.items.has('fn:F#in/rows.meta.ts')).toBe(true);
+    expect(lit.boxes.has('fn:H')).toBe(true);
   });
 });

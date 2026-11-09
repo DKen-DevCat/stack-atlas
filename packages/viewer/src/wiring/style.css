@@ -356,3 +356,8 @@
   accent-color: var(--cyan);
   cursor: pointer;
 }
+/* 箱と分岐の表の間の透明な橋（ポインタが箱 → 表へ動く途中で表を消さない） */
+.wv .vtable-bridge {
+  fill: transparent;
+  pointer-events: all;
+}

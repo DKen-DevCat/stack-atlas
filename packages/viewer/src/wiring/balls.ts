@@ -19,6 +19,11 @@ const REST = 0.6;
 /** 子の項目を順に光らせる間隔 */
 const STAGGER_MS = 60;
 
+/** 速さの倍率から、球の時刻の決め方（線の速さ・箱の中の所要・末端で止まる時間）。どれも倍率に反比例する */
+export function timing(speedMul: number): { speed: number; inner: number; rest: number } {
+  return { speed: SPEED * speedMul, inner: INNER / speedMul, rest: REST / speedMul };
+}
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 interface Flow {
@@ -84,11 +89,7 @@ export class Player {
       this.syncPhases();
     });
     on(ui.seek, 'input', () => this.seek(Number(ui.seek.value)));
-    on(ui.speed, 'input', () => {
-      this.speedMul = Number(ui.speed.value);
-      ui.speedLabel.textContent = `×${this.speedMul.toFixed(this.speedMul < 1 ? 2 : 1)}`;
-      this.build(); // 周期を計算し直す
-    });
+    on(ui.speed, 'input', () => this.setSpeed(Number(ui.speed.value)));
     this.raf = requestAnimationFrame(this.tick);
   }
 
@@ -116,12 +117,9 @@ export class Player {
       return;
     }
     const routes = new Map(lit.segs.map((s) => [s.key, segmentRoute(this.layout, s)]));
-    const v = SPEED * this.speedMul;
     this.sched = schedule(lit, lit.flowStarts, {
       lengthOf: (s) => routes.get(s.key)?.length ?? 0,
-      speed: v,
-      inner: INNER / this.speedMul,
-      rest: REST / this.speedMul,
+      ...timing(this.speedMul),
       startBoxes: lit.startBoxes,
     });
     // 線ごとに 1 球（同じ線を子の区間で何度も通るときは最も早い球だけ描く）。キャッシュの箱の中の対応も描く
@@ -145,6 +143,25 @@ export class Player {
     this.syncPhases();
     this.updateBar();
     this.draw(this.tau(performance.now()));
+  }
+
+  /**
+   * 速さを変える。周期を計算し直し、周回の中の同じ割合の位置から続ける（球が飛ばない）。
+   * 止めている・バーを動かしている間は、止めた時刻を同じ割合に置き直す
+   */
+  setSpeed(mul: number) {
+    const now = performance.now();
+    const oldCycle = this.cycle;
+    const tau = this.tau(now);
+    this.speedMul = mul;
+    this.ui.speedLabel.textContent = `×${mul.toFixed(mul < 1 ? 2 : 1)}`;
+    this.build(); // 周期を計算し直す
+    const t = rescaleTime(tau, oldCycle, this.cycle);
+    if (this.paused || this.scrubbing) this.pausedAt = t;
+    else this.flowStart = now - t * 1000;
+    this.ui.seek.value = String(t);
+    this.syncPhases();
+    this.draw(this.tau(now));
   }
 
   get cycle() {
@@ -285,6 +302,16 @@ export class Player {
       this.timers.add(t);
     });
   }
+}
+
+/**
+ * 周期が変わったとき（速さの変更）の、新しい周期での時刻。周回の中の割合を保つ（球の時刻は全部が速さに反比例するので、
+ * 同じ割合の時刻で球は同じ位置にいる）。周期が 0 以下なら 0
+ */
+export function rescaleTime(tau: number, oldCycle: number, newCycle: number): number {
+  if (!(oldCycle > 0) || !(newCycle > 0)) return 0;
+  const f = Math.min(1, Math.max(0, tau / oldCycle));
+  return f * newCycle;
 }
 
 /** 区間の中の進み具合。所要 0 の区間（クリックした箱の中）は出発と同時に着く */

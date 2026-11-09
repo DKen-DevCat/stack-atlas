@@ -152,6 +152,12 @@ const HOST_PAD = 10;
 const HOST_HEAD = 36;
 const MARGIN = 24;
 const MIN_GAP = 40;
+/** レーンの名前の y */
+const TITLE_Y = MT + 12;
+/** レーンの最初の隙間（いちばん上の箱の上）の上端。線はレーンの名前より下を通る */
+const GAP0_TOP = TITLE_Y + 8;
+/** 図の下端の余白（いちばん下の箱か線から） */
+const BOTTOM_PAD = 40;
 /** 切れている線は受ける側の箱のこの手前で切る */
 export const BROKEN_CUT = 16;
 
@@ -396,6 +402,16 @@ export function layoutWiring(index: GraphIndex, options: LayoutOptions = {}): Wi
     }
     return gap;
   };
+  /**
+   * レーン li の k 番目の箱 b の y の下限。上に箱があればその下に隙間 k の高さ。いちばん上の箱は、上の隙間を線が
+   * 通らなければ TOP、通るならレーンの名前の下（GAP0_TOP）からその隙間の高さを空ける
+   */
+  const minYAt = (li: number, k: number, b: LBox, above: LBox | null) => {
+    if (above) return above.y + above.h + gapNeeded(li, k, b, above.host);
+    const g = gapSize.get(`${li}:0`);
+    const y = g === undefined ? TOP : Math.max(TOP, GAP0_TOP + g);
+    return y + (b.host ? HOST_HEAD + HOST_PAD : 0);
+  };
   const hostIdList = [...hostIds];
   const placeLanes = (rowScale: number) => {
     for (let li = 0; li < L; li++) {
@@ -431,12 +447,8 @@ export function layoutWiring(index: GraphIndex, options: LayoutOptions = {}): Wi
       }
       inLane.sort((a, b) => a.key - b.key || a.row - b.row);
       laneOrder[li] = inLane;
-      let bottom = TOP - MIN_GAP;
-      let prevHost: string | null = null;
       inLane.forEach((b, k) => {
-        b.y = Math.max(b.key - b.h / 2, bottom + gapNeeded(li, k, b, prevHost));
-        bottom = b.y + b.h;
-        prevHost = b.host;
+        b.y = Math.max(b.key - b.h / 2, minYAt(li, k, b, k > 0 ? inLane[k - 1]! : null));
         setPins(b);
       });
     }
@@ -454,9 +466,8 @@ export function layoutWiring(index: GraphIndex, options: LayoutOptions = {}): Wi
           const k = order.indexOf(b);
           const above = k > 0 ? order[k - 1]! : null;
           if (above && above.comp === c) continue;
-          const minY = above
-            ? above.y + above.h + gapNeeded(b.lane, k, b, above.host)
-            : TOP + (b.host ? HOST_HEAD + HOST_PAD : 0);
+          // いちばん上の箱も、上の隙間を通る線の分は空ける（minYAt）
+          const minY = minYAt(b.lane, k, b, above);
           shift = Math.min(shift, b.y - minY);
         }
         if (shift > 0 && Number.isFinite(shift)) {
@@ -507,6 +518,57 @@ export function layoutWiring(index: GraphIndex, options: LayoutOptions = {}): Wi
   let gapUse = new Map<string, Plan[]>();
   const gapKey = (b: LBox, side: 'above' | 'below') =>
     `${b.lane}:${laneOrder[b.lane]!.indexOf(b) + (side === 'below' ? 1 : 0)}`;
+  /** 隙間（レーン li の k 番目の箱の上）の上端と下端。枠の境目を跨ぐなら枠の頭と余白の分を除く（assignSlots と同じ） */
+  const gapBounds = (li: number, k: number) => {
+    const order = laneOrder[li]!;
+    const above = order[k - 1];
+    const below = order[k];
+    const top = above
+      ? above.y + above.h + (above.host && above.host !== below?.host ? HOST_PAD : 0)
+      : GAP0_TOP;
+    const bottom = below
+      ? below.y - (below.host && below.host !== above?.host ? HOST_HEAD + HOST_PAD : 0)
+      : top + (gapSize.get(`${li}:${k}`) ?? MIN_GAP);
+    return { top, bottom };
+  };
+  /** 隙間 k の帯。置き直すと少なくとも今の線の数の分は広がる（下の箱が下がる）ので、その高さまで含める */
+  const gapBand = (li: number, k: number) => {
+    const { top, bottom } = gapBounds(li, k);
+    return { top, bottom: Math.max(bottom, top + (gapSize.get(`${li}:${k}`) ?? MIN_GAP)) };
+  };
+  /** 隙間 k（レーン li）の帯が、レーン lo〜hi のほかのレーンの箱を横切らないか（自分のレーンの箱は置き直しで避ける） */
+  const gapClear = (li: number, k: number, lo: number, hi: number) => {
+    const { top, bottom } = gapBand(li, k);
+    return !boxes.some(
+      (b) => b.lane >= lo && b.lane <= hi && b.lane !== li && b.y < bottom && top < b.y + b.h,
+    );
+  };
+  /**
+   * 横の区間がレーン lo〜hi を横切る線の、通す隙間。どのレーンの箱も横切らない隙間のうち、縦の回り道が短いもの
+   * （同じなら ty に近いもの、さらに同じなら左のレーン・上の隙間）。どれも塞がっていれば、lo〜hi の全レーンの
+   * いちばん上の隙間を取り（全部の最初の箱を下げる）、いちばん上の箱が最も高いレーンの隙間を通る
+   */
+  const detourGaps = (lo: number, hi: number, fy: number, ty: number): string[] => {
+    let best: { key: string; cost: number; near: number } | null = null;
+    for (let li = lo; li <= hi; li++) {
+      const n = laneOrder[li]!.length;
+      if (!n) continue;
+      for (let k = 0; k <= n; k++) {
+        if (!gapClear(li, k, lo, hi)) continue;
+        const { top, bottom } = gapBand(li, k);
+        const c = (top + bottom) / 2;
+        const cost = Math.abs(fy - c) + Math.abs(c - ty);
+        const near = Math.abs(c - ty);
+        if (!best || cost < best.cost || (cost === best.cost && near < best.near))
+          best = { key: `${li}:${k}`, cost, near };
+      }
+    }
+    if (best) return [best.key];
+    const lanes: number[] = [];
+    for (let li = lo; li <= hi; li++) if (laneOrder[li]!.length) lanes.push(li);
+    lanes.sort((a, b) => laneOrder[a]![0]!.y - laneOrder[b]![0]!.y || a - b);
+    return lanes.map((li) => `${li}:0`);
+  };
   const planRoutes = () => {
     plans = new Map();
     chanUse = Array.from({ length: L + 1 }, () => []);
@@ -529,19 +591,24 @@ export function layoutWiring(index: GraphIndex, options: LayoutOptions = {}): Wi
         y: new Map(),
       };
       if (tl > fl) {
-        // 途中のレーンに箱があって ty の高さを横切れないときは、その箱の上の隙間を通して相手の手前で下りる
-        const block = boxes.find(
+        // 途中のレーンに箱があって ty の高さを横切れないときは、途中のどのレーンの箱も横切らない隙間を通して、
+        // 相手の手前で下りる（detourGaps）
+        const blocked = boxes.some(
           (b) => b.lane > fl && b.lane < tl && b.y - 8 < ty && ty < b.y + b.h + 8,
         );
-        if (block) {
+        if (blocked) {
           plan.chans = [fl + 1, tl];
-          plan.gaps = [gapKey(block, 'above')];
+          plan.gaps = detourGaps(fl + 1, tl - 1, plan.fy, ty);
         } else plan.chans = [fl + 1];
       } else {
         plan.chans = [fl + 1, tl];
         if (fb === tb) plan.gaps = [gapKey(tb, 'above')];
         else if (tl === fl) plan.gaps = [tb.y > fb.y ? gapKey(tb, 'above') : gapKey(tb, 'below')];
-        else plan.gaps = [gapKey(fb, 'below')];
+        // 左のレーンへ戻る線は送る側の箱の下の隙間を通る。横の区間は受ける側のレーンから送る側のレーンまでを横切るので、
+        // その高さで途中の箱（受ける側のレーンの箱も）を横切るなら、横切らない隙間を探す
+        else if (gapClear(fl, laneOrder[fl]!.indexOf(fb) + 1, tl, fl))
+          plan.gaps = [gapKey(fb, 'below')];
+        else plan.gaps = detourGaps(tl, fl, plan.fy, ty);
       }
       plans.set(r.key, plan);
       for (const c of plan.chans) chanUse[c]!.push(plan);
@@ -571,16 +638,9 @@ export function layoutWiring(index: GraphIndex, options: LayoutOptions = {}): Wi
     });
     for (const [g, list] of gapUse) {
       const [li, k] = g.split(':').map(Number) as [number, number];
-      const order = laneOrder[li]!;
-      const above = order[k - 1];
-      const below = order[k];
-      // 枠の境目を跨ぐ隙間は、枠の頭と余白の分を除いた所を通る（同じ枠の中どうしなら除かない）
-      const top = above
-        ? above.y + above.h + (above.host && above.host !== below?.host ? HOST_PAD : 0)
-        : TOP - MIN_GAP;
-      const bottom = below
-        ? below.y - (below.host && below.host !== above?.host ? HOST_HEAD + HOST_PAD : 0)
-        : top + (gapSize.get(g) ?? MIN_GAP);
+      // 枠の境目を跨ぐ隙間は、枠の頭と余白の分を除いた所を通る（同じ枠の中どうしなら除かない）。
+      // いちばん上の隙間はレーンの名前の下から
+      const { top, bottom } = gapBounds(li, k);
       list.sort((a, b) => a.fy - b.fy);
       const y0 = top + (bottom - top - list.length * PITCH) / 2 + PITCH / 2;
       list.forEach((p, i) => p.y.set(g, y0 + i * PITCH));
@@ -623,8 +683,6 @@ export function layoutWiring(index: GraphIndex, options: LayoutOptions = {}): Wi
     return { x, w, mid: x + w / 2 };
   });
   const width = chanLeft(L) + (chanW[L] ?? MIN_GAP) + ML;
-  const maxBottom = Math.max(TOP, ...boxes.map((b) => b.y + b.h));
-  const height = maxBottom + 40;
   const lanes: LaneLayout[] = used.map((d, i) => {
     const def = LANES[d]!;
     const x = chanLeft(i + 1) - BOX_W;
@@ -695,10 +753,18 @@ export function layoutWiring(index: GraphIndex, options: LayoutOptions = {}): Wi
     };
   });
 
+  // 高さは箱・枠・全部の経路（いちばん下の箱の下の隙間を通る線も）を覆う
+  let maxBottom = TOP;
+  for (const b of boxes) maxBottom = Math.max(maxBottom, b.y + b.h);
+  for (const h of hosts.values()) maxBottom = Math.max(maxBottom, h.y + h.h);
+  for (const r of routes.values()) for (const p of r.points) maxBottom = Math.max(maxBottom, p.y);
+  for (const br of broken) for (const p of br.route.points) maxBottom = Math.max(maxBottom, p.y);
+  const height = maxBottom + BOTTOM_PAD;
+
   return {
     width,
     height,
-    titleY: MT + 12,
+    titleY: TITLE_Y,
     lanes,
     channels,
     boxes: outBoxes,

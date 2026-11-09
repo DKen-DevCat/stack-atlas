@@ -12,7 +12,8 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./graph.schema.json": "./graph.schema.json"
+    "./graph.schema.json": "./graph.schema.json",
+    "./graph-v2.schema.json": "./graph-v2.schema.json"
   },
   "bin": {
     "stack-atlas-validate": "./bin/stack-atlas-validate.js"
@@ -20,7 +21,8 @@
   "files": [
     "bin",
     "dist",
-    "graph.schema.json"
+    "graph.schema.json",
+    "graph-v2.schema.json"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

@@ -223,6 +223,14 @@ test('分岐の表: CloudFront の hit と GET /today の login を切り替え�
   await hoverBox(page, 'infra:static_site/this');
   const table = page.locator('.vtable-fo');
   await expect(table).toHaveCount(1);
+  // 箱から表へポインタを動かしても（箱と表の間の隙間を通っても）表は消えない（2026-11-09 のレビュー指摘。
+  // 間は透明な橋で、さらに離れても少し待ってから消す）
+  const shape = (await page.locator('[data-box="infra:static_site/this"] .shape').boundingBox())!;
+  const fo = (await table.boundingBox())!;
+  await page.mouse.move(shape.x + shape.width - 2, fo.y + 8);
+  await page.mouse.move(fo.x + 20, fo.y + 8, { steps: 8 });
+  await page.waitForTimeout(300);
+  await expect(table).toHaveCount(1);
   await expect(page.getByRole('checkbox', { name: 'cache hit: ない' })).toBeChecked();
   await page.getByRole('checkbox', { name: 'cache hit: ある' }).click();
   expect((await variantState(page))['infra:static_site/this#hit']).toBe(true);

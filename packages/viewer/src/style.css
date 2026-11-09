@@ -726,6 +726,10 @@ table.ct td:first-child {
 .empty .emsg {
   color: #ffb4b4;
 }
+.empty .enote {
+  color: #ffd98a;
+  font-size: 12px;
+}
 .empty .samples a {
   color: #9fb4ff;
   margin-right: 10px;

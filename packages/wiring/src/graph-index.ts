@@ -24,6 +24,8 @@ export interface IndexedItem {
   dir: 'in' | 'out';
   parent: IndexedItem | null;
   children: IndexedItem[];
+  /** 子孫の全部（深さ優先。indexGraph で先に作る。たどるたびに箱の全項目を見ないように） */
+  descendants: IndexedItem[];
   item: ItemV2;
 }
 
@@ -62,9 +64,12 @@ export interface GraphIndex {
   wiresFrom: Map<string, IndexedWire[]>;
   /** to の項目の ref → 線 */
   wiresTo: Map<string, IndexedWire[]>;
-  /** 箱 id → その箱へ行きの線（reply でない）を引いている箱の集合（呼び出し元） */
+  /**
+   * 箱 id → 往復の相手（docs/15 §3.5）: その箱へ行きの線（reply でない）を引き、かつその箱から戻りの線（reply）を受ける箱。
+   * テーブルへ書くだけの箱（戻りを受けない）や、戻りを受けるだけの箱（呼ばない）は数えない。下流へたどるときの戻りの絞り込みに使う
+   */
   requesters: Map<string, Set<string>>;
-  /** 箱 id → その箱が戻りの線（reply）を引いている先の箱の集合（戻り先） */
+  /** 箱 id → 往復の相手（requesters と同じ集合）。上流へたどるとき、行きの線を逆にたどる絞り込み（対称）に使う */
   repliers: Map<string, Set<string>>;
   /** host の箱 id → その枠の中の箱 */
   hosts: Map<string, IndexedNode[]>;
@@ -138,8 +143,10 @@ export function indexGraph(graph: GraphV2): GraphIndex {
           dir: port.dir,
           parent,
           children: [],
+          descendants: [],
           item: it,
         };
+        for (let a = parent; a; a = a.parent) a.descendants.push(ii);
         if (parent) parent.children.push(ii);
         else inode.roots.push(ii);
         inode.items.push(ii);
@@ -164,8 +171,9 @@ export function indexGraph(graph: GraphV2): GraphIndex {
   const wires: IndexedWire[] = [];
   const wiresFrom = new Map<string, IndexedWire[]>();
   const wiresTo = new Map<string, IndexedWire[]>();
-  const requesters = new Map<string, Set<string>>();
-  const repliers = new Map<string, Set<string>>();
+  /** 箱 id → 行きの線を引いてくる箱 / 戻りの線を引く先の箱（往復の相手はこの 2 つの共通部分） */
+  const callers = new Map<string, Set<string>>();
+  const replyTo = new Map<string, Set<string>>();
   graph.wires.forEach((w, i) => {
     const from = items.get(w.from);
     const to = items.get(w.to);
@@ -183,9 +191,19 @@ export function indexGraph(graph: GraphV2): GraphIndex {
     wires.push(iw);
     push(wiresFrom, w.from, iw);
     push(wiresTo, w.to, iw);
-    if (iw.reply) addTo(repliers, iw.fromNode.id, iw.toNode.id);
-    else addTo(requesters, iw.toNode.id, iw.fromNode.id);
+    if (iw.reply) addTo(replyTo, iw.fromNode.id, iw.toNode.id);
+    else addTo(callers, iw.toNode.id, iw.fromNode.id);
   });
+  const requesters = new Map<string, Set<string>>();
+  const repliers = new Map<string, Set<string>>();
+  for (const [x, cs] of callers) {
+    const rs = replyTo.get(x);
+    if (!rs) continue;
+    const partners = [...cs].filter((c) => rs.has(c));
+    if (!partners.length) continue;
+    requesters.set(x, new Set(partners));
+    repliers.set(x, new Set(partners));
+  }
 
   const types = new Map<string, NamedType>();
   for (const t of graph.types ?? []) types.set(t.id, t);

@@ -16,7 +16,7 @@ import {
 } from '../layout.js';
 import { select } from '../select.js';
 import { defaultState } from '../variants.js';
-import { todayGraph } from './fixture.js';
+import { I, N, P, todayGraph, W } from './fixture.js';
 
 const examplePath = fileURLToPath(
   new URL('../../../../examples/fixture-poly.today.v2.json', import.meta.url),
@@ -25,6 +25,27 @@ const example = () => JSON.parse(readFileSync(examplePath, 'utf8')) as GraphV2;
 
 const overlaps = (a: Rect, b: Rect) =>
   a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+/** 全部の経路（線と切れている線）の点 */
+const allRoutes = (l: WiringLayout) => [
+  ...[...l.routes.entries()].map(([k, r]) => [k, r.points] as const),
+  ...l.broken.map((b) => [b.key, b.route.points] as const),
+];
+
+/** 直交の折れ線の区間が箱の内側を通るか（箱の辺に触れるだけ＝ピンの出入りは通らない扱い） */
+const crossesBox = (pts: readonly { x: number; y: number }[], r: Rect) => {
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1]!;
+    const b = pts[i]!;
+    const x0 = Math.min(a.x, b.x);
+    const x1 = Math.max(a.x, b.x);
+    const y0 = Math.min(a.y, b.y);
+    const y1 = Math.max(a.y, b.y);
+    if (a.y === b.y && a.y > r.y && a.y < r.y + r.h && x1 > r.x && x0 < r.x + r.w) return true;
+    if (a.x === b.x && a.x > r.x && a.x < r.x + r.w && y1 > r.y && y0 < r.y + r.h) return true;
+  }
+  return false;
+};
 
 /** Map を含む結果を比べられる形にする */
 const plain = (l: WiringLayout) =>
@@ -175,6 +196,26 @@ describe.each(graphs)('layoutWiring: %s', (_name, make) => {
     for (const b of boxes) expect(b.y + b.h).toBeLessThan(layout.height);
   });
 
+  it('経路の点は全部、図の幅と高さの中（レーンの帯の中）にある', () => {
+    for (const [key, pts] of allRoutes(layout)) {
+      for (const p of pts) {
+        expect(p.x, key).toBeGreaterThanOrEqual(0);
+        expect(p.x, key).toBeLessThanOrEqual(layout.width);
+        expect(p.y, key).toBeGreaterThan(0);
+        expect(p.y, key).toBeLessThan(layout.height);
+        expect(
+          layout.lanes.some((l) => l.x0 <= p.x && p.x <= l.x1),
+          key,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('線は箱の内側を通らない（途中のレーン・受ける側のレーンの箱を横の区間で横切らない）', () => {
+    for (const [key, pts] of allRoutes(layout))
+      for (const b of boxes) expect(crossesBox(pts, b), `${key} が ${b.id} を横切る`).toBe(false);
+  });
+
   it('切れている線: 送る側の項目から、受ける側の箱の手前で切れる', () => {
     for (const br of layout.broken) {
       const pts = br.route.points;
@@ -256,5 +297,131 @@ describe('経路の小道具', () => {
       { x: 50, y: 20 },
       { x: 100, y: 20 },
     ]);
+  });
+});
+
+describe('layoutWiring: 隙間と高さと迂回（2026-11-09 のレビュー指摘）', () => {
+  const box = (l: WiringLayout, id: string) => l.boxes.get(id)!;
+
+  it('レーンのいちばん上の隙間を 7 本が通る: 線はレーンの名前より下、箱の上端より上に収まり、箱は上に詰めすぎない', () => {
+    // 自分を呼ぶ箱（out の 7 項目 → in の 7 項目）。線は箱の上の隙間（レーンの最初の隙間）を通る
+    const ins = Array.from({ length: 7 }, (_, j) => I(`i${j}`, 'int'));
+    const outs = Array.from({ length: 7 }, (_, j) => I(`o${j}`, 'int'));
+    const g: GraphV2 = {
+      version: 2,
+      nodes: [N('fn:self', 'fn', 'server', [P('in', 'in', ins), P('out', 'out', outs)])],
+      wires: outs.map((_, j) => W(`fn:self#out/o${j}`, `fn:self#in/i${j}`, 'call')),
+    };
+    const l = layoutWiring(indexGraph(g));
+    const b = box(l, 'fn:self');
+    const ys: number[] = [];
+    for (const p of l.plans.values()) {
+      expect(p.gaps).toEqual(['0:0']);
+      ys.push(p.ys[0]!);
+    }
+    expect(ys).toHaveLength(7);
+    for (const y of ys) {
+      expect(y).toBeGreaterThan(l.titleY + 8);
+      expect(y).toBeLessThan(b.y);
+    }
+    // 線どうしも重ならない（間隔 8px）
+    const sorted = [...ys].sort((a, c) => a - c);
+    for (let i = 1; i < sorted.length; i++)
+      expect(sorted[i]! - sorted[i - 1]!).toBeGreaterThanOrEqual(8);
+    for (const [key, pts] of allRoutes(l)) expect(crossesBox(pts, b), key).toBe(false);
+  });
+
+  it('いちばん下の箱の下の隙間を通る線も、図の高さの中に収まる', () => {
+    // サーバーの箱 B（背が高い）からブラウザの箱 A へ戻る 6 本は、B の下の隙間を通る
+    const outs = Array.from({ length: 6 }, (_, j) => I(`o${j}`, 'int'));
+    const g: GraphV2 = {
+      version: 2,
+      nodes: [
+        N('comp:A', 'component', 'browser', [
+          P(
+            'in',
+            'in',
+            outs.map((_, j) => I(`i${j}`, 'int')),
+          ),
+        ]),
+        N('fn:B', 'fn', 'server', [
+          P(
+            'in',
+            'in',
+            Array.from({ length: 10 }, (_, j) => I(`x${j}`, 'int')),
+          ),
+          P('out', 'out', outs),
+        ]),
+      ],
+      wires: outs.map((_, j) => W(`fn:B#out/o${j}`, `comp:A#in/i${j}`, 'return', true)),
+    };
+    const l = layoutWiring(indexGraph(g));
+    const b = box(l, 'fn:B');
+    expect(b.y + b.h).toBeGreaterThan(box(l, 'comp:A').y + box(l, 'comp:A').h);
+    let maxY = 0;
+    for (const [, pts] of allRoutes(l)) for (const p of pts) maxY = Math.max(maxY, p.y);
+    expect(maxY).toBeGreaterThan(b.y + b.h);
+    expect(maxY).toBeLessThan(l.height);
+    for (const [key, pts] of allRoutes(l)) {
+      for (const p of pts) {
+        expect(p.y, key).toBeLessThan(l.height);
+        expect(
+          l.lanes.some((ln) => ln.x0 <= p.x && p.x <= ln.x1),
+          key,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('レーン 0 → 3 の線が途中のレーン 1・2 の箱に塞がれるとき、横の区間はどちらの箱も横切らない', () => {
+    // S（利用者）の最後の項目 → T（サーバー）。途中のブラウザに A1（小）と B1（大）、エッジに B2（もっと大きい）。
+    // T の入口の高さは B1 と B2 の両方に塞がれ、B1 の上の隙間は B2 が塞ぐ
+    const many = (p: string, n: number) =>
+      Array.from({ length: n }, (_, j) => I(`${p}${j}`, 'int'));
+    const g: GraphV2 = {
+      version: 2,
+      nodes: [
+        N('actor:S', 'actor', 'user', [P('out', 'out', many('o', 15))]),
+        N('comp:A1', 'component', 'browser', [P('in', 'in', many('a', 1))]),
+        N('comp:B1', 'component', 'browser', [P('in', 'in', many('b', 10))]),
+        N('cache:B2', 'cache', 'edge', [P('in', 'in', many('c', 22))]),
+        N('fn:T', 'fn', 'server', [P('in', 'in', many('t', 1))]),
+      ],
+      wires: [W('actor:S#out/o14', 'fn:T#in/t0', 'http')],
+    };
+    const l = layoutWiring(indexGraph(g));
+    const ty = l.pins.get('fn:T#in/t0')!.y;
+    const b1 = box(l, 'comp:B1');
+    const b2 = box(l, 'cache:B2');
+    // 前提: T の入口の高さは B1 と B2 の両方に塞がれている
+    expect(ty).toBeGreaterThan(b1.y);
+    expect(ty).toBeLessThan(b1.y + b1.h);
+    expect(ty).toBeGreaterThan(b2.y);
+    expect(ty).toBeLessThan(b2.y + b2.h);
+    const pts = l.routes.get('w0')!.points;
+    for (const b of l.boxes.values()) expect(crossesBox(pts, b), b.id).toBe(false);
+  });
+
+  it('左のレーンへ戻る線: 送る側の箱の下の隙間が途中の箱に塞がれるなら、横切らない隙間を通る', () => {
+    // F（サーバー）→ A（ブラウザ）の戻り。F の下の隙間の高さには、途中のエッジの背の高い箱 M がある
+    const many = (p: string, n: number) =>
+      Array.from({ length: n }, (_, j) => I(`${p}${j}`, 'int'));
+    const g: GraphV2 = {
+      version: 2,
+      nodes: [
+        N('comp:A', 'component', 'browser', [P('in', 'in', many('i', 1))]),
+        N('cache:M', 'cache', 'edge', [P('in', 'in', many('m', 20))]),
+        N('fn:F', 'fn', 'server', [P('out', 'out', many('o', 1))]),
+      ],
+      wires: [W('fn:F#out/o0', 'comp:A#in/i0', 'return', true)],
+    };
+    const l = layoutWiring(indexGraph(g));
+    const f = box(l, 'fn:F');
+    const m = box(l, 'cache:M');
+    // 前提: F の下端は M の高さの中
+    expect(f.y + f.h).toBeGreaterThan(m.y);
+    expect(f.y + f.h).toBeLessThan(m.y + m.h);
+    const pts = l.routes.get('w0')!.points;
+    for (const b of l.boxes.values()) expect(crossesBox(pts, b), b.id).toBe(false);
   });
 });

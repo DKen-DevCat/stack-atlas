@@ -16,7 +16,7 @@ import {
 import { h } from '../ui/dom';
 import { Player, type BallPosition } from './balls';
 import { createCanvas, type Canvas } from './canvas';
-import { installInteraction } from './interaction';
+import { installInteraction, TABLE } from './interaction';
 import { renderScene } from './render';
 import { VariantTable } from './variantTable';
 import './style.css';
@@ -122,7 +122,7 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     stage,
     target: viewG,
     size: { w: layout.width, h: layout.height },
-    ignore: (t) => t instanceof Element && !!t.closest('.vtable-fo'),
+    ignore: (t) => t instanceof Element && !!t.closest(TABLE),
   });
   const player = new Player(svg, layout, { play, seek, speed, speedLabel });
   const table = new VariantTable({

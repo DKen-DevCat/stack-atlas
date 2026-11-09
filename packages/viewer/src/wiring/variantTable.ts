@@ -10,6 +10,12 @@ import { esc } from './render';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const ROW = 20;
+/**
+ * 箱の右辺から表までの間。この間には透明な橋（.vtable-bridge）を置き、ポインタが箱 → 表へ動く途中も「表の上」にする。
+ * 橋は箱の層より下に入れる（箱の右辺のピンのクリックを奪わない）
+ */
+const GAP = 6;
+const WIDTH = 150;
 
 export interface VariantTableDeps {
   index: GraphIndex;
@@ -40,10 +46,11 @@ export class VariantTable {
     const variants = n.node.variants;
     const fo = document.createElementNS(SVG_NS, 'foreignObject');
     fo.setAttribute('class', 'vtable-fo');
-    fo.setAttribute('x', String(b.x + b.w + 6));
+    const height = variants.length * ROW + 12;
+    fo.setAttribute('x', String(b.x + b.w + GAP));
     fo.setAttribute('y', String(b.y - 4));
-    fo.setAttribute('width', '150');
-    fo.setAttribute('height', String(variants.length * ROW + 12));
+    fo.setAttribute('width', String(WIDTH));
+    fo.setAttribute('height', String(height));
     fo.dataset.node = nodeId;
     const rows = variants
       .map((v) => {
@@ -66,6 +73,14 @@ export class VariantTable {
       this.deps.onChange(nodeId, vid, cb.dataset.val === '1');
     });
     target.append(fo);
+    const bridge = document.createElementNS(SVG_NS, 'rect');
+    bridge.setAttribute('class', 'vtable-bridge');
+    bridge.setAttribute('x', String(b.x + b.w));
+    bridge.setAttribute('y', String(b.y - 4));
+    bridge.setAttribute('width', String(GAP));
+    bridge.setAttribute('height', String(height));
+    bridge.dataset.node = nodeId;
+    target.insertBefore(bridge, target.querySelector(':scope > g.base-boxes'));
   }
 
   /** 描き直したあとに、出ていた表を出し直す */
@@ -81,7 +96,7 @@ export class VariantTable {
   private remove() {
     this.deps
       .target()
-      ?.querySelectorAll('.vtable-fo')
+      ?.querySelectorAll('.vtable-fo, .vtable-bridge')
       .forEach((e) => e.remove());
   }
 }

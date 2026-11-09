@@ -16,6 +16,7 @@ import {
   type LoadResult,
 } from './graph/load';
 import { hasWebGL } from './scene/renderer';
+import { startPlan, viewFor } from './startup';
 import { mountWiring, type WiringApp, type WiringDebug } from './wiring/app';
 import { h } from './ui/dom';
 import { createEmptyState, installDropTarget, type SampleEntry } from './ui/emptyState';
@@ -84,10 +85,16 @@ function disposeAll() {
   debug.wiring = null;
 }
 
-async function showEmpty(message?: string) {
+async function showEmpty(message?: string, note?: string) {
   disposeAll();
   const samples = await fetchSamples();
-  app.replaceChildren(createEmptyState(openFile, { ...(message ? { message } : {}), samples }));
+  app.replaceChildren(
+    createEmptyState(openFile, {
+      ...(message ? { message } : {}),
+      ...(note ? { note } : {}),
+      samples,
+    }),
+  );
   setStatus(message ? 'error' : 'empty');
 }
 
@@ -115,15 +122,16 @@ function showResult(res: LoadResult, shared: SharedMemoSource, prev: PrevGraph =
   const allIssues = prev.issue ? [...res.issues, prev.issue] : res.issues;
   const issues = createIssuesBox(allIssues, res.versionWarning, !!(res.graph ?? res.graphV2));
   if (issues) overlays.append(issues);
-  if (res.v2) {
+  const view = viewFor(res, hasWebGL());
+  if (view === 'wiring') {
     showWiring(res);
     return;
   }
-  if (!res.graph) {
+  if (view === 'unrenderable' || !res.graph) {
     void showEmpty('graph.json を描画できませんでした。上の一覧を確認してください。');
     return;
   }
-  if (!hasWebGL()) {
+  if (view === 'no-webgl') {
     showNoWebGL();
     return;
   }
@@ -230,14 +238,12 @@ async function openPrevFile(f: File) {
 
 async function start() {
   const url = graphUrlFromSearch(location.search, location.href);
-  // 3D の地図は WebGL が要る。配線図（v2）は SVG なので、graph を読んでから判断する
-  if (!url && !hasWebGL()) {
-    showNoWebGL();
-    return;
-  }
+  // ドロップとファイル選択は WebGL が無くても受け付ける（配線図の v2 は SVG なので開ける）。
+  // 3D の地図（v1）は、読んでから WebGL が無ければ showNoWebGL
   installDropTarget(openFile);
-  if (!url) {
-    await showEmpty();
+  const plan = startPlan(!!url, hasWebGL());
+  if (plan.kind === 'empty' || !url) {
+    await showEmpty(undefined, plan.kind === 'empty' ? plan.note : undefined);
     return;
   }
   app.replaceChildren(h('div', { class: 'loading' }, 'graph.json を読み込み中…'));
