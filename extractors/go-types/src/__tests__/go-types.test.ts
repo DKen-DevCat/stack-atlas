@@ -447,7 +447,9 @@ describe.skipIf(!hasGo)('go-types: 安全の約束（シンボリックリンク
   }, 120_000);
 
   it('時間の上限を守る（止めて、延ばし方を書いたエラー）', async () => {
-    await expect(runHelper(['-root', dir], { timeoutMs: 1 })).rejects.toThrow(/上限で止まりました/);
+    // 2026-11-10 変更（8-4 の CI）: 小さな dir では helper が 1ms の上限より先に終わることがあり、CI で不安定だった。
+    // 標準ライブラリの型を読む shop（数百 ms かかる）で確かめる
+    await expect(runHelper(['-root', fixture('shop')], { timeoutMs: 1 })).rejects.toThrow(/上限で止まりました/);
   });
 });
 
