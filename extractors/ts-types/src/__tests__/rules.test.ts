@@ -87,6 +87,59 @@ describe('箱の id（D47）', () => {
   });
 });
 
+describe('export したオブジェクトリテラルのメソッド（2026-11-09 8-2b。docs/17 §8.4）', () => {
+  it('プロパティが全部関数なら各メソッドが fn:<オブジェクト>.<メソッド> の箱になり、v1 の箱が group。呼び出しはメソッドの箱へ', async () => {
+    const { v2, node } = await run({
+      'src/lib/client.ts': [
+        'async function get<T>(path: string, q?: Record<string, string>): Promise<T> {',
+        '  const res = await fetch(path + (q ? "?" + new URLSearchParams(q) : ""));',
+        '  return res.json() as Promise<T>;',
+        '}',
+        'export const api = {',
+        '  list: (q?: { page?: string }) => get<number[]>("/items", q),',
+        '  one(id: string) { return get<number>(`/items/${id}`); },',
+        '};',
+      ].join('\n'),
+      'src/lib/mixed.ts': 'export const conf = { base: "/x", run: () => 1 };',
+      'src/use.ts': [
+        "import { api } from './lib/client';",
+        'export async function load(): Promise<number> {',
+        '  const xs = await api.list({ page: "1" });',
+        '  return xs.length + (await api.one("a"));',
+        '}',
+        'export const pick = () => api.one;',
+      ].join('\n'),
+    });
+    const ids = v2.nodes.map((n) => n.id).sort();
+    expect(ids).toEqual(['fn:api.list', 'fn:api.one', 'fn:load', 'fn:pick']);
+    // 関数でないプロパティのあるオブジェクト（conf）は箱にしない（v1 の箱のまま）
+    expect(ids.some((x) => x.includes('conf'))).toBe(false);
+    expect(v2.groups).toMatchObject({ 'fn:api.list': 'lib:client', 'fn:api.one': 'lib:client' });
+    const list = node('fn:api.list');
+    expect([list.kind, list.name, list.meta?.['ts']]).toEqual([
+      'fn',
+      'api.list',
+      { exportName: 'api', symbolKind: 'function' },
+    ]);
+    // メソッドの記法（one(id) {…}）も引数と戻り
+    expect(
+      node('fn:api.one')
+        .ports.find((p) => p.id === 'in')!
+        .items.map((i) => i.id),
+    ).toEqual(expect.arrayContaining(['id', 'ret_1']));
+    // 呼び出しはメソッドの箱へ（オブジェクトの v1 の箱へ `_` の線を引かない）。値として渡す api.one は参照
+    expect(wireKeys(v2)).toEqual(
+      expect.arrayContaining([
+        'fn:load#out/call_1.q → fn:api.list#in/q',
+        'fn:load#out/call_2.id → fn:api.one#in/id',
+      ]),
+    );
+    expect(wireKeys(v2).some((k) => k.includes('lib:client'))).toBe(false);
+    expect(wireKeys(v2)).toContain('fn:pick#out/_ → fn:api.one#in/_');
+    expect(v2.refs!['fn:load']).toEqual(expect.arrayContaining(['fn:api.list', 'fn:api.one']));
+  });
+});
+
 describe('口と項目（docs/16 §5）', () => {
   it('引数・分割代入はフィールド、引数の無い関数は in/call、Promise は剥がし、型の対応表（Date・配列・nullable・optional）', async () => {
     const { node } = await run({

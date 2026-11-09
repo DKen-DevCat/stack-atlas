@@ -9,7 +9,7 @@
 ホバーで依存先・影響範囲が赤くハイライトされ、データフローとキャッシュの挙動がアニメーションで見え、ノードにメモを書ける。
 
 現状: **Phase 0〜5（フィクスチャ `examples/fixture-repo/`）と Phase 7「どんな構成にもはめる」が完了**し、**Phase 6（実リポジトリへの適用）はグラフ生成まで完了**。
-抽出器 13 個（files / cdktf / terraform / cloudformation / nextjs-app / ts-imports / ts-types / go / openapi / sql / api-link / cache / screenshots。ts-types は v2 の言語アダプタ）→ `graph.json` → ビューア、`stack-atlas` CLI（build / validate / serve / diff / init-flows）、メモ共有・差分表示・配信テンプレートまで動く。
+抽出器 14 個（files / cdktf / terraform / cloudformation / nextjs-app / ts-imports / ts-types / go / go-types / openapi / sql / api-link / cache / screenshots。ts-types と go-types は v2 の言語アダプタ）→ `graph.json` → ビューア、`stack-atlas` CLI（build / validate / serve / diff / init-flows）、メモ共有・差分表示・配信テンプレートまで動く。
 ユーザーの実リポジトリ 2 つ（`damage-web`: Next 静的エクスポート → S3 + CloudFront、`damage-platform`: Go Lambda ×5 ＋ Terraform HCL ＋ OpenAPI ＋ SQL）で **149 ノード / 330 エッジ / エラー 0 / 警告 0**。
 ビューアは 150〜250 ノードでも読めるよう、板の拡張・ラベルの LOD・検索・kind チップを実装済み。残りは実アプリのスクショ・flows の推敲・配信先。最初の単一 HTML プロトタイプ（`prototype/`）は参照用に残している。
 
@@ -79,9 +79,9 @@ packages/
   tf-graph/                        ← IaC 共通: Terraform JSON → infra ノード・エッジ・cache（cdktf / terraform / cloudformation が使う）
   cli/                             ← stack-atlas コマンド（src/commands/ に build / validate / serve / diff / init-flows）
   viewer/                          ← Vite + TypeScript + three.js の静的アプリ（src/graph・layout・scene・screen・ui、e2e/）
-extractors/                        ← 13 個。CLI の順: files → cdktf → terraform → cloudformation → nextjs-app → ts-imports → ts-types → go → openapi → sql → api-link → cache → screenshots
+extractors/                        ← 14 個。CLI の順: files → cdktf → terraform → cloudformation → nextjs-app → ts-imports → ts-types → go → go-types → openapi → sql → api-link → cache → screenshots
   files/  cdktf/  terraform/  cloudformation/   ← glob → ノード、インフラ層（CDKtf / HCL / CDK・SAM・CFn）
-  nextjs-app/  ts-imports/  ts-types/  go/      ← 画面層、TS のコンポーネント／型層、TS の言語アダプタ（v2 の口・項目・線）、Go のパッケージ
+  nextjs-app/  ts-imports/  ts-types/  go/  go-types/  ← 画面層、TS のコンポーネント／型層、TS と Go の言語アダプタ（v2 の口・項目・線）、Go のパッケージ
   openapi/  sql/                                ← 契約: endpoint: と schema:
   api-link/  cache/  screenshots/               ← フロント→API 結線・キャッシュ情報・スクショと regions（READMEあり、screenshots は docs/10）
 examples/

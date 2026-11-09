@@ -15,5 +15,6 @@ func (s *Server) handleToday(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	total := domain.Sum(txs)
-	_ = json.NewEncoder(w).Encode(map[string]any{"total": total, "entries": txs})
+	resp := map[string]any{"total": total, "entries": txs}
+	_ = json.NewEncoder(w).Encode(resp)
 }
