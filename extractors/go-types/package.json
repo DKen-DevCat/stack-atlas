@@ -1,0 +1,31 @@
+{
+  "name": "@stack-atlas/extractor-go-types",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Stack Atlas の go-types 抽出器（Go の言語アダプタ。標準ライブラリだけの helper を go run し、go/types で関数の単位の箱・口・項目・links・線を v2 に出す）",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "@stack-atlas/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "helper"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@stack-atlas/core": "workspace:*",
+    "@stack-atlas/extractor-go": "workspace:*",
+    "@stack-atlas/extractor-sql": "workspace:*",
+    "@stack-atlas/schema": "workspace:*"
+  }
+}

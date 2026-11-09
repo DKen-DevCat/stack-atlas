@@ -1770,8 +1770,10 @@
       "runtime": "server",
       "file": "platform/internal/store/store.go",
       "line": 49,
-      "host": "infra:lambda_api/api",
       "group": "platform/internal/store",
+      "meta": {
+        "hosts": ["infra:lambda_api/api", "infra:lambda_api/gmail_webhook"]
+      },
       "ports": [
         {
           "id": "in",

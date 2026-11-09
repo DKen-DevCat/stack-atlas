@@ -182,7 +182,8 @@ describe('8-2a 受け入れ: fixture-poly の TS の側が手で組んだ例と�
 
   it('自動率のサマリ（docs/17 §4）を build の要約に出す', () => {
     const a = res.v2Adapters!;
-    expect(a.adapters).toEqual(['ts-types', 'openapi']);
+    // 2026-11-09 変更（8-2b）: sql 抽出器も v2（table の 3 口とカラムの項目）を出すようになったので 'sql' が増えた
+    expect(a.adapters).toEqual(['ts-types', 'openapi', 'sql']);
     expect(a.joined).toBe(5);
     expect(a.unjoined).toEqual([]);
     expect(a.groups).toBe(4);
@@ -193,7 +194,7 @@ describe('8-2a 受け入れ: fixture-poly の TS の側が手で組んだ例と�
     expect(c.refWires).toBe(4);
     const lines = formatAdapterSummary(a);
     expect(lines[0]).toMatch(
-      /^言語アダプタ（ts-types, openapi）: 項目 \d+（unknown \d+）、線 \d+（項目 \d+ \/ 箱の単位 \d+、うち呼び出しでない参照 4）、links \d+（exact \d+ \/ crude \d+）・不透明な箱 \d+$/,
+      /^言語アダプタ（ts-types, openapi, sql）: 項目 \d+（unknown \d+）、線 \d+（項目 \d+ \/ 箱の単位 \d+、うち呼び出しでない参照 4）、links \d+（exact \d+ \/ crude \d+）・不透明な箱 \d+$/,
     );
   });
 });

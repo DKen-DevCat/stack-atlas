@@ -120,6 +120,21 @@ importers:
         specifier: workspace:*
         version: link:../../packages/schema
 
+  extractors/go-types:
+    dependencies:
+      '@stack-atlas/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@stack-atlas/extractor-go':
+        specifier: workspace:*
+        version: link:../go
+      '@stack-atlas/extractor-sql':
+        specifier: workspace:*
+        version: link:../sql
+      '@stack-atlas/schema':
+        specifier: workspace:*
+        version: link:../../packages/schema
+
   extractors/nextjs-app:
     dependencies:
       '@stack-atlas/core':
@@ -255,6 +270,9 @@ importers:
       '@stack-atlas/extractor-go':
         specifier: workspace:*
         version: link:../../extractors/go
+      '@stack-atlas/extractor-go-types':
+        specifier: workspace:*
+        version: link:../../extractors/go-types
       '@stack-atlas/extractor-nextjs-app':
         specifier: workspace:*
         version: link:../../extractors/nextjs-app
