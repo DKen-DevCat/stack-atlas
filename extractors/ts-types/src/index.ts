@@ -12,7 +12,7 @@
  * - react の型が解けないときだけ最小の stub を足す（react-stub.ts）
  */
 import { relative } from 'node:path';
-import { ts, type Project, type SourceFile } from 'ts-morph';
+import type { Project, SourceFile, ts } from 'ts-morph';
 import type { ItemV2, NamedType, Runtime, WireV2 } from '@stack-atlas/schema';
 import type {
   Extractor,
@@ -21,20 +21,21 @@ import type {
   PartialNodeV2,
   RepoContext,
 } from '@stack-atlas/core';
-import { sectionFor } from '@stack-atlas/core';
+import { isMultiRepo, sectionFor } from '@stack-atlas/core';
 import {
   analyzeTsRepo,
   declKey,
   tsconfigPaths,
   type TsRepoAnalysis,
 } from '@stack-atlas/extractor-ts-imports';
-import { findNextDirs, listNextFiles, readNextOutput } from '@stack-atlas/extractor-nextjs-app';
+import { readNextOutput } from '@stack-atlas/extractor-nextjs-app';
 import {
+  clientFiles,
   constResolverFor,
   detectWrappers,
   type ConstResolver,
 } from '@stack-atlas/extractor-api-link';
-import { collectSeeds, type Box } from './boxes.js';
+import { collectSeeds, v2Safe, type Box } from './boxes.js';
 import { buildCalls, buildLinks, buildPorts, type BuildContext, type BoxState } from './body.js';
 import { countItems, type TypeEnv } from './model.js';
 import { REACT_STUB_PATH, ensureReactTypes } from './react-stub.js';
@@ -52,35 +53,22 @@ export const DEFAULT_MAX_ITEMS = 200;
 
 const toPosix = (p: string) => p.split('\\').join('/');
 
-/** tsconfig の extends が解けないとき（node_modules の共有設定など）は paths が黙って消えるので警告する（§7 #10） */
-function warnUnresolvedExtends(ctx: RepoContext) {
-  for (const tc of tsconfigPaths(ctx)) {
-    const path = ctx.resolve(tc);
-    const raw = ts.readConfigFile(path, ts.sys.readFile);
-    const ext = (raw.config as { extends?: unknown } | undefined)?.extends;
-    const list = typeof ext === 'string' ? [ext] : Array.isArray(ext) ? ext : [];
-    if (!list.length) continue;
-    const parsed = ts.getParsedCommandLineOfConfigFile(
-      path,
-      {},
-      {
-        ...ts.sys,
-        onUnRecoverableConfigFileDiagnostic: () => {},
-      },
+/**
+ * tsconfig の extends が解けないとき（node_modules の共有設定など）は paths が黙って消えるので警告する（§7 #10）。
+ * 解けたかどうかは ts-imports の解析（Project を作ったときの診断）から取る（tsconfig を読み直さない）
+ */
+function warnUnresolvedExtends(ctx: RepoContext, a: TsRepoAnalysis) {
+  for (const p of a.projects) {
+    if (!p.unresolvedExtends.length) continue;
+    ctx.log.warn(
+      `ts-types: ${p.tsconfig} の extends（${p.unresolvedExtends.join(', ')}）を解けません。共有の tsconfig にある paths などが効かず、import が解けない所があります（node_modules を入れて build してください）`,
     );
-    const missing = (parsed?.errors ?? []).filter((d) => {
-      const text = ts.flattenDiagnosticMessageText(d.messageText, ' ');
-      return list.some((e) => typeof e === 'string' && text.includes(e));
-    });
-    if (missing.length)
-      ctx.log.warn(
-        `ts-types: ${tc} の extends（${list.join(', ')}）を解けません。共有の tsconfig にある paths などが効かず、import が解けない所があります（node_modules を入れて build してください）`,
-      );
   }
 }
 
 export const extractor: Extractor = {
   name: NAME,
+  v2Role: 'language',
   async detect(ctx) {
     if (ctx.config.ts?.repo && !sectionFor(ctx, ctx.config.ts)) return false;
     return tsconfigPaths(ctx).length > 0;
@@ -119,10 +107,10 @@ export function buildV2(
   upstream: Readonly<PartialGraph>,
   a: TsRepoAnalysis = analyzeTsRepo(ctx, upstream),
 ): PartialGraphV2 {
-  warnUnresolvedExtends(ctx);
+  warnUnresolvedExtends(ctx, a);
   const depth = ctx.config.adapters?.depth ?? DEFAULT_DEPTH;
   const maxItems = ctx.config.adapters?.maxItems ?? DEFAULT_MAX_ITEMS;
-  const multiRepo = Object.keys(ctx.repos ?? {}).length > 1;
+  const multiRepo = isMultiRepo(ctx);
 
   // react の型（解けない Project にだけ stub を足す）
   for (const p of a.projects) {
@@ -131,9 +119,9 @@ export function buildV2(
       ctx.log.info(`ts-types: react の型が解けないので最小の stub を足します（${p.tsconfig}）`);
   }
 
-  const dirs = findNextDirs(ctx.root, sectionFor(ctx, ctx.config.next) ?? {});
-  const nextFiles = listNextFiles(ctx.root, dirs).files;
-  const staticExport = readNextOutput(ctx.root, dirs) === 'export';
+  // Next のファイルは ts-imports の解析と同じ走査の結果（ディレクトリを読み直さない）
+  const nextFiles = a.nextFiles;
+  const staticExport = readNextOutput(ctx.root, a.nextDirs) === 'export';
 
   const otherIds = new Set((upstream.v2?.nodes ?? []).map((n) => n.id));
   const seeds = collectSeeds({
@@ -149,12 +137,27 @@ export function buildV2(
     outItems: [],
     inIds: new Set(),
     outIds: new Set(),
+    refs: new Set(),
   }));
   const boxByKey = new Map(boxes.map((b) => [declKey(b.decl), b]));
   const boxById = new Map(boxes.map((b) => [b.id, b]));
 
   // 型の環境（Project ごとに checker が違う）
   const named = new Map<string, NamedType>();
+  /**
+   * 名前付きの型の宣言 → typeRef の id（2026-11-09 レビュー C7）。ts-imports が `type:` の箱にした宣言はその id
+   * （衝突の退避 `type:<path>#<名前>` は v2 で使える `~` に。upgrade の types[] と同じ id で、OpenAPI と同じ名前の型は
+   * v1 のマージで 1 つになり契約側が正になる。D37）。ts-imports の箱でない宣言（export していない型・classify で
+   * schema などにしたもの）は file で修飾した `type:<file>~<名前>`（同じ名前の別ファイルの型・OpenAPI の型と重ならない）
+   */
+  const typeIdOf = (decls: readonly ts.Declaration[], name: string): string => {
+    for (const d of decls) {
+      const v1 = a.nodeOfDecl.get(`${d.getSourceFile().fileName}#${d.getStart()}`);
+      if (v1?.startsWith('type:')) return v2Safe(v1);
+    }
+    const rel = toPosix(relative(root, decls[0]!.getSourceFile().fileName));
+    return `type:${multiRepo ? `${ctx.repoName}/${rel}` : rel}~${name}`;
+  };
   const envs = new Map<Project, TypeEnv>();
   const root = a.root;
   const envOf = (project: Project): TypeEnv => {
@@ -169,6 +172,7 @@ export function buildV2(
           return !r.startsWith('..') && !r.split('/').includes('node_modules');
         },
         rel: (f) => toPosix(relative(root, f)),
+        typeIdOf,
         depth,
         named,
       };
@@ -177,9 +181,12 @@ export function buildV2(
     return env;
   };
 
-  // HTTP の呼び出し: api-link と同じラッパー検出と文字列定数
-  const callers = sectionFor(ctx, ctx.config.api)?.callers ?? [];
+  // HTTP の呼び出し: api-link と同じラッパー検出と文字列定数。既知の動詞（get・post など）は api-link のクライアント
+  // ファイルの中だけ（サーバーのルートの登録 app.get(...) を呼び出しにしない。2026-11-09 レビュー C4）
+  const api = sectionFor(ctx, ctx.config.api);
+  const callers = api?.callers ?? [];
   const wrappers = detectWrappers([...a.files.values()], callers);
+  const clients = new Set(clientFiles(ctx, api).map((f) => toPosix(ctx.resolve(f))));
   const constCache = new Map<SourceFile, Map<string, string>>();
   const resolvers = new Map<SourceFile, ConstResolver>();
   const resolverOf = (sf: SourceFile) => {
@@ -207,6 +214,8 @@ export function buildV2(
     v1ByKey: a.nodeOfDecl,
     v1Kind: (id) => a.nodes.get(id)?.kind,
     wrappers,
+    callers: new Set(callers),
+    clientFiles: clients,
     resolverOf,
     wires,
     maxItems,
@@ -309,10 +318,13 @@ export function buildV2(
 
   const nodes: PartialNodeV2[] = [];
   const groups: Record<string, string> = {};
+  /** 箱 → 参照する箱・v1 の箱（掃除で、group の v1 の箱に残った線の付け替え先を決める。C6） */
+  const refs: Record<string, string[]> = {};
   for (const b of boxes) {
     const list = copies.get(b.id)!;
     const shared = list.length > 1;
     for (const cp of list) {
+      if (b.refs.size) refs[cp.id] = [...b.refs];
       const ports = [
         { id: 'in', dir: 'in' as const, items: structuredClone(b.inItems) },
         { id: 'out', dir: 'out' as const, items: structuredClone(outOrder(b.outItems)) },
@@ -342,5 +354,6 @@ export function buildV2(
   const out: PartialGraphV2 = { nodes, wires: outWires };
   if (named.size) out.types = [...named.values()];
   if (Object.keys(groups).length) out.groups = groups;
+  if (Object.keys(refs).length) out.refs = refs;
   return out;
 }

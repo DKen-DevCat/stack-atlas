@@ -371,6 +371,8 @@ function readSmall(abs: string): string | undefined {
 
 export const extractor: Extractor = {
   name: NAME,
+  /** v2 の table は契約（合流点。言語アダプタではない。docs/17 §2） */
+  v2Role: 'contract',
   async detect(ctx) {
     if (ctx.config.sql?.repo && !sectionFor(ctx, ctx.config.sql)) return false;
     const globs = sectionFor(ctx, ctx.config.sql)?.migrations ?? DEFAULT_MIGRATIONS;

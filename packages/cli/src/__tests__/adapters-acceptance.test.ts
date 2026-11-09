@@ -182,8 +182,14 @@ describe('8-2a 受け入れ: fixture-poly の TS の側が手で組んだ例と�
 
   it('自動率のサマリ（docs/17 §4）を build の要約に出す', () => {
     const a = res.v2Adapters!;
-    // 2026-11-09 変更（8-2b）: sql 抽出器も v2（table の 3 口とカラムの項目）を出すようになったので 'sql' が増えた
-    expect(a.adapters).toEqual(['ts-types', 'openapi', 'sql']);
+    // 2026-11-09 変更（8-2a レビュー）: openapi は言語アダプタではなく契約（Extractor.v2Role = contract）。
+    // adapters（project.generator.adapters も）は言語アダプタだけ、契約は contracts に分けた（C10）
+    expect(a.adapters).toEqual(['ts-types']);
+    // 2026-11-09 変更（8-2b）: sql も v2（table の 3 口とカラムの項目）を出す契約になった
+    expect(a.contracts).toEqual(['openapi', 'sql']);
+    expect(g.project?.generator).toMatchObject({ adapters: ['ts-types'], contracts: ['openapi', 'sql'] });
+    // group の v1 の箱に残った線は、参照している中の関数の箱を全部決められた（中の全部への付け替えは 0。C6）
+    expect(a.undetermined).toBe(0);
     expect(a.joined).toBe(5);
     expect(a.unjoined).toEqual([]);
     expect(a.groups).toBe(4);
@@ -193,8 +199,9 @@ describe('8-2a 受け入れ: fixture-poly の TS の側が手で組んだ例と�
     // 呼び出しでない参照（API_DOMAIN の定数。fetcher・PushToggle → lib:consts の往復）
     expect(c.refWires).toBe(4);
     const lines = formatAdapterSummary(a);
+    // 2026-11-09 変更（8-2a レビュー）: 要約も言語アダプタと契約を分ける（C10）
     expect(lines[0]).toMatch(
-      /^言語アダプタ（ts-types, openapi, sql）: 項目 \d+（unknown \d+）、線 \d+（項目 \d+ \/ 箱の単位 \d+、うち呼び出しでない参照 4）、links \d+（exact \d+ \/ crude \d+）・不透明な箱 \d+$/,
+      /^言語アダプタ（ts-types）・契約（openapi, sql）: 項目 \d+（unknown \d+）、線 \d+（項目 \d+ \/ 箱の単位 \d+、うち呼び出しでない参照 4）、links \d+（exact \d+ \/ crude \d+）・不透明な箱 \d+$/,
     );
   });
 });

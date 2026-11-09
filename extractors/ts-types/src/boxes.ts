@@ -55,6 +55,8 @@ export interface Box extends BoxSeed {
   /** 起動の項目（in/call・in/props・in/html）を後から足せるように、in の項目 id の集合 */
   inIds: Set<string>;
   outIds: Set<string>;
+  /** この箱が参照する箱・v1 の箱の id（呼び出し・描画・呼び出しでない参照・型。PartialGraphV2.refs に出す） */
+  refs: Set<string>;
 }
 
 const KIND_V2: Record<string, NodeKindV2> = {
@@ -72,7 +74,7 @@ const truncate = (text: string, lines = 20) => {
 };
 
 /** `#` を含む id（ts-imports の衝突の退避）を v2 で使える形にする */
-const v2Safe = (id: string) => {
+export const v2Safe = (id: string) => {
   const i = id.indexOf('#');
   return i < 0 ? id : `${id.slice(0, i)}~${id.slice(i + 1)}`;
 };

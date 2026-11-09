@@ -9,7 +9,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { relative } from 'node:path';
 import type { PartialGraph, PartialNode, RepoContext, StackAtlasConfig } from '@stack-atlas/core';
-import { globBase, globToRegExp } from '@stack-atlas/core';
+import { globBase, globToRegExp, isRoutePathTooLong, MAX_ROUTE_PATH } from '@stack-atlas/core';
 import { parseClientFiles, type ApiCall } from './client.js';
 import {
   apiPathMatches,
@@ -217,9 +217,15 @@ export function linkClients(
     byCaller.set(id, acc);
   }
 
+  /** 長すぎて照合しないパスの呼び出し（1 回だけ警告する） */
+  let tooLong = 0;
   for (const [callerId, { rel, calls: list }] of byCaller) {
     const seen = new Set<string>();
     const unique = list.filter((c) => {
+      if (isRoutePathTooLong(c.path)) {
+        tooLong++;
+        return false;
+      }
       const k = `${c.method} ${c.path}`;
       if (seen.has(k)) return false;
       seen.add(k);
@@ -271,6 +277,10 @@ export function linkClients(
       );
     }
   }
+  if (tooLong > 0)
+    ctx.log.warn(
+      `api-link: パスが長すぎる（${MAX_ROUTE_PATH} 文字を超える）呼び出し ${tooLong} 件は照合しません`,
+    );
   if (result.unmatched.length > 0)
     ctx.log.warn(
       `api-link: route / endpoint と結べない呼び出し: ${result.unmatched.join(' / ')}（overrides.yaml で補う）`,
