@@ -20,6 +20,7 @@ import { createCanvas, type Canvas } from './canvas';
 import { installInteraction, TABLE } from './interaction';
 import { renderScene } from './render';
 import { VariantTable } from './variantTable';
+import { openingFocus } from './view';
 import './style.css';
 
 /** e2e・デバッグ用（window.__stackAtlas.wiring） */
@@ -175,10 +176,12 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     tableNode: () => table.nodeId,
     showTable: (id) => table.show(id),
     hideTable: () => table.hide(),
+    fitAll: () => canvas.fit(),
   });
 
+  // 配置は graph ごとにここで 1 回だけ（選択・分岐の切り替えは描き直すだけで、箱を動かさない。docs/18 §3.1）
   render(true);
-  canvas.fit();
+  canvas.open(openingFocus(index, layout));
 
   const debug: WiringDebug = {
     get selection() {

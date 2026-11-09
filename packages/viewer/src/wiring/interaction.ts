@@ -1,4 +1,5 @@
-// 操作（docs/15 §3.5・§3.6）: クリックで選ぶ（型 → 項目 → 光っている線 → 箱 → 枠 → 空白の順に見る）、Esc で解く。
+// 操作（docs/15 §3.5・§3.6）: クリックで選ぶ（型 → 項目 → 光っている線 → 箱 → 枠 → 空白の順に見る）、Esc で解く、
+// `F` キーで全体表示（docs/18 §3.2。画面に文字は出さない）。
 // hover は何も選んでいないときだけ箱とその線を少し明るくする（選択中は hover が効かない）。分岐の表だけは選択中でも出る
 import type { Selection } from '@stack-atlas/wiring';
 import { createTableHover } from './tableHover';
@@ -19,6 +20,29 @@ export interface InteractionDeps {
   tableNode: () => string | null;
   showTable: (id: string) => void;
   hideTable: () => void;
+  /** 全体が収まる倍率にする（`F` キー） */
+  fitAll: () => void;
+}
+
+/** `F` キーを全体表示にするか（修飾キー付き・入力欄の中は除く。⌘F のページ内検索を奪わない） */
+export function isFitKey(ev: {
+  key: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+  target: EventTarget | null;
+}): boolean {
+  if (ev.key !== 'f' && ev.key !== 'F') return false;
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return false;
+  const t = ev.target as { tagName?: string; isContentEditable?: boolean } | null;
+  const tag = t?.tagName?.toLowerCase();
+  if (t?.isContentEditable || tag === 'textarea' || tag === 'select') return false;
+  // チェックボックスや範囲のスライダーに焦点があっても全体表示にする（文字を打つ欄だけ除く）
+  if (tag === 'input') {
+    const type = (t as { type?: string }).type ?? 'text';
+    if (!['checkbox', 'range', 'button', 'radio'].includes(type)) return false;
+  }
+  return true;
 }
 
 /** 分岐の表と、箱との間の透明な橋 */
@@ -83,6 +107,7 @@ export function installInteraction(d: InteractionDeps): () => void {
   };
   const onKey = (ev: KeyboardEvent) => {
     if (ev.key === 'Escape') d.select(null);
+    else if (isFitKey(ev)) d.fitAll();
   };
   const onLeave = () => tableHover.leave();
 
