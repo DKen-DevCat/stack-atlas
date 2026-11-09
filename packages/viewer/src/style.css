@@ -71,6 +71,18 @@ code {
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
+/* 隣の graph（build の graph.json = 配線図）を開く文字のリンク */
+.top h1 .alt {
+  margin-left: 8px;
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.top h1 .alt:hover {
+  color: inherit;
+}
 .top h1 small {
   font-weight: 400;
   color: var(--muted);

@@ -1,6 +1,6 @@
 import type { Extractor } from '@stack-atlas/core';
 import { createMemoryLogger } from '@stack-atlas/core';
-import { validateGraph } from '@stack-atlas/schema';
+import { validateGraph, validateGraphV2 } from '@stack-atlas/schema';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -29,7 +29,7 @@ const stub: Extractor = {
 };
 
 describe('runBuild', () => {
-  it('graph.json・issues.json・memos.json を書き、要約を出す', async () => {
+  it('graph.json（v2）・graph.v1.json・issues.json・memos.json を書き、要約を出す', async () => {
     const root = repo();
     const out = join(root, 'out');
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -42,7 +42,8 @@ describe('runBuild', () => {
     const summary = log.mock.calls.map((c) => String(c[0])).join('\n');
     log.mockRestore();
     expect(code).toBe(0);
-    const graph = JSON.parse(readFileSync(join(out, 'graph.json'), 'utf8'));
+    // Phase 8-1 で変更: graph.json は v2（配線図）になり、これまでの v1 は graph.v1.json に移った（docs/16 §10）
+    const graph = JSON.parse(readFileSync(join(out, 'graph.v1.json'), 'utf8'));
     expect(validateGraph(graph).ok).toBe(true);
     expect(graph.nodes[0]).toMatchObject({
       id: 'lib:x',
@@ -50,6 +51,10 @@ describe('runBuild', () => {
       kind: 'lib',
       name: 'x',
     });
+    const v2 = JSON.parse(readFileSync(join(out, 'graph.json'), 'utf8'));
+    expect(v2.version).toBe(2);
+    expect(validateGraphV2(v2).errors).toEqual([]);
+    expect(v2.nodes[0]).toMatchObject({ id: 'lib:x', kind: 'helper', runtime: 'browser' });
     expect(JSON.parse(readFileSync(join(out, 'issues.json'), 'utf8'))).toEqual([]);
     expect(JSON.parse(readFileSync(join(out, 'memos.json'), 'utf8'))).toEqual({
       'gone:y': 'orphan',
@@ -57,7 +62,21 @@ describe('runBuild', () => {
     });
     expect(summary).toContain('stub: ノード 1、エッジ 0、フロー 0');
     expect(summary).toContain('結果: ノード 1、エッジ 0、フロー 0、層 4');
+    expect(summary).toContain('v2: 箱 1（うち枠 0）、線 0、型 0、view 0');
     expect(summary).toContain('孤立メモ（graph に無いノード ID）: gone:y');
+    expect(summary).toContain(`${join(out, 'graph.v1.json')}（v1。3D の地図）`);
+  });
+
+  it('--v1 は graph.json に v1 だけを書き、前回の graph.v1.json を消す（従来の出力）', async () => {
+    const root = repo();
+    const out = join(root, 'out');
+    const run = (v1Only: boolean) =>
+      runBuild({ repo: root, outDir: out, extractors: [stub], log: createMemoryLogger(), v1Only });
+    await quiet(() => run(false));
+    expect(existsSync(join(out, 'graph.v1.json'))).toBe(true);
+    await quiet(() => run(true));
+    expect(JSON.parse(readFileSync(join(out, 'graph.json'), 'utf8')).version).toBe(1);
+    expect(existsSync(join(out, 'graph.v1.json'))).toBe(false);
   });
 
   it('リポジトリの memos.json が無くなったら、前回の build の out/memos.json も消す', async () => {
@@ -212,7 +231,8 @@ describe('build (fixture-poly)', () => {
 
     type N = { id: string; file?: string };
     type E = { from: string; to: string; kind: string };
-    const graph = JSON.parse(readFileSync(join(out, 'graph.json'), 'utf8')) as {
+    // Phase 8-1 で変更: v1 は graph.v1.json に移った（graph.json は v2。下で別に確かめる）
+    const graph = JSON.parse(readFileSync(join(out, 'graph.v1.json'), 'utf8')) as {
       nodes: N[];
       edges: E[];
       flows: unknown[];
@@ -283,5 +303,17 @@ describe('build (fixture-poly)', () => {
     for (const n of graph.nodes) {
       if (n.file) expect(n.file, n.id).toMatch(/^(web|platform)\//);
     }
+
+    // graph.json は v2（docs/16 §10）: 検証エラー 0、箱 id は v1 のまま、type: は types[] へ
+    const v2 = JSON.parse(readFileSync(join(out, 'graph.json'), 'utf8'));
+    expect(v2.version).toBe(2);
+    expect(validateGraphV2(v2).errors).toEqual([]);
+    expect(v2.nodes.map((n: N) => n.id)).toEqual(
+      graph.nodes.filter((n) => !n.id.startsWith('type:')).map((n) => n.id),
+    );
+    expect(v2.types.map((t: N) => t.id)).toEqual(
+      expect.arrayContaining(['type:Today', 'type:Entry', 'table:transactions']),
+    );
+    expect(v2.views.map((v: N) => v.id)).toEqual(['today', 'inbound']);
   }, 60_000);
 });

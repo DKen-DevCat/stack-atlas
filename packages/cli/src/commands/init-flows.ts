@@ -7,6 +7,10 @@
  *   - hit:  利用者 → CDN（HIT）→ 利用者（tone: cache-hit）
  *   - invalidate: 管理画面 → … → API → テーブル → revalidatePath → CDN の無効化
  * を作る。経路が無ければ 2 ステップの最小の雛形を書く。ステップの文はプレースホルダ（人が直す前提）。
+ *
+ * graph.json v2（Phase 8-1〜）では flows は views に置き換わる（docs/15 §3.9）: build は各フローの最初の箱を
+ * `views[].start` に、tone（cache-hit）を cache の分岐 `hit` にして graph.json に書き、ステップの文は捨てる。
+ * flows.yaml はそのまま書けるが、v2 の配線図に効くのは始点と HIT / MISS だけ。ここは v1 の graph（buildGraph の graph）を読む
  */
 import {
   AtlasConfigError,
@@ -436,6 +440,7 @@ export async function runInitFlows(opts: InitFlowsOptions): Promise<number> {
       `flows.yaml の雛形を書きました: ${out}`,
       ...gen.summary.map((s) => `  ${s}`),
       `  フロー: ${gen.defs.map((d) => `${d.id}（${d.steps.length} ステップ）`).join('、') || 'なし'}`,
+      '  graph.json（v2）では、各フローの最初の箱が views の始点になります（ステップの文は 3D の地図だけで使います）',
     ].join('\n'),
   );
   return 0;

@@ -55,7 +55,18 @@ export interface WiringApp {
   readonly index: GraphIndex;
   readonly layout: WiringLayout;
   readonly debug: WiringDebug;
+  /**
+   * 左上の題名の横に、隣の graph（build の graph.v1.json = 3D の地図）を開く小さなリンクを出す。null で消す。
+   * 凡例やバッジは置かない（docs/15 §3.6 の表示の規則）。文字のリンク 1 つだけ
+   */
+  setAltLink(link: AltLink | null): void;
   dispose(): void;
+}
+
+/** 隣の graph を開くリンク（graph/alternate.ts の alternateGraph の結果） */
+export interface AltLink {
+  href: string;
+  label: string;
 }
 
 export interface WiringOptions {
@@ -108,10 +119,12 @@ export function mountWiring(opts: WiringOptions): WiringApp {
   play.hidden = true;
   seek.hidden = true;
   const name = opts.graph.project?.name ?? opts.source;
+  const alt = h('a', { class: 'wv-alt', attrs: { 'data-alt': '' } });
+  alt.hidden = true;
   const root = h(
     'div',
     { class: 'wv' },
-    h('div', { class: 'wv-top' }, 'Stack Atlas — 配線図', h('small', {}, name)),
+    h('div', { class: 'wv-top' }, 'Stack Atlas — 配線図', alt, h('small', {}, name)),
     stage,
     h('div', { class: 'wv-speed' }, play, seek, speed, speedLabel),
   );
@@ -228,6 +241,12 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     index,
     layout,
     debug,
+    setAltLink(link) {
+      alt.hidden = !link;
+      alt.textContent = link?.label ?? '';
+      if (link) alt.setAttribute('href', link.href);
+      else alt.removeAttribute('href');
+    },
     dispose() {
       offInteraction();
       player.dispose();

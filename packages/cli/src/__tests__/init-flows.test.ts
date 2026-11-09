@@ -74,7 +74,10 @@ describe('init-flows', () => {
     // サンプル値（screenshots.routes）でパスを具体化する
     expect(res.flows[0]!.steps[0]!.text).toBe('/races/42 をリクエスト');
     expect(readFileSync(out, 'utf8')).toMatch(/^# データフロー定義/);
-  });
+    // Phase 8-1 で時間の上限を既定の 5 秒から 60 秒にした: 本物の抽出器でフィクスチャを解析する（build の
+    // フィクスチャのテストと同じ）。同じパッケージに upgrade-wiring.test.ts（2 つのフィクスチャを解析する）が増え、
+    // 並列に走ると 5 秒を超えることがあった
+  }, 60_000);
 
   it('既存のファイルは --force が無ければ上書きしない', async () => {
     const root = tmpRepo();

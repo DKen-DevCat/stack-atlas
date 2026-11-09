@@ -3,6 +3,7 @@
  * - `version: 2` の graph は validateGraphV2 で検証し、3D の Viewer ではなく配線図（wiring/）で開く（SVG なので WebGL は要らない）
  * - `?prev=<URL>`（または「開く ▾ → 前回と比較…」）で前回の graph.json を読み、差分を色分けする
  * - graph.json と同じディレクトリの memos.json（と serve の GET /api/memos）を共有メモとして読む
+ * - build の出力（docs/16 §10）の graph.json（v2）と graph.v1.json（v1）は、隣にあれば左上のリンクで行き来する
  */
 import './style.css';
 import type { Graph, ValidationIssue } from '@stack-atlas/schema';
@@ -13,8 +14,10 @@ import {
   prevUrlFromSearch,
   loadGraphFromFile,
   loadGraphFromUrl,
+  isBoxLevelWarning,
   type LoadResult,
 } from './graph/load';
+import { alternateGraph, graphExists } from './graph/alternate';
 import { hasWebGL } from './scene/renderer';
 import { startPlan, viewFor } from './startup';
 import { mountWiring, type WiringApp, type WiringDebug } from './wiring/app';
@@ -117,9 +120,17 @@ function prevFrom(r: LoadResult): PrevGraph {
   };
 }
 
+/** 画面を出し直した回数（隣の graph の確かめが終わる前に別の graph を開いたら、リンクを出さない） */
+let shownSeq = 0;
+
 function showResult(res: LoadResult, shared: SharedMemoSource, prev: PrevGraph = {}) {
+  shownSeq++;
   overlays.replaceChildren();
-  const allIssues = prev.issue ? [...res.issues, prev.issue] : res.issues;
+  // 配線図は、箱の単位の v2 で必ず出る警告（口の単位・置き場の項目の wireType unknown）を一覧に出さない
+  const issues0 = res.v2
+    ? res.issues.filter((i) => !isBoxLevelWarning(i, res.graphV2))
+    : res.issues;
+  const allIssues = prev.issue ? [...issues0, prev.issue] : issues0;
   const issues = createIssuesBox(allIssues, res.versionWarning, !!(res.graph ?? res.graphV2));
   if (issues) overlays.append(issues);
   const view = viewFor(res, hasWebGL());
@@ -155,6 +166,7 @@ function showResult(res: LoadResult, shared: SharedMemoSource, prev: PrevGraph =
     onOpenPrev: openPrevFile,
   });
   debug.viewer = viewer;
+  void showAltLink(res, 1, (link) => viewer?.setAltLink(link));
   document.title = res.graph.project?.name
     ? `${res.graph.project.name} — Stack Atlas`
     : 'Stack Atlas';
@@ -179,12 +191,36 @@ function showWiring(res: LoadResult) {
     return;
   }
   debug.wiring = wiring.debug;
+  void showAltLink(res, 2, (link) => wiring?.setAltLink(link));
   document.title = res.graphV2.project?.name
     ? `${res.graphV2.project.name} — 配線図 — Stack Atlas`
     : '配線図 — Stack Atlas';
   const { nodes, wires } = res.graphV2;
   console.info(`[stack-atlas] ${res.source}: 箱 ${nodes.length}、線 ${wires.length}（配線図）`);
   setStatus('ready');
+}
+
+/**
+ * build の graph.json（v2）と graph.v1.json（v1）の隣があれば（HEAD で確かめる）、題名の横にリンクを出す。
+ * URL から読んだときだけ（ファイルのドロップは隣が無い）。確かめている間に別の graph を開いたら何もしない
+ */
+async function showAltLink(
+  res: LoadResult,
+  version: 1 | 2,
+  set: (link: { href: string; label: string } | null) => void,
+) {
+  if (!res.baseUrl) return;
+  const alt = alternateGraph(res.source, location.href, version);
+  if (!alt) return;
+  const seq = shownSeq;
+  try {
+    const head = await fetch(alt.url, { method: 'HEAD', cache: 'no-store' });
+    if (!graphExists(head)) return;
+  } catch {
+    return;
+  }
+  if (seq !== shownSeq) return;
+  set({ href: alt.href, label: alt.label });
 }
 
 function showNoWebGL() {

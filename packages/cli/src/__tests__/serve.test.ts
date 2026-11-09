@@ -65,6 +65,7 @@ describe('createAtlasServer', () => {
     mkdirSync(viewer);
     mkdirSync(repo);
     writeFileSync(join(out, 'graph.json'), '{"version":1}');
+    writeFileSync(join(out, 'graph.v1.json'), '{"version":1,"v1":true}');
     writeFileSync(join(base, 'secret.txt'), 'secret');
     writeFileSync(join(viewer, 'index.html'), '<p>viewer</p>');
     if (opts.withIndex) writeFileSync(join(out, 'index.html'), '<p>bundled</p>');
@@ -92,6 +93,16 @@ describe('createAtlasServer', () => {
     expect(await g.text()).toBe('{"version":1}');
     expect((await fetch(`${url}/missing.js`)).status).toBe(404);
     expect((await fetch(`${url}/..%2fsecret.txt`)).status).not.toBe(200);
+  });
+
+  it('build の graph.v1.json（3D の地図）も配信し、HEAD に答える（ビューアは HEAD で有無を見る）', async () => {
+    const { url } = await start();
+    const g = await fetch(`${url}/graph.v1.json`);
+    expect(g.headers.get('content-type')).toMatch(/^application\/json/);
+    expect(await g.text()).toBe('{"version":1,"v1":true}');
+    const head = await fetch(`${url}/graph.v1.json`, { method: 'HEAD' });
+    expect(head.status).toBe(200);
+    expect((await fetch(`${url}/nope.v1.json`, { method: 'HEAD' })).status).toBe(404);
   });
 
   it('outDir に index.html があればそちらを使う', async () => {

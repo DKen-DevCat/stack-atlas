@@ -13,10 +13,11 @@ export function loadSample(): {
 }
 
 /**
- * 共有メモは「あれば読む」ので 404 は正常（memos.json が無い、serve ではない）。
- * ブラウザが console に出す「Failed to load resource」はこの 2 つに限って無視する
+ * 共有メモは「あれば読む」ので 404 は正常（memos.json が無い、serve ではない）。build の graph.json（v2）の隣の
+ * graph.v1.json（3D の地図）も「あればリンクを出す」ので 404 は正常。
+ * ブラウザが console に出す「Failed to load resource」はこの 3 つに限って無視する
  */
-const OPTIONAL_RESOURCES = /\/(memos\.json|api\/memos)(\?|$)/;
+const OPTIONAL_RESOURCES = /\/(memos\.json|api\/memos|graph\.v1\.json)(\?|$)/;
 
 /** ページのエラー（例外・console.error）を集める */
 export function collectErrors(page: Page): string[] {

@@ -57,7 +57,7 @@ pnpm dev                    # → http://localhost:5173/?graph=samples/race-site
 
 | コマンド | 内容 |
 |---|---|
-| `build <repo> [-o <outDir>] [--with-viewer] [--no-screenshots] [-v]` | 解析して `graph.json` / `issues.json` / `memos.json`（と `shots/`、ビューア）を `outDir` に出す。検証エラーがあれば終了コード 1 |
+| `build <repo> [-o <outDir>] [--with-viewer] [--no-screenshots] [--v1] [-v]` | 解析して `graph.json`（v2。配線図）/ `graph.v1.json`（v1。3D の地図）/ `issues.json` / `memos.json`（と `shots/`、ビューア）を `outDir` に出す。`--v1` は従来の v1 の graph.json だけ。検証エラーがあれば終了コード 1 |
 | `validate <graph.json...>` | スキーマと参照整合性の検証（`pnpm validate <file>` でも可） |
 | `serve <outDir> [--port 4173] [--host 127.0.0.1] [--repo <repo>] [--allowed-host <name>]...` | `outDir` を配信。`--repo` を付けるとビューアのメモ保存が `<repo>/.stack-atlas/memos.json` に書き戻される。Host ヘッダがループバック・`--host`・`--allowed-host` 以外なら 403 |
 | `diff <prev.json> <next.json>` | 2 つの graph.json の追加・削除・変更を表示 |

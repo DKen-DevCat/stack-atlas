@@ -35,6 +35,8 @@ export interface Topbar {
   /** 孤立メモの件数（0 なら隠す） */
   setOrphanCount(n: number): void;
   setLabelMode(mode: LabelMode): void;
+  /** 題名の横に、隣の graph（build の graph.json = 配線図）を開く小さなリンクを出す。null で消す */
+  setAltLink(link: { href: string; label: string } | null): void;
 }
 
 function segment(
@@ -62,7 +64,15 @@ function segment(
 }
 
 export function createTopbar(o: TopbarOptions): Topbar {
-  const title = h('h1', {}, 'Stack Atlas', o.projectName ? h('small', {}, o.projectName) : null);
+  const alt = h('a', { class: 'alt', attrs: { 'data-alt': '' } });
+  alt.hidden = true;
+  const title = h(
+    'h1',
+    {},
+    'Stack Atlas',
+    alt,
+    o.projectName ? h('small', {}, o.projectName) : null,
+  );
   const explode = segment(
     [
       { label: 'レイヤー展開', value: '1' },
@@ -217,5 +227,11 @@ export function createTopbar(o: TopbarOptions): Topbar {
       orphanBtn.textContent = `孤立メモ (${n})`;
     },
     setLabelMode: (m) => labels.set(m),
+    setAltLink(link) {
+      alt.hidden = !link;
+      alt.textContent = link?.label ?? '';
+      if (link) alt.setAttribute('href', link.href);
+      else alt.removeAttribute('href');
+    },
   };
 }

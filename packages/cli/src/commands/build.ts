@@ -1,10 +1,11 @@
 /**
- * `stack-atlas build <repo> [-o <outDir>] [--with-viewer] [--no-screenshots]`
+ * `stack-atlas build <repo> [-o <outDir>] [--with-viewer] [--no-screenshots] [--v1]`
  *
  * <repo> は stack-atlas.config.yaml のあるディレクトリ。config に `repos` があれば、そこに並べた repo をまとめて解析する
  * （docs/12 §3.2）。overrides / flows / memos は <repo> から読む。
  *
- * out/ に graph.json・issues.json・memos.json（.stack-atlas/memos.json があれば）を書く。
+ * out/ に graph.json（v2。配線図）・graph.v1.json（v1。3D の地図）・issues.json・memos.json（.stack-atlas/memos.json
+ * があれば）を書く（docs/16 §10）。--v1 なら従来どおり graph.json に v1 だけを書く（graph.v1.json は消す）。
  * --with-viewer ならビューアの dist/ も同梱し、out/ をそのまま静的ホスティングできる形にする。
  */
 import {
@@ -34,6 +35,8 @@ export interface BuildOptions {
   /** 抽出器の差し替え（テスト用）。省略時は抽出器パッケージを動的 import */
   extractors?: Extractor[];
   viewerDist?: string;
+  /** graph.json に v1 だけを書く（Phase 8-1 より前の出力。graph.v1.json は書かない） */
+  v1Only?: boolean;
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -42,13 +45,14 @@ const STATUS_LABEL: Record<string, string> = {
   failed: '失敗',
 };
 
-/** build の結果を日本語の要約にする */
+/** build の結果を日本語の要約にする。v1Only なら graph.json は v1 */
 export function formatBuildSummary(
   res: BuildGraphResult,
   outDir: string,
   orphans: string[] = [],
+  v1Only = false,
 ): string {
-  const { graph, reports, issues } = res;
+  const { graph, graphV2, reports, issues } = res;
   const lines = ['', '── Stack Atlas build ──'];
   lines.push('抽出器:');
   if (!reports.length) lines.push('  （なし）');
@@ -77,6 +81,13 @@ export function formatBuildSummary(
   lines.push(
     `結果: ノード ${graph.nodes.length}、エッジ ${graph.edges.length}、フロー ${graph.flows?.length ?? 0}、層 ${graph.layers.length}`,
   );
+  if (!v1Only) {
+    const frames = new Set(graphV2.nodes.map((n) => n.host).filter((h): h is string => !!h));
+    lines.push(
+      `v2: 箱 ${graphV2.nodes.length}（うち枠 ${frames.size}）、線 ${graphV2.wires.length}、型 ${graphV2.types?.length ?? 0}、view ${graphV2.views?.length ?? 0}` +
+        `（v2 の警告 ${res.v2Warnings.length} 件。箱の単位の変換なので口の単位の線が残る。stack-atlas validate で一覧）`,
+    );
+  }
   const errors = issues.filter((i) => i.level === 'error');
   const warnings = issues.filter((i) => i.level === 'warning');
   lines.push(`問題: エラー ${errors.length} 件、警告 ${warnings.length} 件`);
@@ -84,7 +95,11 @@ export function formatBuildSummary(
     lines.push(`  [${i.level === 'error' ? 'エラー' : '警告'}] ${i.path}: ${i.message}`);
   }
   if (orphans.length) lines.push(`孤立メモ（graph に無いノード ID）: ${orphans.join(', ')}`);
-  lines.push(`出力: ${join(outDir, 'graph.json')}`);
+  if (v1Only) lines.push(`出力: ${join(outDir, 'graph.json')}（v1）`);
+  else {
+    lines.push(`出力: ${join(outDir, 'graph.json')}（v2。配線図）`);
+    lines.push(`      ${join(outDir, 'graph.v1.json')}（v1。3D の地図）`);
+  }
   return lines.join('\n');
 }
 
@@ -133,8 +148,16 @@ export async function runBuild(opts: BuildOptions): Promise<number> {
 
   mkdirSync(outDir, { recursive: true });
   if (opts.withViewer) cpSync(viewerDist, outDir, { recursive: true });
-  writeFileSync(join(outDir, 'graph.json'), `${JSON.stringify(res.graph, null, 2)}\n`);
-  writeFileSync(join(outDir, 'issues.json'), `${JSON.stringify(res.issues, null, 2)}\n`);
+  const json = (v: unknown) => `${JSON.stringify(v, null, 2)}\n`;
+  if (opts.v1Only) {
+    writeFileSync(join(outDir, 'graph.json'), json(res.graph));
+    // 前回の build の graph.v1.json が残ると、ビューアの「配線図」の行き来が古い組み合わせを指す
+    rmSync(join(outDir, 'graph.v1.json'), { force: true });
+  } else {
+    writeFileSync(join(outDir, 'graph.json'), json(res.graphV2));
+    writeFileSync(join(outDir, 'graph.v1.json'), json(res.graph));
+  }
+  writeFileSync(join(outDir, 'issues.json'), json(res.issues));
   let orphans: string[] = [];
   if (existsSync(memosFile(repo))) {
     const memos = loadMemos({ root: repo, log });
@@ -145,6 +168,6 @@ export async function runBuild(opts: BuildOptions): Promise<number> {
     rmSync(join(outDir, 'memos.json'), { force: true });
   }
 
-  console.log(formatBuildSummary(res, outDir, orphans));
+  console.log(formatBuildSummary(res, outDir, orphans, opts.v1Only));
   return res.issues.some((i) => i.level === 'error') ? 1 : 0;
 }

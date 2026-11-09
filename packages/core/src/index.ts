@@ -58,7 +58,17 @@ export {
   MEMOS_PATH,
   type Memos,
 } from './memos.js';
-export { diffGraphs, isEmptyDiff, type GraphDiff, type NodeChange } from './diff.js';
+export {
+  diffGraphs,
+  isEmptyDiff,
+  diffGraphsV2,
+  isEmptyDiffV2,
+  type GraphDiff,
+  type GraphDiffV2,
+  type NodeChange,
+  type WireRef,
+  type WireChange,
+} from './diff.js';
 export { gitCommit, gitRemote } from './git.js';
 export {
   deepMerge,
@@ -77,3 +87,17 @@ export {
   type ExtractorStatus,
   type RepoExtractorReport,
 } from './pipeline.js';
+export {
+  upgradeGraph,
+  infraProfileOf,
+  infraType,
+  V2_KIND_OF_V1,
+  RUNTIME_OF_V1,
+  UNKNOWN_KIND_BY_LAYER,
+  INFRA_PROFILES,
+  CACHE_PORTS,
+  CACHE_LINKS,
+  CACHE_VARIANTS,
+  type UpgradeOptions,
+  type InfraProfile,
+} from './upgrade.js';

@@ -13,6 +13,12 @@ pnpm atlas build <repo> -o out --with-viewer --no-screenshots -v   # 2. 解析�
 pnpm atlas serve out                                           # 3. http://127.0.0.1:4173/ を開く
 ```
 
+`out/graph.json` は **v2**（箱・口・項目・線。`docs/16`）で、ビューアは配線図で開く。3D の地図は同じディレクトリの
+**`out/graph.v1.json`**（v1）で、配線図の左上の「3D の地図」から開ける（地図の左上の「配線図」で戻る）。
+v2 は抽出器が出す v1 を `upgradeGraph` で変換した**箱の単位**のもの（項目まで下げるのは Phase 8-2 の言語アダプタ）なので、
+`stack-atlas validate out/graph.json` には「口の単位」の警告が全部の箱と線に出る（エラーでなければよい）。
+Phase 8-1 より前の出力（graph.json = v1）が要るときは `build --v1`。
+
 そのあとの作業は、必ずこの順番になる。
 
 1. `-v` の出力と `推定` の警告を読み、当たっていれば `stack-atlas.config.yaml` の `deploy` / `sql.db` / `api.targets` に**書いて固定**する（推定は補助。D18）
@@ -53,7 +59,9 @@ repos（web / platform …） ─ 抽出器を repo ごとに回す（順番は 
    ├ 結線:      api-link（client ⇔ endpoint ⇔ Go ルート ⇔ API Gateway）
    └ 補正:      classify → deploy → overrides → 層 → flows.yaml
         ▼
-graph.json（4 層。file は複数 repo なら `<repo>/<path>`）
+graph.v1.json（v1。4 層。file は複数 repo なら `<repo>/<path>`。3D の地図）
+        ▼ upgradeGraph（docs/16 §10）
+graph.json（v2。箱の単位。runtime のレーンと host の枠。配線図）
 ```
 
 実リポジトリ 2 つ（Go ＋ Terraform HCL ＋ Next 静的エクスポート）で、設定ファイル 1 枚で 149 ノード / 330 エッジ / エラー 0 / 警告 0 になった（詳細は `HANDOFF.md` §0）。
@@ -242,11 +250,15 @@ fixture-poly では `miss`（13 ステップ）、`hit`（3）、`invalidate`（
 OpenAPI の `endpoint:` を経由するホップと、S3 に載った静的エクスポートも扱う。ステップが 2 つに満たないフローは出さない。
 文はプレースホルダ（「MISS → オリジン（S3）へ」など）なので、実際の挙動に合わせて書き換える。形式は `docs/09-design-phase2-5.md` §3.2。
 
+graph.json（v2）では flows は **views** に置き換わる（docs/15 §3.9）: 各フローの最初の箱（型の `type:` は飛ばす）が `views[].start`、
+`tone: cache-hit` は経路上の cache の `hit: true` になり、ステップの文は捨てる（文は 3D の地図、つまり graph.v1.json だけで使う）。
+
 ### 3.7 スクショ・メモ・CI
 
 - スクショ: 対象サイトを起動して `screenshots.baseUrl` を指す。動的ルートは `routes`、認証は `storageState`。部品の領域は対象アプリのルート要素に `data-component="Name"` を付ける（`docs/10-screenshots-guide.md`）。`--no-screenshots` を外すと撮る
 - メモ: `<設定のあるディレクトリ>/.stack-atlas/memos.json`（Git 管理）。`serve --repo <dir>` で書き戻す。共有・差分は `docs/11-sharing.md`
-- CI と配信: `docs/ci-example.yml`（`build --with-viewer` → 静的ホスティング。差分は `?prev=` と `stack-atlas diff`）
+- CI と配信: `docs/ci-example.yml`（`build --with-viewer` → 静的ホスティング。3D の地図の差分は `?graph=graph.v1.json&prev=prev/graph.v1.json`、
+  配線図（v2）の差分は `stack-atlas diff`。diff は v1 と v2 を混ぜても v1 の側を v2 に変換して比べる）
 
 ## 4. 詳細
 
@@ -347,4 +359,8 @@ CLI の順序（抽出器ごとに全 repo を宣言順に回す。後続は先�
 
 ### 4.6 ビューアの規模について
 
-150 ノード前後（実リポジトリ 2 つ）で、層内のレイアウトが密になり読みにくい。レイアウトの広がり・ラベルの間引き（LOD）・検索ボックスは**進行中**（`docs/06-roadmap.md` Phase 7）。
+配線図（v2）: 箱の単位の fixture-poly（48 箱・101 線）で `layoutWiring` は数 ms、重なり・箱を横切る線は無い。ただし
+図が縦に長い（3204 × 7538）。線の数で決める隙間ではなく、左のレーンの相手に揃える重心の配置が下へ連鎖して大きな空白が出るため
+（8-0 の近似のレイアウト。build 時に埋める ELK 相当のレイアウトで直す。docs/16 §10「実装結果」）。
+
+3D の地図: 150 ノード前後（実リポジトリ 2 つ）で、層内のレイアウトが密になり読みにくい。レイアウトの広がり・ラベルの間引き（LOD）・検索ボックスは**進行中**（`docs/06-roadmap.md` Phase 7）。

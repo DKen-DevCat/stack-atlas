@@ -317,6 +317,11 @@ export class Viewer {
     this.raf = requestAnimationFrame(this.loop);
   }
 
+  /** 題名の横の、隣の graph（build の graph.json = 配線図）へのリンク（main.ts が有無を確かめてから呼ぶ） */
+  setAltLink(link: { href: string; label: string } | null): void {
+    this.topbar.setAltLink(link);
+  }
+
   dispose(): void {
     this.disposed = true;
     cancelAnimationFrame(this.raf);

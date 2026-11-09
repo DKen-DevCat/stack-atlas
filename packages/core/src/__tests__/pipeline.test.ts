@@ -1,4 +1,4 @@
-import { validateGraph } from '@stack-atlas/schema';
+import { validateGraph, validateGraphV2 } from '@stack-atlas/schema';
 import { describe, expect, it } from 'vitest';
 import { createMemoryLogger } from '../logger.js';
 import { buildGraph } from '../pipeline.js';
@@ -210,6 +210,26 @@ describe('buildGraph（examples/fixture-repo の config / overrides / flows）',
     const rid = g.nodes.find((n) => n.id === 'route:/races/[id]')!;
     expect(rid.cache?.note).toBe('ISR(60s) と CDN(60s) が二段になるため最大 120 秒古くなる');
     expect(g.project?.sources).toEqual(['infra', 'apps', 'packages']);
+  });
+
+  it('v2（graphV2）も返す: v1 を upgradeGraph で変換し、v2 の検証エラーは issues、警告は v2Warnings', async () => {
+    const res = await buildGraph({ root: FIXTURE, extractors: [fixtureStub], now: NOW });
+    const v2 = res.graphV2;
+    expect(v2.version).toBe(2);
+    expect(v2.project).toEqual(res.graph.project);
+    expect(validateGraphV2(v2).errors).toEqual([]);
+    expect(res.issues.filter((i) => i.path.startsWith('v2:'))).toEqual([]);
+    // 箱の単位なので、口の単位の線の警告が出る（項目まで下げるのは 8-2 の言語アダプタ）
+    expect(res.v2Warnings.length).toBeGreaterThan(0);
+    // 箱 id は v1 のまま。type: は types[] へ
+    const v1Boxes = res.graph.nodes.filter((n) => n.kind !== 'type').map((n) => n.id);
+    expect(v2.nodes.map((n) => n.id)).toEqual(v1Boxes);
+    expect(v2.views?.map((v) => v.id)).toEqual(['miss', 'hit', 'entry']);
+    expect(v2.nodes.find((n) => n.id === 'infra:cdn')).toMatchObject({ kind: 'cache' });
+    expect(v2.nodes.find((n) => n.id === 'route:/races/[id]')).toMatchObject({
+      kind: 'screen',
+      host: 'infra:next',
+    });
   });
 
   it('flows.yaml が未知ノードを参照するとエラー', async () => {

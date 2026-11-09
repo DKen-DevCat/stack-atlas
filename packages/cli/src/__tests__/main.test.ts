@@ -23,6 +23,15 @@ describe('main', () => {
     log.mockRestore();
   });
 
+  it('USAGE は build の --v1 と graph.v1.json を案内する', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await main(['help'])).toBe(0);
+    const text = String(log.mock.calls[0]![0]);
+    log.mockRestore();
+    expect(text).toContain('[--v1]');
+    expect(text).toContain('graph.v1.json（v1。3D の地図）');
+  });
+
   it('未知のコマンド・未知のオプションは終了コード 2', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await main(['nope'])).toBe(2);

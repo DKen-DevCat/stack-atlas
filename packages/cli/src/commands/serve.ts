@@ -4,7 +4,8 @@
  * - Host ヘッダがループバック・`--host`・`--allowed-host` のどれでもなければ 403（DNS リバインディング対策）
  * - outDir を静的配信する。outDir に index.html が無ければ、ワークスペースのビューア（packages/viewer/dist）を
  *   後ろに重ねて配信する（graph.json などは outDir が優先）
- * - `/` は `/index.html?graph=./graph.json` へリダイレクト
+ * - `/` は `/index.html?graph=./graph.json` へリダイレクト（build の graph.json は v2 で配線図が開く。3D の地図は
+ *   同じディレクトリの graph.v1.json。ビューアの左上の「3D の地図」から開ける）
  * - `GET /api/memos`: メモを返す（--repo があれば <repo>/.stack-atlas/memos.json、無ければ outDir/memos.json）
  * - `POST /api/memos`: body（`Record<string,string>`、Content-Type: application/json）を
  *   <repo>/.stack-atlas/memos.json と outDir/memos.json に書く。--repo が無ければ 405

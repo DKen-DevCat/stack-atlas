@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import type { GraphV2 } from '@stack-atlas/schema';
 import {
   graphUrlFromSearch,
+  isBoxLevelWarning,
   prevUrlFromSearch,
   loadGraphFromFile,
   parseGraphText,
@@ -135,5 +137,71 @@ describe('loadGraphFromFile', () => {
     expect(r.source).toBe('mine.json');
     expect(r.baseUrl).toBeUndefined();
     expect(r.graph).toBeDefined();
+  });
+});
+
+describe('isBoxLevelWarning（箱の単位の v2 で必ず出る警告。配線図の一覧に出さない）', () => {
+  const graph: GraphV2 = {
+    version: 2,
+    nodes: [
+      {
+        id: 'lib:a',
+        kind: 'helper',
+        name: 'a',
+        runtime: 'browser',
+        ports: [
+          {
+            id: 'in',
+            dir: 'in',
+            items: [{ id: '_', name: '値', type: 'unknown', wireType: 'unknown' }],
+          },
+          {
+            id: 'out',
+            dir: 'out',
+            items: [
+              {
+                id: 'ret',
+                name: 'ret',
+                type: 'Promise<T>',
+                wireType: 'unknown',
+                children: [{ id: 'x', name: 'x', type: 'unknown', wireType: 'unknown' }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    wires: [],
+  };
+  const w = (path: string, message: string, level: 'warning' | 'error' = 'warning') => ({
+    level,
+    path,
+    message,
+  });
+
+  it('口の単位の線・箱の警告は箱の単位', () => {
+    expect(isBoxLevelWarning(w('/wires/0', '線 "a" → "b" は口の単位です'), graph)).toBe(true);
+    expect(
+      isBoxLevelWarning(
+        w('/nodes/0/ports', '箱 "lib:a" は口の単位の項目（"_"）を持っています'),
+        graph,
+      ),
+    ).toBe(true);
+  });
+
+  it('wireType unknown は、型の分からない置き場の項目（type も unknown）のときだけ', () => {
+    const msg = '項目 "…" の wireType が unknown です';
+    expect(isBoxLevelWarning(w('/nodes/0/ports/0/items(in/_)', msg), graph)).toBe(true);
+    expect(isBoxLevelWarning(w('/nodes/0/ports/1/items(out/ret.x)', msg), graph)).toBe(true);
+    // 型は分かっているが線の上の形が分からない項目は、読むべき警告として残す（手組みの v2 の fetcher の戻りなど）
+    expect(isBoxLevelWarning(w('/nodes/0/ports/1/items(out/ret)', msg), graph)).toBe(false);
+  });
+
+  it('エラー・ほかの警告・graph が無いときは残す', () => {
+    expect(isBoxLevelWarning(w('/wires/0', '口の単位', 'error'), graph)).toBe(false);
+    expect(isBoxLevelWarning(w('/nodes/0/links', '不透明な箱'), graph)).toBe(false);
+    expect(
+      isBoxLevelWarning(w('/nodes/0/ports/0/items(in/_)', 'wireType が unknown です'), undefined),
+    ).toBe(false);
   });
 });

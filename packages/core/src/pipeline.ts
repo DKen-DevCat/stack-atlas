@@ -1,5 +1,9 @@
 /**
- * buildGraph(): 抽出 → マージ → classify → config.deploy → overrides → 層 → flows → キャッシュのルール → 検証（docs/09 §3.2, docs/12）。
+ * buildGraph(): 抽出 → マージ → classify → config.deploy → overrides → 層 → flows → キャッシュのルール → 検証
+ * → v2 への変換と検証（docs/09 §3.2, docs/12, docs/16 §10）。
+ *
+ * 結果は v1（`graph`。3D の地図と既存の呼び出し元）と v2（`graphV2`。配線図。`stack-atlas build` の graph.json）の両方。
+ * 抽出器は v1 の部分グラフを出し続け、v2 は v1 を upgradeGraph で変換して作る（D38）。
  *
  * 複数リポジトリ（config.repos、docs/12 §3.2）: 抽出器ごとに、repo を宣言順に回す
  * （`for extractor { for repo { detect; extract } }`）。そのため後続の抽出器（api-link など）は、
@@ -8,8 +12,10 @@
  */
 import {
   validateGraph,
+  validateGraphV2,
   type Graph,
   type GraphNode,
+  type GraphV2,
   type Project,
   type ValidationIssue,
 } from '@stack-atlas/schema';
@@ -29,6 +35,7 @@ import { applyOverrides, loadOverrides } from './overrides.js';
 import { prefixRepoFiles, resolveRepos } from './repo.js';
 import { DEFAULT_RULES, runRules, type Rule } from './rules/index.js';
 import type { Extractor, Logger, PartialGraph, StackAtlasConfig } from './types.js';
+import { upgradeGraph } from './upgrade.js';
 import { clone, isPlainObject } from './util.js';
 
 export interface BuildGraphOptions {
@@ -66,9 +73,20 @@ export interface ExtractorReport extends RepoExtractorReport {
 }
 
 export interface BuildGraphResult {
+  /** graph.json v1（3D の地図。build は graph.v1.json に書く） */
   graph: Graph;
-  /** パイプライン（overrides・flows・層）と validateGraph の問題。level: error が 1 つでもあれば失敗扱い */
+  /** graph.json v2（箱の単位。docs/16 §10。build は graph.json に書く） */
+  graphV2: GraphV2;
+  /**
+   * パイプライン（overrides・flows・層）と validateGraph の問題、v2 への変換と validateGraphV2 のエラー
+   * （path は `v2:` で始まる）。level: error が 1 つでもあれば失敗扱い
+   */
   issues: ValidationIssue[];
+  /**
+   * validateGraphV2 の警告（口の単位の線・wireType unknown など）。箱の単位の変換では全部の箱と線に出るので issues に入れない。
+   * 項目まで下げる言語アダプタ（8-2）で減っていく
+   */
+  v2Warnings: ValidationIssue[];
   /** 抽出器名 → その抽出器の出力（全 repo 分をマージしたもの。複数 repo なら file は修飾済み） */
   partials: Record<string, PartialGraph>;
   /** 抽出器ごとの実行結果（抽出器の順） */
@@ -223,7 +241,23 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
   const v = validateGraph(graph);
   issues.push(...v.errors);
 
-  return { graph, issues, partials, reports, config, repos };
+  // 8. v2 への変換と検証（docs/16 §10）
+  const v2path = (i: ValidationIssue): ValidationIssue => ({ ...i, path: `v2:${i.path}` });
+  const graphV2 = upgradeGraph(graph, { onIssue: (i) => issues.push(v2path(i)) });
+  const v2 = validateGraphV2(graphV2);
+  issues.push(...v2.errors.map(v2path));
+  for (const e of v2.errors) log.error(`graph.json（v2）: ${e.path}: ${e.message}`);
+
+  return {
+    graph,
+    graphV2,
+    issues,
+    v2Warnings: v2.warnings,
+    partials,
+    reports,
+    config,
+    repos,
+  };
 }
 
 /** undefined のフィールドを落とし、フィールド順を graph.json の慣例に揃える */
