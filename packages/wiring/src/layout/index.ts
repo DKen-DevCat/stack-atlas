@@ -4,7 +4,7 @@
 // → 縦の位置（PAVA）→ 列と通り道の幅 → 直交配線。ELK は使わない（D60）
 import { brokenEnds } from '../broken.js';
 import type { GraphIndex, IndexedItem, IndexedWire } from '../graph-index.js';
-import { splitColumns, assignColumns, type ColInput } from './columns.js';
+import { splitColumns, type ColInput } from './columns.js';
 import { routeBetween, toRoute } from './geometry.js';
 import { assignLayers } from './layers.js';
 import {
@@ -70,15 +70,10 @@ interface Routed {
 }
 
 /**
- * 配線図のレイアウト。箱は常に全部の項目を開く（子は親の直後）。分岐の状態・選択には依らない。
- * 1. レーン = runtime（箱のあるレーンだけ）。host に指された箱は箱ではなく枠（中の箱の塊は 1 つのレーン）
- * 2. 層: 同じレーンの単位（箱か host の塊）どうしの、呼び出しの向きの線の最長経路
- * 3. 列: 1 レーン = 1 列から、いちばん高い列を層の境目で割って 16:10 に近づける
- * 4. 2 つ以上の列をまたぐ線・戻る線には、間の列ごとに高さ 0 の通過点（同じ 2 箱の間の線の通過点は束にする）
- * 5. 列の中の順は重心（8 往復）、縦の位置は PAVA（左右の平均）。項目は相手の並びに合わせて並べ替える。3 回
- * 6. 列の幅はいちばん広い箱、通り道の幅は縦の区間のトラックの数 × 間隔 ＋ 余白。経路は通過点の y を順に通る
+ * 配置の前半: 層・列・通過点・列の中の順と縦の位置（layoutWiring の手順 1〜5）。テストで並べ方の悪さを確かめるために
+ * 分けてある（パッケージの index からは出さない）
  */
-export function layoutWiring(index: GraphIndex, options: LayoutOptions = {}): WiringLayout {
+export function arrange(index: GraphIndex, options: LayoutOptions = {}) {
   const cfg: Cfg = {
     boxW: options.boxWidth ?? 300,
     rowH: options.rowHeight ?? 18,
@@ -98,33 +93,44 @@ export function layoutWiring(index: GraphIndex, options: LayoutOptions = {}): Wi
   ];
 
   // --- 層 ---
+  // 線は 1 回だけ見て、レーンごと・host ごとに分ける（レーン・host ごとに全部の線を見ると (L + H) × W になる）
+  interface Layered<T> {
+    edges: [T, T][];
+    weak: [T, T][];
+  }
+  const laneWires = Array.from({ length: m.used.length }, (): Layered<Unit> => ({
+    edges: [],
+    weak: [],
+  }));
+  const hostWires = new Map<string, Layered<LBox>>();
+  for (const w of m.wires) {
+    const fb = boxOf.get(w.fromNode.id)!;
+    const tb = boxOf.get(w.toNode.id)!;
+    const fwd = isForward(w);
+    if (fb.lane === tb.lane && fb.unit !== tb.unit) {
+      const l = laneWires[fb.lane]!;
+      if (fwd) l.edges.push([fb.unit, tb.unit]);
+      else l.weak.push(w.reply ? [tb.unit, fb.unit] : [fb.unit, tb.unit]);
+    }
+    if (fb.host && fb.host === tb.host && fb !== tb) {
+      let h = hostWires.get(fb.host);
+      if (!h) hostWires.set(fb.host, (h = { edges: [], weak: [] }));
+      if (fwd) h.edges.push([fb, tb]);
+      else h.weak.push(w.reply ? [tb, fb] : [fb, tb]);
+    }
+  }
+  const laneUnits = Array.from({ length: m.used.length }, (): Unit[] => []);
+  for (const u of m.units) laneUnits[u.lane]!.push(u);
   const unitLayer = new Map<string, number>();
   for (let lane = 0; lane < m.used.length; lane++) {
-    const units = m.units.filter((u) => u.lane === lane);
-    const edges: [Unit, Unit][] = [];
-    const weak: [Unit, Unit][] = [];
-    for (const w of m.wires) {
-      const fb = boxOf.get(w.fromNode.id)!;
-      const tb = boxOf.get(w.toNode.id)!;
-      if (fb.lane !== lane || tb.lane !== lane || fb.unit === tb.unit) continue;
-      if (isForward(w)) edges.push([fb.unit, tb.unit]);
-      else weak.push(w.reply ? [tb.unit, fb.unit] : [fb.unit, tb.unit]);
-    }
-    for (const [u, l] of assignLayers(units, edges, weak, (u) => u.decl)) unitLayer.set(u.id, l);
+    const { edges, weak } = laneWires[lane]!;
+    for (const [u, l] of assignLayers(laneUnits[lane]!, edges, weak, (u) => u.decl))
+      unitLayer.set(u.id, l);
   }
   for (const u of m.units) u.layer = unitLayer.get(u.id)!;
   const hostDepth = new Map<string, number>();
   for (const [host, members] of m.hostMembers) {
-    const inside = new Set(members);
-    const edges: [LBox, LBox][] = [];
-    const weak: [LBox, LBox][] = [];
-    for (const w of m.wires) {
-      const fb = boxOf.get(w.fromNode.id)!;
-      const tb = boxOf.get(w.toNode.id)!;
-      if (!inside.has(fb) || !inside.has(tb) || fb === tb) continue;
-      if (isForward(w)) edges.push([fb, tb]);
-      else weak.push(w.reply ? [tb, fb] : [fb, tb]);
-    }
+    const { edges, weak } = hostWires.get(host) ?? { edges: [], weak: [] };
     let depth = 1;
     for (const [b, l] of assignLayers(members, edges, weak, (b) => b.decl)) {
       b.ilayer = l;
@@ -163,8 +169,10 @@ export function layoutWiring(index: GraphIndex, options: LayoutOptions = {}): Wi
       pair: bundleId[i]!,
     })),
   };
-  const specs = boxes.length ? splitColumns(inp) : [];
-  for (const [b, c] of assignColumns(specs, inp)) b.col = c;
+  const { specs, colOf } = boxes.length
+    ? splitColumns(inp)
+    : { specs: [], colOf: new Map<LBox, number>() };
+  for (const [b, c] of colOf) b.col = c;
   const C = specs.length;
 
   // --- 通過点 ---
@@ -177,6 +185,7 @@ export function layoutWiring(index: GraphIndex, options: LayoutOptions = {}): Wi
     const c: Chain = {
       key: r.key,
       seq,
+      cut: seq >= m.wires.length,
       wire: r.wire,
       from: r.from,
       to: r.to,
@@ -210,6 +219,7 @@ export function layoutWiring(index: GraphIndex, options: LayoutOptions = {}): Wi
           rank: 0,
           ty: 0,
           stamp: -1,
+          sy: 0,
         };
         bundles.set(key, b);
       }
@@ -238,7 +248,6 @@ export function layoutWiring(index: GraphIndex, options: LayoutOptions = {}): Wi
     }
   }
   // 通過点の初めの y は、線の両端のピンの y を列の数で割った位置
-  const yNow = (e: Elem) => e.y;
   const pinY = (b: LBox, ref: string) => b.y + (b.off.get(ref) ?? b.h / 2);
   for (const b of bundles.values()) {
     let sum = 0;
@@ -330,14 +339,32 @@ export function layoutWiring(index: GraphIndex, options: LayoutOptions = {}): Wi
       } else if (++stale >= STALE) break; // 良くならない往復が続いたら打ち切る（収束）
     }
     placer.restore(best);
+    // 往復で届かない並び（同じ列の中の線が近づく入れ替え・束の上下）を、塊を割らずに探す（最後の回だけ。速さのため）
+    if (round === ROUNDS - 1) placer.refine();
     for (const b of bundles.values()) placer.sortSlots(b);
     reorderItems();
     placer.position();
     for (const b of bundles.values()) placer.sortSlots(b);
   }
+  return { cfg, m, ends, specs, chains, cols, placer };
+}
+
+/**
+ * 配線図のレイアウト。箱は常に全部の項目を開く（子は親の直後）。分岐の状態・選択には依らない。
+ * 1. レーン = runtime（箱のあるレーンだけ）。host に指された箱は箱ではなく枠（中の箱の塊は 1 つのレーン）
+ * 2. 層: 同じレーンの単位（箱か host の塊）どうしの、呼び出しの向きの線の最長経路
+ * 3. 列: 1 レーン = 1 列から、いちばん高い列を層の境目で割って 16:10 に近づける
+ * 4. 2 つ以上の列をまたぐ線・戻る線には、間の列ごとに高さ 0 の通過点（同じ 2 箱の間の線の通過点は束にする）
+ * 5. 列の中の順は重心（8 往復。初めの順も host・group の塊を割らない）と、最後の回の入れ替え（悪さが減るものを残す）。
+ *    縦の位置は PAVA（左右の平均）。項目は相手の並びに合わせて並べ替える。3 回
+ * 6. 列の幅はいちばん広い箱、通り道の幅は縦の区間のトラックの数 × 間隔 ＋ 余白。経路は通過点の y を順に通る
+ */
+export function layoutWiring(index: GraphIndex, options: LayoutOptions = {}): WiringLayout {
+  const { cfg, m, ends, specs, chains, cols, placer } = arrange(index, options);
+  const { boxes, boxOf } = m;
 
   // --- 列と通り道の x、経路 ---
-  const cx = placeX(cols, chains, cfg, (c, i) => placer.yOf(pointOf(c, i), yNow));
+  const cx = placeX(cols, chains, cfg, (c, i) => placer.yOf(pointOf(c, i)));
   for (const b of boxes) b.x = cx.colX[b.col]!;
 
   const pins = new Map<string, Pin>();
@@ -409,15 +436,26 @@ export function layoutWiring(index: GraphIndex, options: LayoutOptions = {}): Wi
   const hosts = new Map<string, HostLayout>();
   for (const id of m.hostIds) {
     const g = m.hostMembers.get(id)!;
-    const x = Math.min(...g.map((b) => b.x)) - HOST_PAD;
-    const y = Math.min(...g.map((b) => b.y)) - HOST_HEAD;
+    // 引数の展開は使わない（中の箱が 10 万を超えると RangeError）
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const b of g) {
+      x0 = Math.min(x0, b.x);
+      y0 = Math.min(y0, b.y);
+      x1 = Math.max(x1, b.x + b.w);
+      y1 = Math.max(y1, b.y + b.h);
+    }
+    const x = x0 - HOST_PAD;
+    const y = y0 - HOST_HEAD;
     hosts.set(id, {
       id,
       members: g.map((b) => b.id),
       x,
       y,
-      w: Math.max(...g.map((b) => b.x + b.w)) - x + HOST_PAD,
-      h: Math.max(...g.map((b) => b.y + b.h)) - y + HOST_PAD,
+      w: x1 - x + HOST_PAD,
+      h: y1 - y + HOST_PAD,
     });
   }
 

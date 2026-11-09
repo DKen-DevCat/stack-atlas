@@ -86,6 +86,10 @@ export interface LBox {
   /** 縦の位置の作業用（pass が stamp の回の解） */
   ty: number;
   stamp: number;
+  /** 並べ方の悪さを測る作業用（列を上から詰めて積んだ y。Placer.score） */
+  sy: number;
+  /** 入れ替え（Placer.refine）の作業用: 列の中の箱の番号 */
+  ri: number;
 }
 
 /** 要素の点（箱のピンか束の段）と、その線で隣り合う点（列は決まっているので先に作っておく） */
@@ -114,7 +118,7 @@ export interface Bundle {
   seq: number;
   col: number;
   slots: Slot[];
-  /** (段の数 - 1) × pitch */
+  /** (段の数 - 1) × pitch。束の高さはここだけで決める（段は作った後に増えない） */
   h: number;
   y: number;
   /** 隣の列の相手（Placer が作る） */
@@ -129,6 +133,8 @@ export interface Bundle {
   /** 縦の位置の作業用（pass が stamp の回の解） */
   ty: number;
   stamp: number;
+  /** 並べ方の悪さを測る作業用（Placer.score） */
+  sy: number;
 }
 
 export interface Slot {
@@ -144,6 +150,8 @@ export interface Slot {
 export interface Chain {
   key: string;
   seq: number;
+  /** 切れている線（受ける側の箱の BROKEN_CUT 手前で切る。最後の通り道の右に切る所を空ける） */
+  cut: boolean;
   wire: IndexedWire;
   from: IndexedItem;
   to: IndexedItem;
@@ -314,6 +322,8 @@ export function buildModel(index: GraphIndex, cfg: Cfg): Model {
       below: [],
       ty: 0,
       stamp: -1,
+      sy: 0,
+      ri: -1,
     };
     b.ukey = b.host ? `h:${b.host}` : `g:${b.group}`;
     measure(b, cfg.rowH);

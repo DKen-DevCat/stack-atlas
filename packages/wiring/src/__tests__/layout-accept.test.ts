@@ -1,9 +1,13 @@
 // 配線図のレイアウトの受け入れ条件（docs/18 §4 のレイアウトの行。Phase 8-3a）。
 // 基準の graph は 8-2a の fixture-poly の出力を固定したもの（fixtures/poly-82a.v2.json。8-2b が fixture-poly を変えても動かない）。
-// 測った値（2026-11-09。8-0 の近似 → 8-3a）:
+// 測った値（2026-11-09。8-0 の近似 → 8-3a → 8-3a のレビューの修正の後）:
 //   基準の graph（箱 46・枠 4・線 109）: 3348×6486（縦横比 0.516、交差 1531）→ 4488×2365（1.898、交差 470）
+//                                        → 4656×2366（1.968、交差 425）
 //   /today の例（箱 18・枠 2・線 32）:   2252×2543（0.886、交差 67）  → 2636×1534（1.718、交差 45）
-// 交差の上限は実装時の値 ×1.1（切り上げ）。数え方は metrics.ts の countCrossings
+//                                        → 2676×1516（1.765、交差 50）
+// 交差の上限は実装時の値 ×1.1（切り上げ）。数え方は metrics.ts の countCrossings。
+// /today の 45 は group を割った並び（lib:fetcher が feature/spend の間、host の中の api と store が交互）だった。
+// 塊を割らない今は 50 で、上限 50 は 8-3a の時のまま（基準の graph は 425 × 1.1 = 468 に締めた）
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -24,7 +28,7 @@ const ASPECT_MIN = 1 / 1.6;
 const ASPECT_MAX = 2.2;
 
 describe.each([
-  ['基準の graph（poly-82a）', baseline, 517],
+  ['基準の graph（poly-82a）', baseline, 468],
   ['/today の例', today, 50],
 ])('受け入れ条件: %s', (_name, make, maxCrossings) => {
   const index = indexGraph(make());

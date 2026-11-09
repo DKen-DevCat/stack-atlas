@@ -1,5 +1,6 @@
 // 層（呼び出しの深さ。docs/18 §3.1 の 3）: 閉路は DFS の後退辺を外して切り、最長経路で層を付ける。
-// 入ってくる線の無い箱は後続の層の最小値のすぐ左。どちらの線も無い箱は、層を決めない線（戻り・参照）の相手の隣、無ければ 0
+// 入ってくる線の無い箱は後続の層の最小値のすぐ左。どちらの線も無い箱は、層を決めない線（戻り・参照）の相手の隣、無ければ 0。
+// 同じ 2 箱の間の線はどちらも 1 本に数える。最大・最小は引数の展開を使わない（10 万を超えると RangeError）
 
 /**
  * nodes に層を付ける。edges は層を決める線（u → v で u が左）、weak はどちらの線も無い箱の置き場だけに使う線。
@@ -63,27 +64,35 @@ export function assignLayers<T>(
     for (const u of preds.get(v)!) l = Math.max(l, (layer.get(u) ?? 0) + 1);
     layer.set(v, l);
   }
+  const extreme = (list: readonly T[], pick: (a: number, b: number) => number, from: number) => {
+    let x = from;
+    for (const u of list) x = pick(x, layer.get(u)!);
+    return x;
+  };
   // 入ってくる線の無い箱は、後続の層の最小値のすぐ左（列 0 に集めない）
   for (const v of order) {
     const out = dag.get(v)!;
     if (preds.get(v)!.length || !out.length) continue;
-    layer.set(v, Math.min(...out.map((w) => layer.get(w)!)) - 1);
+    layer.set(v, extreme(out, Math.min, Infinity) - 1);
   }
   // どちらの線も無い箱: 層を決めない線の相手の隣
   const weakIn = new Map<T, T[]>();
   const weakOut = new Map<T, T[]>();
+  const weakSeen = new Set<string>();
   for (const [u, v] of weak) {
     if (u === v || !succ.has(u) || !succ.has(v)) continue;
+    const k = `${key.get(u)}>${key.get(v)}`;
+    if (weakSeen.has(k)) continue;
+    weakSeen.add(k);
     (weakIn.get(v) ?? weakIn.set(v, []).get(v)!).push(u);
     (weakOut.get(u) ?? weakOut.set(u, []).get(u)!).push(v);
   }
   for (const v of order) {
     if (preds.get(v)!.length || dag.get(v)!.length) continue;
-    const callers = (weakIn.get(v) ?? []).filter((u) => u !== v);
-    const callees = (weakOut.get(v) ?? []).filter((u) => u !== v);
-    if (callers.length) layer.set(v, Math.max(...callers.map((u) => layer.get(u)!)) + 1);
-    else if (callees.length)
-      layer.set(v, Math.max(0, Math.min(...callees.map((u) => layer.get(u)!)) - 1));
+    const callers = weakIn.get(v);
+    const callees = weakOut.get(v);
+    if (callers) layer.set(v, extreme(callers, Math.max, -Infinity) + 1);
+    else if (callees) layer.set(v, Math.max(0, extreme(callees, Math.min, Infinity) - 1));
     else layer.set(v, 0);
   }
   // 空いた層を詰める

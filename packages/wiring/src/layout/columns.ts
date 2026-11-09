@@ -53,22 +53,41 @@ export function sortSpecs(specs: ColSpec[], inp: ColInput): ColSpec[] {
   });
 }
 
-/** 箱 → 列（specs の順の index） */
-export function assignColumns(specs: ColSpec[], inp: ColInput): Map<LBox, number> {
-  const exclusive = new Set(specs.filter((s) => s.kind === 'host').map((s) => s.host!));
-  const out = new Map<LBox, number>();
-  for (const b of inp.model.boxes) {
-    let ci: number;
-    if (b.host && exclusive.has(b.host)) {
-      ci = specs.findIndex(
-        (s) => s.kind === 'host' && s.host === b.host && s.lo <= b.ilayer && b.ilayer <= s.hi,
-      );
-    } else {
-      const l = inp.unitLayer.get(b.unit.id)!;
-      ci = specs.findIndex(
-        (s) => s.kind === 'shared' && s.lane === b.lane && s.lo <= l && l <= s.hi,
-      );
+/** 箱 → 列（specs の index） */
+export type ColOf = Map<LBox, number>;
+
+/**
+ * 箱 → 列（specs の順の index）。列はレーンごと（shared）・host ごと（塊だけの列）に層の範囲が重ならないので、
+ * 範囲の始まりの順に並べて二分探索する（列ごとに全部の箱を探すと 箱 × 列）
+ */
+export function assignColumns(specs: ColSpec[], inp: ColInput): ColOf {
+  const byKey = new Map<string, number[]>();
+  specs.forEach((s, i) => {
+    const k = s.kind === 'host' ? `h:${s.host}` : `s:${s.lane}`;
+    const list = byKey.get(k);
+    if (list) list.push(i);
+    else byKey.set(k, [i]);
+  });
+  for (const list of byKey.values()) list.sort((a, b) => specs[a]!.lo - specs[b]!.lo);
+  const find = (list: number[] | undefined, l: number): number => {
+    if (!list) return -1;
+    // lo ≤ l の最後の列
+    let lo = 0;
+    let hi = list.length;
+    while (lo < hi) {
+      const m = (lo + hi) >> 1;
+      if (specs[list[m]!]!.lo <= l) lo = m + 1;
+      else hi = m;
     }
+    const ci = lo > 0 ? list[lo - 1]! : -1;
+    return ci >= 0 && l <= specs[ci]!.hi ? ci : -1;
+  };
+  const out: ColOf = new Map();
+  for (const b of inp.model.boxes) {
+    const own = b.host ? byKey.get(`h:${b.host}`) : undefined;
+    const ci = own
+      ? find(own, b.ilayer)
+      : find(byKey.get(`s:${b.lane}`), inp.unitLayer.get(b.unit.id)!);
     if (ci < 0) throw new Error(`列が決まらない: ${b.id}`);
     out.set(b, ci);
   }
@@ -81,10 +100,13 @@ export interface Estimate {
   colH: number[];
 }
 
-/** 配置せずに見積もる幅と高さ（箱の高さ・隙間・通過点の数・通り道を通る線の数から） */
-export function estimate(specs: ColSpec[], inp: ColInput): Estimate {
+/** 配置せずに見積もる幅と高さ（箱の高さ・隙間・通過点の数・通り道を通る線の数から）。colOf は specs の割り当て */
+export function estimate(
+  specs: ColSpec[],
+  inp: ColInput,
+  colOf: ColOf = assignColumns(specs, inp),
+): Estimate {
   const { cfg } = inp;
-  const colOf = assignColumns(specs, inp);
   const C = specs.length;
   const colH = new Array<number>(C).fill(0);
   const colW = new Array<number>(C).fill(cfg.boxW);
@@ -158,14 +180,30 @@ function halfBoundary(spec: ColSpec, heights: Map<number, number>): number | nul
 
 const off = (a: number, target: number) => Math.abs(Math.log(a / target));
 
-/** 箱の無い列を落とす（塊を抜いた後の shared の列など。見積もりに空の列の幅を数えない） */
-function prune(specs: ColSpec[], inp: ColInput): ColSpec[] {
-  const used = new Set(assignColumns(specs, inp).values());
-  return specs.filter((_, i) => used.has(i));
+/**
+ * 箱の無い列を落とす（塊を抜いた後の shared の列など。見積もりに空の列の幅を数えない）。
+ * 箱 → 列の割り当ても返す（見積もりと次の回で使い回す。割り当ては 1 つの割り方に 1 回だけ）
+ */
+function prune(
+  specs: ColSpec[],
+  inp: ColInput,
+  colOf: ColOf = assignColumns(specs, inp),
+): { specs: ColSpec[]; colOf: ColOf } {
+  const used = new Set(colOf.values());
+  if (used.size === specs.length) return { specs, colOf };
+  const index = new Array<number>(specs.length).fill(-1);
+  const kept: ColSpec[] = [];
+  specs.forEach((s, i) => {
+    if (!used.has(i)) return;
+    index[i] = kept.length;
+    kept.push(s);
+  });
+  for (const [b, c] of colOf) colOf.set(b, index[c]!);
+  return { specs: kept, colOf };
 }
 
-/** 列の割り方を決める */
-export function splitColumns(inp: ColInput): ColSpec[] {
+/** 列の割り方を決める（列と、箱 → 列の割り当て） */
+export function splitColumns(inp: ColInput): { specs: ColSpec[]; colOf: ColOf } {
   const { model, cfg } = inp;
   const maxLayer = new Map<number, number>();
   for (const u of model.units)
@@ -180,7 +218,8 @@ export function splitColumns(inp: ColInput): ColSpec[] {
     })),
     inp,
   );
-  let est = estimate(specs, inp);
+  let colOf = assignColumns(specs, inp);
+  let est = estimate(specs, inp, colOf);
   for (let iter = 0; iter < model.boxes.length * 2 + 4; iter++) {
     const aspect = est.width / est.height;
     if (aspect >= cfg.aspect) break;
@@ -190,7 +229,6 @@ export function splitColumns(inp: ColInput): ColSpec[] {
       if (h > est.colH[t]!) t = c;
     });
     const spec = specs[t]!;
-    const colOf = assignColumns(specs, inp);
     const colBoxes = [...colOf].filter(([, c]) => c === t).map(([b]) => b);
     const candidates: ColSpec[][] = [];
     const b = halfBoundary(spec, layerHeights(spec, inp, colBoxes));
@@ -227,20 +265,21 @@ export function splitColumns(inp: ColInput): ColSpec[] {
       }
     }
     if (!candidates.length) break;
-    let best: { specs: ColSpec[]; est: Estimate } | null = null;
+    let best: { specs: ColSpec[]; colOf: ColOf; est: Estimate } | null = null;
     for (const raw of candidates) {
       const c = prune(raw, inp);
-      const e = estimate(c, inp);
+      const e = estimate(c.specs, inp, c.colOf);
       if (
         !best ||
         off(e.width / e.height, cfg.aspect) < off(best.est.width / best.est.height, cfg.aspect)
       )
-        best = { specs: c, est: e };
+        best = { ...c, est: e };
     }
     if (!best || off(best.est.width / best.est.height, cfg.aspect) >= off(aspect, cfg.aspect))
       break;
     specs = best.specs;
+    colOf = best.colOf;
     est = best.est;
   }
-  return prune(specs, inp);
+  return prune(specs, inp, colOf);
 }
