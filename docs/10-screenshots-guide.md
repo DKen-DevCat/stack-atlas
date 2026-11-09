@@ -58,7 +58,7 @@ screenshots:
     "/races/[id]": ["42"]
     "/docs/[...slug]": ["guide/intro"]
   storageState: .stack-atlas/auth.json   # 省略可。ファイルが無ければ未ログインで撮る
-  outDir: .stack-atlas/out               # 省略可。build の出力先（graph.json と同じ）の中だけ
+  outDir: .stack-atlas/out               # 省略可。build の出力先（graph.json と同じ）そのものだけ
 ```
 
 ### 3. アプリを起動してビルドする
@@ -78,7 +78,7 @@ stack-atlas build .                                   # スクショ不要なら
 | `viewport` | `1280×800` | ブラウザの大きさ = スクショの寸法 = regions の座標系。`deviceScaleFactor` は 1 固定 |
 | `routes` | `{}` | ルートパターン → サンプル値の配列 |
 | `storageState` | なし | Playwright の storageState JSON（config のあるディレクトリ基準） |
-| `outDir` | build の出力先 | 出力先（config のあるディレクトリ基準の相対パス）。PNG は `<outDir>/shots/` に置く。**graph.json と同じディレクトリにする**（`screen.screenshot` は graph.json からの相対パス `shots/<slug>.png`）。`stack-atlas build` は build の出力先（`-o`、既定 `.stack-atlas/out`）そのものかその中だけを受け付け、絶対パス・出力先の外（`..` で出るものも）は警告して出力先にする（解析対象の repo の設定で PNG を任意の場所に書かせない）。途中や `shots/` のシンボリックリンクがあれば書かない |
+| `outDir` | build の出力先 | 出力先（config のあるディレクトリ基準の相対パス）。PNG は `<outDir>/shots/` に置く。**graph.json と同じディレクトリにする**（`screen.screenshot` は graph.json からの相対パス `shots/<slug>.png`）。`stack-atlas build` は build の出力先（`-o`、既定 `.stack-atlas/out`）そのものだけを受け付け、絶対パス・出力先の外（`..` で出るものも）・出力先の下のディレクトリは警告して出力先にする（解析対象の repo の設定で PNG を任意の場所に書かせない。2026-11-09（8-3b のレビュー）: 下のディレクトリも受け付けていたが、graph.json からの参照 `shots/<slug>.png` と合わず画像が開けなかった）。`shots/` やその中のシンボリックリンクがあれば書かない |
 | `timeout` | `15000` | 1 ページの読み込み待ち（ms）。超えたらそのルートだけ飛ばす |
 
 ### 動的ルートのサンプル

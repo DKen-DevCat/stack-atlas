@@ -74,9 +74,9 @@ viewer/wiring
   - まるごと落とす: `script` `noscript` `iframe` `object` `embed` `base` `meta[http-equiv]` `svg` `math` `template` `title` `textarea` `xmp` `noembed` `noframes` `plaintext`、コメント・CDATA、`on*` 属性、`<link>` の `rel=stylesheet` 以外。解析できない所（閉じていないタグ・未知の構文）は要素ごと落とす
   - `form` は `div` に書き換える（2026-11-09 変更（8-3b）。中身ごと落とすと部品のルート要素の `data-component` が消え、領域が取れない。属性は div の許可リストで、送信に関わる属性は落ちる。CSP の `form-action 'none'` と `allow-forms` 無しはそのまま）
   - CSS（`<style>` の中身・`style` 属性・写す CSS ファイル）は CSS の字句解析を通す。`@import`・`image-set()`・外部の `url()` を落とし、エスケープ（`u\72l(`）は解いてから判定する
-- **資産の写し**: 同じ出所の CSS・フォント・画像（`/_next/static/...`、`public/`）だけ。読む元は realpath にして export のディレクトリと public の中に限り、シンボリックリンクは辿らない。拡張子は許可リスト（css woff woff2 ttf otf png jpg jpeg gif webp avif svg ico）。写した名前は内容のハッシュ（`_assets/<hash>.<ext>`）。**svg はファイルにせず**、画像として読む所（img の src・srcset、CSS の url() など）に `data:image/svg+xml;base64` で埋め込む（上限 256 KB。2026-11-09 変更（8-3b）。ファイルの SVG は応答ヘッダの無い配信で直接開くと script がビューアの origin で動きうる）。外部 URL と落とした要素の数を `issues.json` に出す
+- **資産の写し**: 同じ出所の CSS・フォント・画像（`/_next/static/...`、`public/`）だけ。読む元は realpath にして export のディレクトリと public の中に限り、シンボリックリンクは辿らない。拡張子は許可リスト（css woff woff2 ttf otf png jpg jpeg gif webp avif svg ico）。写した名前は内容のハッシュ（`_assets/<hash>.<ext>`）。**svg はファイルにせず**、画像として読む所（img の src・srcset、CSS の url() など）に `data:image/svg+xml;base64` で埋め込む（上限 256 KB。2026-11-09 変更（8-3b）。ファイルの SVG は応答ヘッダの無い配信で直接開くと script がビューアの origin で動きうる）。埋め込むのは 1 つの画面の HTML・CSS ファイルで合計 2 MB まで、消毒した HTML・CSS は 10 MB まで（§9.6）。外部 URL と落とした要素の数を `issues.json` に出す
 - **regions のカバー率**（docs/14 §3.3 の 4）: route ごとに「HTML の `data-component` で解けた部品の数 ÷ その画面から呼び出しでたどれる部品の数」を `issues.json` に出す。0 なら警告（`data-component` を付けるきっかけ。ビルドは止めない）
-- 出力: `out/screens/<slug>/index.html`、箱の `screen = { html, width, height, source }`。書く先は出力先の中だけで、シンボリックリンクを確かめる（build の既存の検査）
+- 出力: `out/screens/<slug>/index.html`、箱の `screen = { html, width, height, source }`。書く先は出力先の中だけで、シンボリックリンクを確かめる（build の既存の検査）。build は出力先の中の一時ディレクトリに書かせ、成功したら前回の `screens/`（印のあるもの）と入れ替える。印の無い `screens/` には書かない（§9.6）
 - `screenshots` 抽出器はそのまま。両方あれば `screen.html` を優先して描く
 - **後回し**（8-4 のハーネスで）: fixtures モードのビルド（対象アプリの変更が要り、エージェントが提案する）、`.stack-atlas/screens/*.html`（wireframe）と `regions.yaml`、外部 URL を `validate --strict` でエラーにすること（`--strict` は 8-4）
 
@@ -274,6 +274,34 @@ viewer/wiring
 - 光る画面の箱は枠の `drop-shadow` が内側にも広がり、画面の下端がうっすら青くなる
 - fixture-poly の `next/font` の woff2 は 64 バイトの合成で、Chrome が「Failed to decode downloaded font」を console の warning に出す（e2e はエラーだけ見る）
 - 手元（macOS の Google Chrome、ヘッドレス。同梱の Chromium は無い）では 3D の地図の e2e（smoke・scale・sharing と built の 3D 側）が「graph.json を読み込み中…」のまま進まない（WebGL の描画と思われる。この変更は v1 の 3D の地図に触れていない）。配線図の e2e（wiring・built の 2 本目・screens）は通る。3D の地図の e2e は CI で確かめる
+
+### 9.6 レビューの指摘で決めたこと（2026-11-09。コードレビュー（high）とセキュリティレビュー）
+
+指摘ごとに、直す前に失敗するテストを足した（2 乗のものは敵対的な入力を大きくして CPU 時間の上限で見る。`extractors/screens/src/__tests__/review-83b.test.ts` ほか）。
+
+1. **screens/ の持ち主**: 消してよい・書いてよいのは、印（`screens/.stack-atlas-screens`）のあるもの（前回の build が書いた）か、無いもの（この build が作る）だけ（core の `screensDirState`）。印の無いディレクトリは、build も抽出器も書かずに警告する（`issues.json` の warning。消しも上書きもしない）。以前は抽出器が印の無い `screens/` に書いて印を足し、次の build が利用者のディレクトリを消していた
+2. **入れ替え**: build は抽出器に出力先の中の一時ディレクトリ（`mkdtemp` の `.screens-staging-*`）を渡し、graph.json を書くときに前回の `screens/` を消して `rename` で入れ替える（`swapScreens`）。失敗した build（例外・設定の誤り）は前回の `screens/` と graph.json をそのまま残す。以前は抽出の前に消したので、失敗した build の後の graph.json が消えた画面を指した。一時ディレクトリはいつも消す。印の無い `screens/` の中は `unsafeOutputs` でも調べない（調べるのは消すか書くときだけ）
+3. **スクショの書き出し先**: `screenshots.outDir` は build の出力先そのものだけ（下のディレクトリも警告して出力先にする）。スクショ抽出器は graph.json からの参照を `shots/<slug>.png` と書くので、下のディレクトリでは画像が開けなかった（参照のパスを直すより、受け付ける値を絞る方が簡単で正しい）
+4. **不正なルートの URL**: サイトの中のパスにできない URL（`/../a`・壊れた `%`・段の中の `/`）は HTML を探さずに警告する。`index.html` になるのは根（`/`）だけ（`toSitePath` は根を空文字列、不正を undefined で返す）
+5. **`<pre>` の直後の改行**: 字句の木で、`pre`・`listing`・`textarea` の開始タグの直後の改行を 1 つ捨てる（HTML の仕様）。書き出しで足す改行（ブラウザが捨てる分）と合わせて、ブラウザで描いた中身が元と同じになる（Chromium で確かめる）
+6. **画面の大きさ**: 抽出器どうしのマージで、`screen.html` を出した側の幅・高さを使う（`mergeNodes`）。もう片方（スクショ）の regions は別の大きさで測った座標なので、大きさが違えば捨てる（ビューアが HTML を測る。3D の地図はスクショに枠を出さない）。以前は先に出た screenshots の viewport が残り、`screens.viewport` が効かなかった
+7. **serve の CSP**: `/screens/` の下の判定は、最初の段を大文字小文字を区別せずに比べ、さらに実体（dev と inode）でも比べる。大文字小文字を区別しない FS では `/SCREENS/…`・`/%53creens/…`、別名のディレクトリ（screens/ へのリンク）でも同じファイルを返すため
+8. **計測の待ち**: `loading="lazy"` の画像は待たない（縮小した iframe や表示の枠の外では読み込まれず、毎回上限の 3 秒まで待った）。消毒は `loading` を残す
+9. **一本にしたもの**: 画面の名前は screenshots の `uniqueSlug`（英数字で始まらない・100 文字を超える名前は `r-<ハッシュ>`。スクショの名前も同じになる）。パスの中か外かは core の `pathWithin`（build と抽出器の読み書き）
+10. **2 乗の解析**: コメントの終わり（`-->`・`--!>`）は位置を覚えて前から 1 回だけ探す。URL の前後の空白・srcset の末尾のカンマ・basePath の末尾の `/` は端から数える（正規表現の `[…]+$` をやめた）。next.config のコメントは前から 1 回だけ走査し、1 MB を超える next.config は値を読まずに警告する
+
+    | 敵対的な入力 | 直す前 | 直した後 |
+    |---|---|---|
+    | `<!----!>` × 40000（320 KB、`-->` 無し） | 48.7 秒 | 14 ms |
+    | `href` の途中の空白 40k | 4.2 秒 | 1 ms 未満 |
+    | CSS の `url("…")` の途中の空白 40k | 4.5 秒 | 2 ms |
+    | srcset のカンマ 40k | 5.0 秒 | 2 ms |
+    | `normalizePrefix` の `/` 40k ＋ `a` | 4.3 秒 | 1 ms 未満 |
+    | next.config の閉じていない `/*` × 40000（80 KB） | 2.8 秒 | 1 ms |
+
+11. **SVG の data: URL の膨張**: 1 つの文書（画面の HTML・写す CSS ファイル）に埋め込む data: URL は合計 2 MB まで（`InlineBudget`。`AssetStore.verdict` の引数で省けない）。超えた参照は入れずに数え、info で報告する。消毒した HTML・CSS が 10 MB を超えたら書かない（警告）。以前は 256 KB の SVG を参照ごとに埋め込み、100 回で 34 MB、2000 回で文字列の長さの上限（RangeError）を超えて抽出器が落ちた。直した後は 100 回・2000 回とも 1.96 MB（埋め込み 6 回）
+12. **制御文字**: screens が `issues.json` と要約に出す文字列（タグ名・rel・data-component の値・ルートのパターン）の C0・DEL・C1・双方向の上書きは `\u{1b}` の形にする（端末を操作させない）
+13. **e2e の fixture-repo**（`fixture-repo: 画面の箱に iframe が出て…`）: d3b49e7（8-2b・8-3a を取り込んだ後）の配置では、開いた直後の表示（1440×900、倍率 0.6）で `/` の画面の箱が下端に掛かるだけで、画面の領域が表示の枠の外にある。読み込みの規則（枠に掛かる箱だけ読む）どおり読まれず、`measured['route:/']` が 0 のまま。配置は wiring（DOM に依らない）で決まり、ビューポートは CI と同じなので、手元だけの事情ではない。テストは箱を表示の上の方まで動かして（wheel）から測る
 
 ## 10. 実装結果（Phase 8-3c: views・memos・diff・警告のリンク。2026-11-09）
 

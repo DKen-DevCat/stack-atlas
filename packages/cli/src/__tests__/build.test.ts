@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -544,11 +545,14 @@ describe('build (fixture-poly)', () => {
 
 describe('runBuild（screens の出力先。8-3b）', () => {
   /** 画面を 1 つ書くだけの screens の代わり（本物と同じく config.screens.outDir に書く） */
-  const screensStub: Extractor = {
+  /** slug の画面を 1 つ書く screens の代わり */
+  const screensStubAt = (slug: string): Extractor => ({
     name: 'screens',
     detect: async (ctx) => Boolean(ctx.config.screens),
     extract: async (ctx) => {
-      const dir = join(ctx.config.screens!.outDir!, 'screens', 'index');
+      // 本物と同じく、書き出し先が無ければ何もしない（印の無い screens/ があると build は渡さない）
+      if (!ctx.config.screens?.outDir) return { nodes: [], edges: [] };
+      const dir = join(ctx.config.screens!.outDir!, 'screens', slug);
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, 'index.html'), '<!DOCTYPE html>');
       writeFileSync(join(ctx.config.screens!.outDir!, 'screens', '.stack-atlas-screens'), '');
@@ -561,7 +565,8 @@ describe('runBuild（screens の出力先。8-3b）', () => {
         ],
       };
     },
-  };
+  });
+  const screensStub = screensStubAt('index');
   const withScreens = () => {
     const root = repo();
     writeFileSync(
@@ -581,6 +586,8 @@ describe('runBuild（screens の出力先。8-3b）', () => {
     log.mockRestore();
     expect(code).toBe(0);
     expect(existsSync(join(out, 'screens', 'index', 'index.html'))).toBe(true);
+    // 2026-11-09 変更（8-3b のレビュー）: 抽出器は出力先の中の一時ディレクトリに書き、成功したら screens/ に移す（一時ディレクトリは残さない）
+    expect(readdirSync(out).filter((f) => f.startsWith('.screens-staging-'))).toEqual([]);
     expect(mlog.of('warn').join('\n')).toContain('screens.outDir は設定できません');
     expect(summary).toContain(
       '報告（issues.json の info）: 1 件\n  screens:/: regions のカバー率 1/2（50%）',
@@ -631,6 +638,89 @@ describe('runBuild（screens の出力先。8-3b）', () => {
     expect(existsSync(join(o2, 'screens', '_assets', 'deep'))).toBe(true);
     expect(readFileSync(join(victim, 'keep.txt'), 'utf8')).toBe('keep');
   });
+
+  // 2026-11-09 追加（8-3b のレビュー）: 以下は直す前に失敗したもの
+  it('印の無い screens/（利用者のディレクトリ）には書かず、次の build でも消さない。警告を log と issues.json に出す', async () => {
+    const root = withScreens();
+    const out = join(root, 'o');
+    mkdirSync(join(out, 'screens', 'mine'), { recursive: true });
+    writeFileSync(join(out, 'screens', 'mine', 'notes.txt'), 'mine');
+    for (let k = 0; k < 2; k++) {
+      const mlog = createMemoryLogger();
+      expect(
+        await quiet(() =>
+          runBuild({ repo: root, outDir: out, extractors: [screensStub], log: mlog }),
+        ),
+      ).toBe(0);
+      expect(mlog.of('warn').join('\n')).toContain('印 .stack-atlas-screens が無い');
+      expect(readFileSync(join(out, 'screens', 'mine', 'notes.txt'), 'utf8')).toBe('mine');
+      expect(readdirSync(join(out, 'screens'))).toEqual(['mine']); // 印も画面も書かない
+      expect(JSON.parse(readFileSync(join(out, 'issues.json'), 'utf8'))).toContainEqual({
+        level: 'warning',
+        path: 'screens',
+        message: expect.stringContaining('画面を書きません（消しも上書きもしない）'),
+      });
+    }
+  });
+
+  it('失敗した build（flows.yaml が壊れている）は前回の screens/ を残す（graph.json が指す画面を消さない）', async () => {
+    const root = withScreens();
+    const out = join(root, 'o');
+    const run = (slug: string) =>
+      quiet(() =>
+        runBuild({
+          repo: root,
+          outDir: out,
+          extractors: [screensStubAt(slug)],
+          log: createMemoryLogger(),
+        }),
+      );
+    expect(await run('index')).toBe(0);
+    expect(existsSync(join(out, 'screens', 'index', 'index.html'))).toBe(true);
+    const graph = readFileSync(join(out, 'graph.json'), 'utf8');
+    writeFileSync(join(root, 'flows.yaml'), 'not: a list\n');
+    // 2 回目の抽出は別の画面を書く（直す前は、前回の screens/ を抽出の前に消し、出力先の screens/ に書いていた）
+    expect(await run('next')).toBe(2);
+    expect(readFileSync(join(out, 'graph.json'), 'utf8')).toBe(graph);
+    expect(readdirSync(join(out, 'screens')).sort()).toEqual(['.stack-atlas-screens', 'index']);
+    expect(readdirSync(out).filter((f) => f.startsWith('.screens-staging-'))).toEqual([]);
+  });
+
+  it('印のある前回の screens/ は、成功した build の画面と入れ替える（消した route の画面を残さない）', async () => {
+    const root = withScreens();
+    const out = join(root, 'o');
+    mkdirSync(join(out, 'screens', 'gone'), { recursive: true });
+    writeFileSync(join(out, 'screens', 'gone', 'index.html'), 'old');
+    writeFileSync(join(out, 'screens', '.stack-atlas-screens'), '');
+    expect(
+      await quiet(() =>
+        runBuild({ repo: root, outDir: out, extractors: [screensStub], log: createMemoryLogger() }),
+      ),
+    ).toBe(0);
+    expect(readdirSync(join(out, 'screens')).sort()).toEqual(['.stack-atlas-screens', 'index']);
+  });
+
+  it('触らない screens/（印が無い）の中のリンクでは build を止めない（unsafeOutputs は消す・書く screens/ だけ調べる）', async () => {
+    const victim = mkdtempSync(join(tmpdir(), 'stack-atlas-victim-'));
+    for (const root of [repo(), withScreens()]) {
+      const out = join(root, 'o');
+      mkdirSync(join(out, 'screens'), { recursive: true });
+      symlinkSync(victim, join(out, 'screens', 'link'));
+      expect(unsafeOutputs(root, out)).toEqual([]);
+      expect(unsafeOutputs(root, out, undefined, true)).toEqual([join(out, 'screens', 'link')]);
+      expect(
+        await quiet(() =>
+          runBuild({
+            repo: root,
+            outDir: out,
+            extractors: [stub, screensStub],
+            log: createMemoryLogger(),
+          }),
+        ),
+      ).toBe(0);
+      expect(existsSync(join(out, 'screens', 'link'))).toBe(true);
+    }
+  });
 });
 
 describe('スクショの書き出し先（config.screenshots.outDir は build の出力先の中だけ。8-3b）', () => {
@@ -668,14 +758,31 @@ describe('スクショの書き出し先（config.screenshots.outDir は build �
     return { code, seen, warns: mlog.of('warn').join('\n'), errors: mlog.of('error') };
   };
 
-  it('confineShotsOutDir: 無ければ出力先。repo 基準の相対で出力先そのもの・その中は受け付ける', () => {
+  it('confineShotsOutDir: 無ければ出力先。repo 基準の相対で出力先そのものだけ受け付ける', () => {
     const repoDir = join(tmpdir(), 'r');
     const out = join(repoDir, '.stack-atlas', 'out');
-    expect(confineShotsOutDir(repoDir, out, undefined)).toBe(out);
-    expect(confineShotsOutDir(repoDir, out, '.stack-atlas/out')).toBe(out);
-    expect(confineShotsOutDir(repoDir, out, './.stack-atlas/out/sub/')).toBe(join(out, 'sub'));
-    expect(confineShotsOutDir(repoDir, out, '.stack-atlas/out/a/../b')).toBe(join(out, 'b'));
+    const mlog = createMemoryLogger();
+    expect(confineShotsOutDir(repoDir, out, undefined, mlog)).toBe(out);
+    expect(confineShotsOutDir(repoDir, out, '.stack-atlas/out', mlog)).toBe(out);
+    expect(confineShotsOutDir(repoDir, out, './.stack-atlas/out/', mlog)).toBe(out);
+    expect(confineShotsOutDir(repoDir, out, '.stack-atlas/out/a/..', mlog)).toBe(out);
+    expect(mlog.of('warn')).toEqual([]);
   });
+
+  // 2026-11-09 変更（8-3b のレビュー）: 出力先の下のディレクトリも受け付けていた（`o/sub` → <o>/sub/shots/）が、
+  // スクショ抽出器は graph.json（<o>/）からの参照を shots/<slug>.png と書くので画像が開けなかった。出力先そのものだけにした
+  it.each([['./.stack-atlas/out/sub/'], ['.stack-atlas/out/a/../b']])(
+    'confineShotsOutDir: 出力先の下のディレクトリ %j は警告して出力先にする（graph.json の参照 shots/… と合わない）',
+    (value) => {
+      const repoDir = join(tmpdir(), 'r');
+      const out = join(repoDir, '.stack-atlas', 'out');
+      const mlog = createMemoryLogger();
+      expect(confineShotsOutDir(repoDir, out, value, mlog)).toBe(out);
+      expect(mlog.of('warn')).toEqual([
+        `screenshots.outDir ${JSON.stringify(value)} は build の出力先の下のディレクトリ（graph.json は shots/… で参照する）なので使いません（スクショは出力先 ${out} の shots/ に書きます）`,
+      ]);
+    },
+  );
 
   it.each([
     ['/tmp/evil', 'は絶対パスな'],
@@ -710,15 +817,19 @@ describe('スクショの書き出し先（config.screenshots.outDir は build �
     expect(existsSync(join(outside, 'shots'))).toBe(false);
   });
 
-  it('runBuild: 出力先の中の outDir はそのまま（docs/10 の例の .stack-atlas/out は既定の出力先と同じ）', async () => {
+  it('runBuild: 出力先そのものの outDir はそのまま（docs/10 の例の .stack-atlas/out は既定の出力先と同じ）。下のディレクトリは出力先にする', async () => {
     const root = withShots('.stack-atlas/out');
     const r = await build(root);
     expect(r.code).toBe(0);
     expect(r.seen).toEqual([join(root, '.stack-atlas', 'out')]);
     expect(r.warns).not.toContain('screenshots.outDir');
+    // 2026-11-09 変更（8-3b のレビュー）: 以前は <o>/sub に書いた（graph.json の shots/… から開けない）
     const root2 = withShots('o/sub');
     const r2 = await build(root2, join(root2, 'o'));
-    expect(r2.seen).toEqual([join(root2, 'o', 'sub')]);
+    expect(r2.seen).toEqual([join(root2, 'o')]);
+    expect(r2.warns).toContain('は build の出力先の下のディレクトリ');
+    expect(existsSync(join(root2, 'o', 'shots', 'index.png'))).toBe(true);
+    expect(existsSync(join(root2, 'o', 'sub'))).toBe(false);
     // -o で出力先を変えると、repo 基準の .stack-atlas/out は出力先の外なので出力先にする
     const root3 = withShots('.stack-atlas/out');
     const r3 = await build(root3, join(root3, 'o'));
@@ -726,38 +837,41 @@ describe('スクショの書き出し先（config.screenshots.outDir は build �
     expect(r3.warns).toContain('は build の出力先の外を指す');
   });
 
-  it('出力先からスクショの書き出し先までの段・shots/・その中がリンクなら書かずに終了コード 2', async () => {
+  it('shots/・その中がリンクなら書かずに終了コード 2。出力先の下のリンクのディレクトリを指す outDir は使わない', async () => {
     const victim = mkdtempSync(join(tmpdir(), 'stack-atlas-victim-'));
     writeFileSync(join(victim, 'keep.png'), 'keep');
-    // 途中の段（o/sub）がリンク
-    const r1 = withShots('o/sub/deeper');
+    // 書き出し先の shots/ がリンク
+    const r1 = withShots('o');
     mkdirSync(join(r1, 'o'));
-    symlinkSync(victim, join(r1, 'o', 'sub'));
+    symlinkSync(victim, join(r1, 'o', 'shots'));
     const b1 = await build(r1, join(r1, 'o'));
     expect(b1.code).toBe(2);
-    expect(b1.errors[0]).toContain(join(r1, 'o', 'sub'));
+    expect(b1.errors[0]).toContain(join(r1, 'o', 'shots'));
     expect(b1.seen).toEqual([]);
-    // 書き出し先の shots/ がリンク
-    const r2 = withShots('o/sub');
-    mkdirSync(join(r2, 'o', 'sub'), { recursive: true });
-    symlinkSync(victim, join(r2, 'o', 'sub', 'shots'));
-    expect((await build(r2, join(r2, 'o'))).code).toBe(2);
     // shots/ の中のファイルがリンク
-    const r3 = withShots('o/sub');
-    mkdirSync(join(r3, 'o', 'sub', 'shots'), { recursive: true });
-    symlinkSync(join(victim, 'keep.png'), join(r3, 'o', 'sub', 'shots', 'index.png'));
-    expect((await build(r3, join(r3, 'o'))).code).toBe(2);
+    const r2 = withShots('o');
+    mkdirSync(join(r2, 'o', 'shots'), { recursive: true });
+    symlinkSync(join(victim, 'keep.png'), join(r2, 'o', 'shots', 'index.png'));
+    expect((await build(r2, join(r2, 'o'))).code).toBe(2);
+    // 2026-11-09 変更（8-3b のレビュー）: 出力先の下（o/sub。リンク）は受け付けなくなったので、出力先の shots/ に書く
+    // （以前は途中の段のリンクで終了コード 2）
+    const r3 = withShots('o/sub/deeper');
+    mkdirSync(join(r3, 'o'));
+    symlinkSync(victim, join(r3, 'o', 'sub'));
+    const b3 = await build(r3, join(r3, 'o'));
+    expect(b3.code).toBe(0);
+    expect(b3.seen).toEqual([join(r3, 'o')]);
     expect(readFileSync(join(victim, 'keep.png'), 'utf8')).toBe('keep');
     expect(existsSync(join(victim, 'shots'))).toBe(false);
+    expect(existsSync(join(victim, 'deeper'))).toBe(false);
   });
 
-  it('unsafeOutputs: shotsOutDir を省けば出力先の shots/ を調べる（従来どおり）', () => {
+  it('unsafeOutputs: 出力先の shots/ を調べる', () => {
     const root = repo();
     const out = join(root, 'o');
     mkdirSync(out);
     const victim = mkdtempSync(join(tmpdir(), 'stack-atlas-victim-'));
     symlinkSync(victim, join(out, 'shots'));
     expect(unsafeOutputs(root, out)).toEqual([join(out, 'shots')]);
-    expect(unsafeOutputs(root, out, undefined, join(out, 'x'))).toEqual([]);
   });
 });

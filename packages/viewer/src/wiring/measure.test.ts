@@ -106,6 +106,22 @@ describe('settle（fonts.ready と画像を待つ。上限あり）', () => {
     await p;
   });
 
+  // 2026-11-09 追加（8-3b のレビュー）: 以前は lazy の画像も待ち、読み込まれないので毎回上限（3 秒）まで待った
+  it('loading="lazy" の画像（大文字小文字は問わない）は待たない', async () => {
+    vi.useFakeTimers();
+    const lazy: FakeEl = { ...el(null), attrs: { loading: 'LAZY' }, complete: false };
+    const eager: FakeEl = { ...el(null), attrs: { loading: 'eager' }, complete: false };
+    let done = false;
+    const p = settle(shadowedDoc(), 3000, fakeApi([], [lazy, eager])).then(() => (done = true));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(done).toBe(false);
+    expect(lazy.on).toBeUndefined();
+    eager.on!.load!();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(done).toBe(true);
+    await p;
+  });
+
   it('DOM の操作が例外を投げても、待つのをやめるだけ', async () => {
     vi.useFakeTimers();
     const api = fakeApi([]);

@@ -1,6 +1,7 @@
 /**
  * 抽出器の出力（PartialGraph）のマージ（docs/09 §3.2）。
  * - ノード: id ごとに deep merge。先に出た値を残し、後続の抽出器は欠けているフィールドを埋める。
+ *   ただし `screen` の幅・高さは `screen.html` を出した側のもの（大きさの違うもう片方の regions は捨てる）。
  *   配列は連結して重複排除（`screen.regions` は ref+x+y、`cache.rules` は値、`meta.extractors` は和集合で出現順）
  * - エッジ: (from, to, kind) で重複排除。label は最初に label を持っていたものを使う
  * - 層: 同じ id は最初の定義を使う。順番は出現順
@@ -17,7 +18,27 @@ export const edgeKey = (e: Pick<Edge, 'from' | 'to' | 'kind'>) =>
   `${e.from}\u0000${e.to}\u0000${e.kind}`;
 
 export function mergeNodes(a: PartialNode, b: PartialNode): PartialNode {
-  return deepMerge(a, b, { prefer: 'target' });
+  const out = deepMerge(a, b, { prefer: 'target' });
+  // 画面の HTML（screen.html。screens 抽出器。docs/18 §3.3）を出した側の幅・高さを使う（2026-11-09（8-3b のレビュー）:
+  // 先に出た値を残す規則では screenshots の viewport が残り、screens.viewport が効かなかった）。ビューアは HTML を
+  // その大きさの iframe で描く。もう片方（スクショ）の regions は別の大きさで測った座標なので、大きさが違えば捨てる
+  // （ビューアが HTML を測る）
+  const html =
+    b.screen?.html && !a.screen?.html
+      ? b.screen
+      : a.screen?.html && !b.screen?.html
+        ? a.screen
+        : undefined;
+  const other = html === b.screen ? a.screen : b.screen;
+  if (html && other && out.screen) {
+    out.screen.width = html.width;
+    out.screen.height = html.height;
+    if (other.width !== html.width || other.height !== html.height) {
+      if (html.regions) out.screen.regions = clone(html.regions);
+      else delete out.screen.regions;
+    }
+  }
+  return out;
 }
 
 export function mergePartialGraphs(parts: PartialGraph[]): PartialGraph {

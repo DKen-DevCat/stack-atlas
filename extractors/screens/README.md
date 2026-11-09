@@ -27,11 +27,16 @@ next.config の `trailingSlash`（`/a` → `a/index.html` を先に）・`basePa
 | 消毒 | `sanitize.ts` | 木から書き直す。doctype → `<head>` の最初の子に CSP の meta → charset。要素・属性の許可リスト、`on*`、URL の属性の判定 |
 | CSS | `css.ts` | `<style>`・`style` 属性・写す CSS ファイル。`@import`・`image-set()`・外部の `url()` を落とし、`<` を書き出さない |
 | URL | `urls.ts` | 文字参照・エスケープを解いた後、空白・制御文字を除き、`\` を `/` にしてから scheme を見る。相対と画像・フォントの `data:` だけ |
-| 資産 | `assets.ts`・`fsafe.ts` | export と public の中だけ（realpath）、シンボリックリンクは辿らない、拡張子の許可リスト、名前は内容のハッシュ（`screens/_assets/<hash>.<ext>`）。SVG はファイルにせず、画像として読む所（img の src・srcset、CSS の url() など）に `data:image/svg+xml;base64` で埋め込む（上限 256 KB。超えたら入れずに info） |
+| 資産 | `assets.ts`・`fsafe.ts` | export と public の中だけ（realpath）、シンボリックリンクは辿らない、拡張子の許可リスト、名前は内容のハッシュ（`screens/_assets/<hash>.<ext>`）。SVG はファイルにせず、画像として読む所（img の src・srcset、CSS の url() など）に `data:image/svg+xml;base64` で埋め込む（1 ファイル 256 KB まで、1 つの画面の HTML・CSS ファイルに合計 2 MB まで。超えたら入れずに info）。消毒した HTML・CSS が 10 MB を超えたら書かない（警告） |
 | カバー率 | `coverage.ts` | 解けた data-component ÷ route（と包む layout）から uses でたどれる comp / hook |
 
 `issues.json` には route ごとに「消毒で落としたもの」（外部・危険な URL か `@import` があれば warning、ほかは info）と regions のカバー率（0 なら warning）、
-写した CSS ファイルごとに落としたものを出す。`stack-atlas build` は前回の `screens/`（印 `screens/.stack-atlas-screens` があるもの）を消してから書く。
+写した CSS ファイルごとに落としたものを出す。
+
+`stack-atlas build` は抽出器に出力先の中の一時ディレクトリ（`.screens-staging-*`）を渡し、build が成功して graph.json を書くときに、
+前回の `screens/`（印 `screens/.stack-atlas-screens` があるもの）と入れ替える（失敗した build は前回の `screens/` を残す）。
+出力先の `screens/` が印の無いディレクトリなら、画面を書かずに警告する（消しも上書きもしない。抽出器を直接呼んだときも同じ）。
+`issues.json` と要約に出す文字列の制御文字（C0・DEL・C1・双方向の上書き）は `\u{1b}` の形にする。
 
 ## 落とすもの
 

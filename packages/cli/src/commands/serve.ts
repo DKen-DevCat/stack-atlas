@@ -56,9 +56,19 @@ export const CONTENT_TYPES: Record<string, string> = {
 export const SCREENS_CSP =
   "sandbox allow-same-origin; default-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; base-uri 'none'; form-action 'none'";
 
-/** 配信するファイルが root の screens/ の下か（URL ではなく解決したパスで見る。`/%73creens/` でも同じ） */
+/**
+ * 配信するファイルが root の screens/ の下か（URL ではなく解決したパスで見る。`/%73creens/` でも同じ）。
+ * 最初の段を大文字小文字を区別せずに比べ、さらに実体（dev と inode）でも比べる（2026-11-09（8-3b のレビュー）:
+ * 大文字小文字を区別しない FS（macOS の既定など）では `/SCREENS/…` や `/%53creens/…` が同じファイルを CSP 無しで返していた）
+ */
 export function isScreensPath(root: string, file: string): boolean {
-  return relative(resolve(root), file).split(sep)[0] === SCREENS_DIR;
+  const base = resolve(root);
+  const first = relative(base, file).split(sep)[0] ?? '';
+  if (!first || first === '..') return false;
+  if (first.toLowerCase() === SCREENS_DIR) return true;
+  const a = statSync(join(base, first), { throwIfNoEntry: false });
+  const b = statSync(join(base, SCREENS_DIR), { throwIfNoEntry: false });
+  return !!a && !!b && a.dev === b.dev && a.ino === b.ino;
 }
 
 export function contentType(file: string): string {

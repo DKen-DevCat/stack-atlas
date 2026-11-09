@@ -382,6 +382,12 @@ test('fixture-repo: 画面の箱に iframe が出て、[data-component] を箱 i
   const errors = collectErrors(page);
   const foreign = collectForeign(page);
   await openBuilt(page, 'fixture-repo');
+  // 2026-11-09（8-3b のレビュー）: 8-2b・8-3a を取り込んだ後の配置では、開いた直後の表示で `/` の画面の箱が下端に掛かるだけで
+  // 画面の領域が表示の枠の外にあり、読み込みの規則（枠に掛かる箱だけ読む）どおり読まれない（measured が 0 のまま）。
+  // 箱を表示の上の方まで動かしてから測る（wheel は縦の移動。ctrl 無し）
+  const box = (await page.locator('.box[data-box="route:/"]').boundingBox())!;
+  await page.mouse.move(700, 450);
+  await page.mouse.wheel(0, box.y - 120);
   await expect
     .poll(async () => (await screens(page)).measured['route:/']?.length ?? 0)
     .toBeGreaterThan(0);

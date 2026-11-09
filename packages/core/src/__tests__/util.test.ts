@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { listRouteFiles, routeNodeId, segmentToUrl } from '../next-routes.js';
-import { globBase, globToRegExp, toArray } from '../util.js';
+import { globBase, globToRegExp, pathWithin, toArray } from '../util.js';
 
 describe('globToRegExp（core と抽出器で共用）', () => {
   it('** は / をまたぎ、* と ? はまたがない', () => {
@@ -68,5 +68,18 @@ describe('Next ルートの ID', () => {
     expect(new Set(ids).size).toBe(ids.length);
     // url は実際の URL（group 抜き）のまま
     expect(files.find((f) => f.id === 'layout:/(shop)')?.url).toBe('/');
+  });
+});
+
+// 2026-11-09 追加（8-3b のレビュー）: build の出力先の検査と screens 抽出器の読み書きで別々に書いていた判定を一本にした
+describe('pathWithin', () => {
+  it('中だけ（allowSame で自身も）。`..` で始まる名前は中', () => {
+    expect(pathWithin('/a/b', '/a/b/c')).toBe(true);
+    expect(pathWithin('/a/b', '/a/b')).toBe(false);
+    expect(pathWithin('/a/b', '/a/b', true)).toBe(true);
+    expect(pathWithin('/a/b', '/a/bc')).toBe(false);
+    expect(pathWithin('/a/b', '/a')).toBe(false);
+    expect(pathWithin('/a/b', '/a/b/../c')).toBe(false);
+    expect(pathWithin('/a/b', '/a/b/..x')).toBe(true);
   });
 });
