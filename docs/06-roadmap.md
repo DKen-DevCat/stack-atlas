@@ -117,6 +117,7 @@ Lambda → Go 入口の推定 5 件、DB の推定、Function URL の呼び先�
 
 実リポジトリの地図を見たユーザーの要望（props 1 つ単位で流れを見たい、型を変えたらどこが切れるか知りたい、スタックに依存しない作り）から、モデルを作り直す。設計は `docs/15-design-dataflow-model.md`（D27〜D35、2026-11-08 承認）、配布と画面は `docs/14-design-harness.md`。モック `prototype/dataflow-mock.html` で 6 版まで検証済み。
 
+- [x] 8-0 縦スライス: fixture-poly の `/today` 経路を v2 で手で組み、schema v2・`@stack-atlas/wiring`（たどる・球・食い違い・レイアウト）・ビューアの配線図で通しで動かした（PR #3。CI の e2e 7 件を含め通過）
 - [ ] 8-1 契約: graph.json v2（箱・口・項目・線・links・variants・host・wireType・broken）、v1 → v2 変換
 - [ ] 8-2 抽出: TS（compiler API）・Go（go/packages）の言語アダプタ、合流点の項目照合、レシピ
 - [ ] 8-3 表示: 配線図ビューア（層状レイアウト＋直交配線、球、分岐の表、再生バー、折りたたみ）
