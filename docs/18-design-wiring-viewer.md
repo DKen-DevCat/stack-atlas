@@ -62,7 +62,7 @@ viewer/wiring
 #### 契約
 
 - v1・v2 の `screen` に `html`（graph.json からの相対パス）と `source`（`next-export` / `dir`）を足す（docs/14 §3.3 の契約）。v1 の `graph.schema.json`・`types.ts`・`docs/03` も直す（v1 の `screen` は `additionalProperties: false`）。`upgradeGraph` は `screen` をそのまま写す
-- graph.json に `screen.regions` があればビューアの計測より優先する（今の規則）
+- graph.json に `screen.regions` があればビューアの計測より優先する（今の規則。空の配列は無いのと同じ。§9.2 の 4）
 
 #### 集める側: 抽出器 `screens`（`extractors/screens`）
 
@@ -87,7 +87,7 @@ viewer/wiring
 #### 描く側: ビューア
 
 - 画面の箱（kind `screen`）に `screen.html` があれば、箱の中に縮小した実 DOM を出す。**iframe の層は SVG の下**に置き（SVG の背景は透明にし、画面の箱の中だけ抜く）、層全体を `pointer-events: none`。canvas と同じ移動・拡大の変換を掛ける。iframe は `sandbox="allow-same-origin"`（`allow-scripts`・`allow-forms`・`allow-popups` は付けない）、`referrerpolicy="no-referrer"`
-- 画面の箱の大きさ: 幅は通常の 2 倍、高さは「viewport の比率の高さ」と「項目の行の高さ」の大きい方。HTML はビューポートの高さで切る（縦に長いページは上だけ）。項目のピンは箱の縁
+- 画面の箱の大きさ: 幅は通常の 2 倍、高さは「viewport の比率の高さ」と「項目の行の高さ」の大きい方。HTML はビューポートの高さで切る（縦に長いページは上だけ）。項目のピンは箱の縁（2026-11-09 決定（8-3b）: 画面の領域を取るのは `screen.html` のある箱だけで、名前の帯の下に置く。§9.2）
 - 読み込み: 画面上の幅が 200px 以上の箱だけ読む（`loading="lazy"` は変換の下で距離が決まらないので使わない）。同時に生かす iframe は 6 枚まで、画面から外れたら外す
 - **部品の領域**: `load` 後、`fonts.ready` と画像を待って（上限 3 秒）`[data-component]` を測り、`comp:<名前>` → `hook:<名前>` → 末尾一致の順で箱 id に解く（screenshots 抽出器と同じ規則）。選んだ経路に入る部品の領域だけ、**SVG の側に**枠を描く（ラベルは出さない）
 - 沈んだ画面は iframe の不透明度も他の箱と同じに下げる
@@ -219,3 +219,56 @@ viewer/wiring
 | 1 レーンの鎖 1 万箱・端から端へ戻る線 1000 本 | 1509ms | 1128ms |
 
 テスト: `layout-review.test.ts`（指摘ごと。直す前に落ちることを確かめた）、`layout-perf.test.ts` の「大きな入力で二乗にならない」（host 6000・線 1.6 万が CPU 時間 1000ms 未満: 直す前 約 4000ms・後 約 340ms。1 本の通り道に重ならない縦の区間 6 万本のトラックが 600ms 未満: 直す前 約 4600ms・後 約 130ms）
+
+## 9. 実装結果（Phase 8-3b のビューア。2026-11-09）
+
+集める側（`screens` 抽出器・消毒・資産・カバー率）と `serve` の CSP は 8-3b の前半のコミット（§3.3 に反映済み）。ここはビューアの画面の層。
+
+### 9.1 作ったもの
+
+| 所 | 内容 |
+|---|---|
+| `packages/wiring/src/layout/screen.ts` | 画面の領域（`BoxLayout.screen`）とビューポート（`screenViewport`）。`measure` の高さに「名前の帯 ＋ 画面 ＋ 1px」を足す。`LayoutOptions.screens`（既定 true。false で 8-3a の配置） |
+| `packages/wiring/src/regions.ts` | `resolveRegionRef`（名前 → 箱 id。**規則の正本**）、`clipRegion`・`resolveRegions`（ビューポートで切り詰めて解く）、`regionsOf`（graph の regions が計測より優先） |
+| `packages/viewer/src/wiring/screens.ts` | DOM に触らない規則: 層の変換、iframe の置き方、読み込みの規則（`planLive`）、src の判定（`screenSrc`）、沈んだ画面の不透明度、領域の枠の SVG、プレースホルダの文言 |
+| `packages/viewer/src/wiring/measure.ts` | `[data-component]` の計測と `fonts.ready`・画像の待ち（上限 3 秒）。DOM のメソッドは prototype から `call` で呼ぶ（`DomApi`。単体テストで差し替える） |
+| `packages/viewer/src/wiring/screenLayer.ts` | SVG の下の div（`.wv-screens`）に iframe を出し入れする。canvas の `onApply` で同じ変換を掛け、次のフレームでどれを生かすか決める |
+| `render.ts`・`app.ts`・`canvas.ts`・`style.css` | 画面の箱の描き方（下記）、`<g class="regions">`（光る箱の上・球の下）、`baseUrl` を `mountWiring` に渡す、`debug.screens`（e2e 用） |
+
+### 9.2 §3.3 から決めた・変えた所
+
+1. **画面の領域を取るのは `screen.html` のある画面の箱だけ**（kind `screen` で html が空でない文字列）。html の無い画面（screens を設定していない・スクショだけ）は 8-3a のまま項目の行の高さ。画面の領域を全部の画面の箱に取ると、HTML の無い基準の graph と `/today` の例の配置も動き、`/today` の交差が 50 → 56 で 8-3a の上限（50）を超える。HTML の無い画面に空の大きな箱を出す意味も薄い。layout:（Next の layout）は抽出器が HTML を写さないので領域を持たない
+2. **画面の領域の位置**: 名前の帯（26px）の下に、枠の内側（左右 1px）の幅で、ビューポートの比率の高さ。箱の高さは「帯 ＋ 画面 ＋ 1px」と「項目の行」の大きい方。項目のピンは箱の縁で、項目の文字は画面の上に重なる（読めるよう文字に暗い縁取り。`paint-order: stroke`）
+3. **ビューポートの範囲**: `screen.width × height` を、縦 / 横 0.25〜2.5、幅と高さ 200〜4096 に比を保って収める（graph の値が極端でも箱と iframe が巨大にならない）。graph の `regions` は screen の座標なので、収めたビューポートの座標に直して使う
+4. **空の `screen.regions` は無いのと同じ**（計測を使う）。screenshots 抽出器は `data-component` が 1 つも無いと `regions: []` を書くため、空の配列を優先すると HTML の計測が消える
+5. **src は graph.json からの相対パスだけ**: スキームの付いた URL・`/` や `//` で始まる・`\` や制御文字を含むものは読まない。解いた URL がビューアと別の origin か、graph.json のディレクトリの外（`..`・`%2e%2e`）でも読まない（プレースホルダ）。ファイルで開いた graph は相対パスを解けないのでプレースホルダ
+6. **読み込みの順**: 画面上の幅が 200px 以上で、表示の枠に掛かる箱のうち、見えている面積の大きい順（同じなら枠の中心に近い順）に 6 枚。決め直しは canvas の変換のたびではなく次のフレームで 1 回
+7. **読めないとき**: `load` のあとに `contentDocument` が読めなければ（応答ヘッダの sandbox に allow-same-origin が無いなど）iframe を外し、その画面は以後読まない（`blocked`）。プレースホルダの文言は状態ごと（拡大すると表示・読み込み中・別の origin・URL で開くと表示・graph.json の外）
+8. **画面の箱の SVG**: 画面の領域だけ塗らない（`fill-rule: evenodd` の穴の空いた塗り `screen-bg`）。枠の rect は透明の塗りでクリックを受ける（iframe の層は `pointer-events: none`）。レーンの背景は clip-path で画面の領域を抜く。iframe の外枠は白（背景を持たないページはブラウザと同じ白に見える）
+9. **領域の枠**: 選択の経路（`lit.boxes`）に入る部品だけ、画面の領域の中に切り詰めて描く。画面の箱そのものの領域は描かない。画面が沈んでいても、部品が光っていれば枠は描く。hover では描かない（今の規則のまま）
+10. **名前の解き方の正本を wiring に**: ビューアは抽出器に依存しないので、`resolveRegionRef` を `@stack-atlas/wiring` に置き、core が再 export し、screenshots 抽出器はそれをそのまま出す（screens 抽出器のカバー率も同じ関数）。一致はテストで固定（同じ関数であること）
+11. **計測の上限**: 1 画面で `[data-component]` を 2000 個まで
+
+### 9.3 数字（テストで固定）
+
+| | 画面の HTML なし（8-3a のまま） | 画面の HTML あり（fixture-poly の build と同じ形） |
+|---|---|---|
+| 基準の graph（`poly-82a.v2.json`） | 4656×2366（1.97）、交差 425（上限 468） | **4568×2444（1.87）、交差 457（上限 503）**。高さは 8-0 の 6486 の 38% |
+| `/today` の例 | 2676×1516（1.77）、交差 50（上限 50） | **2740×1526（1.80）、交差 56（上限 62）** |
+| 重なり・箱を通る線 | 0 / 0 / 0 | 0 / 0 / 0 |
+
+画面の箱（600px 幅、1280×800）は 598×373.75 の画面の領域で、箱の高さは 400.75。開いた直後（倍率 0.6）は画面上 360px 幅で読み、`F` の全体表示（fixture-poly で倍率 0.31・184px）では読まない。HTML の無い graph（基準の graph と `/today` の例）は 8-3a と同じ配置（`layout-screens.test.ts` で `screens: false` と一致を確かめる）。
+
+### 9.4 テスト
+
+- 単体（wiring）: `layout-screens.test.ts`（画面の領域と高さ、項目の行が高いとき、スマホの比率、html の無い箱は 8-3a のまま、受け入れ条件を画面の HTML ありで）、`regions.test.ts`（名前の解き方・切り詰め・graph の regions の優先と座標の直し）
+- 単体（viewer）: `screens.test.ts`（層の変換が SVG と同じ写像、iframe の置き方、200px・6 枚・枠の外・面積の順、src の拒否 10 通り、graph の regions の優先、枠は経路の部品だけ・領域の中に切る、沈んだ不透明度が style.css の `.box.dim` と同じ、プレースホルダ）、`measure.test.ts`（document のメソッドを隠した文書でも DomApi だけを通す、上限、待ちの打ち切り）、`render.test.ts`（穴の空いた塗り・透明の枠・プレースホルダ・clip-path・層の順。「動かない」に画面の HTML ありの基準の graph を足した）
+- screenshots 抽出器: `resolveRegionRef` が wiring の関数と同じ
+- e2e（`screens.spec.ts`。fixture-poly と fixture-repo を beforeAll で build し、ビューアと同じ origin の `built-screens/` で serve と同じ CSP の応答ヘッダを付けて配る）: `/` の iframe（sandbox・referrerpolicy・src）、標準モード、script 0、CSP の meta が head の最初の子、自分以外の origin への通信 0、TodayIsland の領域（直接 1280×800 で開いて測った値と ±4px）、`route:/` の選択で枠が iframe の中の要素と同じ所（±2px）、沈んだ画面の不透明度 0.15・解除で 1、`F` で iframe を外してプレースホルダ・拡大でまた読む、消毒していない HTML（script・onerror・`javascript:`）を CSP 無しで配っても動かない（ブラウザが sandbox で止めた旨を出す）、`<img name="querySelectorAll">` と form の中の `name="getAttribute"` で隠しても測れる、応答ヘッダの `sandbox`（allow-same-origin 無し）で `blocked` とプレースホルダと graph の regions の枠、ファイルで開くと `nobase` で `/screens/` への通信 0、fixture-repo の `/` で Header・RaceCard
+
+### 9.5 気づいたこと（直していない）
+
+- 不透明度の確かめは当てた値（`style.opacity`）で見る。計算値は CSS の transition の途中の値で、手元の Chrome でヘッドレスを並列に走らせると transition が進まず 0.15 のまま止まることがあった（当てた値は 1）
+- 光る画面の箱は枠の `drop-shadow` が内側にも広がり、画面の下端がうっすら青くなる
+- fixture-poly の `next/font` の woff2 は 64 バイトの合成で、Chrome が「Failed to decode downloaded font」を console の warning に出す（e2e はエラーだけ見る）
+- 手元（macOS の Google Chrome、ヘッドレス。同梱の Chromium は無い）では 3D の地図の e2e（smoke・scale・sharing と built の 3D 側）が「graph.json を読み込み中…」のまま進まない（WebGL の描画と思われる。この変更は v1 の 3D の地図に触れていない）。配線図の e2e（wiring・built の 2 本目・screens）は通る。3D の地図の e2e は CI で確かめる

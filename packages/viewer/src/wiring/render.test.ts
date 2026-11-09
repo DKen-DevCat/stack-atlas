@@ -10,8 +10,9 @@ import {
   variantKey,
   type VariantState,
 } from '@stack-atlas/wiring';
+import { withScreenHtml } from '../../../wiring/src/__tests__/fixture';
 import { SAMPLE_V2_PATH } from '../graph/testSample';
-import { clipText, fitLabel, renderScene, textWidth } from './render';
+import { clipText, fitLabel, frameWithHole, renderScene, SCREEN_CUT_ID, textWidth } from './render';
 
 const graph = JSON.parse(readFileSync(SAMPLE_V2_PATH, 'utf8')) as GraphV2;
 const index = indexGraph(graph);
@@ -20,8 +21,20 @@ const state0 = defaultState(index);
 
 const scene = (lit: ReturnType<typeof select>, state: VariantState = state0) =>
   renderScene({ index, layout, state, lit });
-/** 層（g.class）の中身を取り出す（層の印 `<g class="名前">` は 1 つずつしか無い） */
-const ORDER = ['lanes', 'base-wires', 'hosts', 'base-boxes', 'lit-wires', 'lit-boxes', 'balls'];
+/**
+ * 層（g.class）の中身を取り出す（層の印 `<g class="名前">` は 1 つずつしか無い）。
+ * 2026-11-09 変更（8-3b）: 光る箱と球の間に部品の領域の枠の層（regions）が入った
+ */
+const ORDER = [
+  'lanes',
+  'base-wires',
+  'hosts',
+  'base-boxes',
+  'lit-wires',
+  'lit-boxes',
+  'regions',
+  'balls',
+];
 const layer = (svg: string, name: string) => {
   const i = ORDER.indexOf(name);
   const start = svg.indexOf(`<g class="${name}">`) + `<g class="${name}">`.length;
@@ -129,11 +142,14 @@ describe('配置は graph ごとに 1 回（docs/18 §3.1・§4「動かない�
     '../../../wiring/src/__tests__/fixtures/poly-82a.v2.json',
     import.meta.url,
   );
-  /** 箱と host の枠の矩形（id ごと）。選択で層が変わっても座標は同じはず */
+  /**
+   * 箱と host の枠の矩形（id ごと）。選択で層が変わっても座標は同じはず。
+   * 2026-11-09 変更（8-3b）: 画面の領域を持つ箱は、枠の rect の前に画面の塗り（screen-bg）とプレースホルダ（screen-ph）がある
+   */
   const rects = (svg: string) => {
     const out: string[] = [];
     for (const m of svg.matchAll(
-      /data-box="([^"]+)"[^>]*><rect class="shape" x="([^"]+)" y="([^"]+)" width="([^"]+)" height="([^"]+)"/g,
+      /data-box="([^"]+)"[^>]*>(?:<path class="screen-bg"[^>]*\/>)?(?:<g class="screen-ph"[^>]*>.*?<\/g>)?<rect class="shape" x="([^"]+)" y="([^"]+)" width="([^"]+)" height="([^"]+)"/g,
     ))
       out.push(m.slice(1).join(' '));
     for (const m of svg.matchAll(
@@ -146,6 +162,10 @@ describe('配置は graph ごとに 1 回（docs/18 §3.1・§4「動かない�
   it.each([
     ['基準の graph（poly-82a）', () => JSON.parse(readFileSync(BASELINE, 'utf8')) as GraphV2],
     ['/today の例', () => graph],
+    [
+      '基準の graph に画面の HTML（8-3b）',
+      () => withScreenHtml(JSON.parse(readFileSync(BASELINE, 'utf8')) as GraphV2),
+    ],
   ])(
     '%s: 分岐を全部切り替えても、選択・選択の解除をしても、どの箱と枠の座標も変わらない',
     (_n, make) => {
@@ -197,4 +217,68 @@ describe('配置は graph ごとに 1 回（docs/18 §3.1・§4「動かない�
       ).toEqual(base);
     },
   );
+});
+
+describe('画面の箱（画面の HTML を持つ箱。docs/18 §3.3）', () => {
+  const g = withScreenHtml(graph);
+  const idx = indexGraph(g);
+  const lay = layoutWiring(idx);
+  const b = lay.boxes.get('route:/')!;
+  const scr = b.screen!;
+  /** 箱 1 つ分の SVG（次の箱の手前まで） */
+  const box = (svg: string, id: string) => {
+    const i = svg.indexOf(`data-box="${id}"`);
+    const j = svg.indexOf('data-box="', i + 1);
+    return svg.slice(i, j < 0 ? undefined : j);
+  };
+
+  it('画面の領域だけ塗らず（穴の空いた塗り）、枠の rect は透明の塗りでクリックを受ける。プレースホルダの文言は空で描く', () => {
+    const svg = renderScene({ index: idx, layout: lay, state: defaultState(idx), lit: null });
+    const s = box(svg, 'route:/');
+    expect(svg).toContain('class="box scr" data-box="route:/"');
+    expect(s).toContain(
+      `<path class="screen-bg" d="${frameWithHole(b, 4, scr)}" fill="#4f8cff1a" fill-rule="evenodd"/>`,
+    );
+    expect(s).toContain('<g class="screen-ph" data-screen-ph="route:/">');
+    expect(s).toMatch(/<rect class="shape"[^>]*fill="transparent"/);
+    expect(s).toMatch(/<text x="[\d.]+" y="[\d.]+" text-anchor="middle"><\/text><\/g>/);
+    // 層の順: 塗り → プレースホルダ → 枠 → 名前（枠の線と名前が画面の上）
+    const at = ['screen-bg', 'screen-ph', 'class="shape"', 'class="name"'].map((k) => s.indexOf(k));
+    expect(at.every((x, i) => x >= 0 && (i === 0 || x > at[i - 1]!))).toBe(true);
+    // 画面でない箱は今までどおり
+    expect(box(svg, 'comp:TodayIsland')).not.toContain('screen-bg');
+    expect(box(svg, 'comp:TodayIsland')).toMatch(/<rect class="shape"[^>]*fill="#a78bfa1a"/);
+  });
+
+  it('レーンの背景は画面の領域を抜く（clip-path の穴）。画面が無い graph には付けない', () => {
+    const svg = renderScene({ index: idx, layout: lay, state: defaultState(idx), lit: null });
+    expect(svg).toContain(`<g class="lanes" clip-path="url(#${SCREEN_CUT_ID})">`);
+    expect(svg).toContain(
+      `M${scr.x},${scr.y} h${scr.w} v${Math.round(scr.h * 10) / 10} h${-scr.w} Z`,
+    );
+    expect(scene(null)).not.toContain('clip-path');
+  });
+
+  it('部品の領域の枠は光る箱の上・球の下の層（regions）に入る', () => {
+    const lit = select(idx, defaultState(idx), { kind: 'box', id: 'route:/' });
+    const svg = renderScene({
+      index: idx,
+      layout: lay,
+      state: defaultState(idx),
+      lit,
+      regions: '<rect class="region"/>',
+    });
+    expect(svg).toContain('<g class="regions"><rect class="region"/></g><g class="balls">');
+  });
+
+  it('frameWithHole: 外周（角の丸み）と内側の穴の 2 つの部分パス', () => {
+    const d = frameWithHole({ x: 0, y: 0, w: 100, h: 50 }, 4, { x: 1, y: 26, w: 98, h: 23 });
+    expect(d.match(/M/g)).toHaveLength(2);
+    expect(d).toContain('A4,4 0 0 1 100,4');
+    expect(d.endsWith('M1,26 h98 v23 h-98 Z')).toBe(true);
+    // 丸みは箱の半分を超えない
+    expect(frameWithHole({ x: 0, y: 0, w: 10, h: 6 }, 999, { x: 0, y: 0, w: 1, h: 1 })).toContain(
+      'A3,3',
+    );
+  });
 });

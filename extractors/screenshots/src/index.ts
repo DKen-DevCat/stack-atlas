@@ -7,7 +7,13 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import type { Browser, LaunchOptions } from 'playwright';
-import type { Extractor, PartialGraph, PartialNode, RepoContext } from '@stack-atlas/core';
+import {
+  resolveRegionRef,
+  type Extractor,
+  type PartialGraph,
+  type PartialNode,
+  type RepoContext,
+} from '@stack-atlas/core';
 
 export const NAME = 'screenshots';
 
@@ -91,19 +97,10 @@ export function uniqueSlug(pattern: string, used: Map<string, string>): string {
 
 /**
  * `data-component` の名前 → ノード ID。`comp:<name>` → `hook:<name>` → `:<name>` で終わる ID の順に探す。
- * 見つからなければ undefined。
+ * 見つからなければ undefined。2026-11-09（8-3b）: 規則の正本は @stack-atlas/wiring（ビューアが画面の HTML を測って同じ規則で
+ * 解くため。ビューアは抽出器に依存しない）。ここは core の再 export をそのまま出す
  */
-export function resolveRegionRef(name: string, nodeIds: Iterable<string>): string | undefined {
-  const ids = nodeIds instanceof Set ? (nodeIds as Set<string>) : new Set(nodeIds);
-  if (ids.has(name)) return name; // data-component="comp:Foo" のように ID を直接書いた場合
-  for (const prefix of ['comp:', 'hook:']) {
-    if (ids.has(prefix + name)) return prefix + name;
-  }
-  for (const id of ids) {
-    if (id.endsWith(`:${name}`)) return id;
-  }
-  return undefined;
-}
+export { resolveRegionRef };
 
 export interface RawRegion {
   name: string;

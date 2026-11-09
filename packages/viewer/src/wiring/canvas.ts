@@ -29,6 +29,8 @@ export interface CanvasOptions {
   ignore?: (t: EventTarget | null) => boolean;
   /** 上端の帯の高さ（全体表示で避ける） */
   top?: number;
+  /** 変換を当てたあと（画面の層に同じ変換を掛ける。docs/18 §3.3） */
+  onApply?: (view: View) => void;
 }
 
 export function createCanvas(opts: CanvasOptions): Canvas {
@@ -37,6 +39,7 @@ export function createCanvas(opts: CanvasOptions): Canvas {
   const view: View = { k: 1, tx: 0, ty: 0 };
   const apply = () => {
     target()?.setAttribute('transform', `translate(${view.tx},${view.ty}) scale(${view.k})`);
+    opts.onApply?.(view);
   };
   const viewport = (): Viewport | null => {
     const r = stage.getBoundingClientRect();

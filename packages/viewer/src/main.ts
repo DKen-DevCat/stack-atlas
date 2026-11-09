@@ -180,7 +180,12 @@ function showWiring(res: LoadResult) {
   disposeAll();
   current = null;
   try {
-    wiring = mountWiring({ root: app, graph: res.graphV2, source: res.source });
+    wiring = mountWiring({
+      root: app,
+      graph: res.graphV2,
+      source: res.source,
+      ...(res.baseUrl ? { baseUrl: res.baseUrl } : {}),
+    });
   } catch (e) {
     // 参照が解けない graph は索引が作れない（一覧のエラーを見て直す）
     void showEmpty(

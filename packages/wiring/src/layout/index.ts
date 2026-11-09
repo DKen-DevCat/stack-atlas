@@ -50,6 +50,17 @@ import {
 export * from './types.js';
 export { routeBetween, innerRoute, routeLength, pointAt, segmentRoute } from './geometry.js';
 export { BROKEN_CUT } from './model.js';
+export {
+  screenArea,
+  screenViewport,
+  hasScreenHtml,
+  DEFAULT_VIEWPORT,
+  SCREEN_INSET,
+  SCREEN_RATIO_MAX,
+  SCREEN_RATIO_MIN,
+  VIEWPORT_MAX,
+  VIEWPORT_MIN,
+} from './screen.js';
 
 /** 線の重心で並べ直す往復の数（docs/18 §3.1 の 6） */
 const SWEEPS = 8;
@@ -80,6 +91,7 @@ export function arrange(index: GraphIndex, options: LayoutOptions = {}) {
     pitch: options.pitch ?? 8,
     aspect: options.aspect ?? 1.6,
     widthOf: options.widthOf ?? defaultWidthOf,
+    screens: options.screens ?? true,
   };
   const m = buildModel(index, cfg);
   const { boxes, boxOf } = m;
@@ -469,6 +481,7 @@ export function layoutWiring(index: GraphIndex, options: LayoutOptions = {}): Wi
       y: b.y,
       w: b.w,
       h: b.h,
+      ...(b.scr ? { screen: { x: b.x + b.scr.x, y: b.y + b.scr.y, w: b.scr.w, h: b.scr.h } } : {}),
       ins: b.ins.map((i) => (i ? i.ref : null)),
       outs: b.outs.map((i) => (i ? i.ref : null)),
     });

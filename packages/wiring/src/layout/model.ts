@@ -1,7 +1,8 @@
 // レイアウトの内部の形: 箱（項目のピンの並びと高さ）、レーン、host の塊、線の向き（層を決める線か）
 import type { Runtime } from '@stack-atlas/schema';
 import type { GraphIndex, IndexedItem, IndexedNode, IndexedWire } from '../graph-index.js';
-import { LANES } from './types.js';
+import { SCREEN_INSET, screenArea } from './screen.js';
+import { LANES, type Rect } from './types.js';
 
 // 定数（モックと同じ）
 export const ML = 40;
@@ -39,6 +40,8 @@ export interface Cfg {
   pitch: number;
   aspect: number;
   widthOf: (n: IndexedNode, boxW: number) => number;
+  /** 画面の箱に画面の領域を取るか（docs/18 §3.3。layoutWiring の既定は true、無ければ取らない） */
+  screens?: boolean;
 }
 
 /** 列の中に積むもの: 箱か、通過点の束 */
@@ -58,6 +61,8 @@ export interface LBox {
   group: string;
   w: number;
   h: number;
+  /** 画面の箱の中の画面の領域（箱の左上から。docs/18 §3.3）。画面でなければ null */
+  scr: Rect | null;
   ins: (IndexedItem | null)[];
   outs: (IndexedItem | null)[];
   /** 項目の ref → 箱の上端からのピンの y */
@@ -228,7 +233,10 @@ export function columnOf(
   return out;
 }
 
-/** 項目のピンの y（箱の上端から）と箱の高さ */
+/**
+ * 項目のピンの y（箱の上端から）と箱の高さ。画面の箱は「画面の領域の下端」と「項目の行の高さ」の大きい方
+ * （docs/18 §3.3。項目のピンは箱の縁で、画面の上に重なる）
+ */
 export function measure(b: LBox, rowH: number) {
   b.off = new Map();
   const place = (col: (IndexedItem | null)[]) => {
@@ -243,7 +251,12 @@ export function measure(b: LBox, rowH: number) {
     }
     return y;
   };
-  b.h = Math.max(place(b.ins), place(b.outs), HEAD + 8);
+  b.h = Math.max(
+    place(b.ins),
+    place(b.outs),
+    HEAD + 8,
+    b.scr ? b.scr.y + b.scr.h + SCREEN_INSET : 0,
+  );
 }
 
 const dirOf = (file: string | undefined): string | null => {
@@ -303,6 +316,7 @@ export function buildModel(index: GraphIndex, cfg: Cfg): Model {
       group: n.node.group ?? dirOf(n.node.file) ?? `#${n.id}`,
       w: cfg.widthOf(n, cfg.boxW),
       h: 0,
+      scr: null,
       ins: columnOf(n, 'in'),
       outs: columnOf(n, 'out'),
       off: new Map(),
@@ -326,6 +340,7 @@ export function buildModel(index: GraphIndex, cfg: Cfg): Model {
       ri: -1,
     };
     b.ukey = b.host ? `h:${b.host}` : `g:${b.group}`;
+    b.scr = cfg.screens ? screenArea(n, b.w, HEAD) : null;
     measure(b, cfg.rowH);
     return b;
   });

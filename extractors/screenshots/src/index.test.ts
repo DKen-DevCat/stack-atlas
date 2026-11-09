@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { RepoContext } from '@stack-atlas/core';
+import { resolveRegionRef as sharedResolveRegionRef, type RepoContext } from '@stack-atlas/core';
 import {
   clipRegion,
   extractor,
@@ -89,6 +89,12 @@ describe('resolveRegionRef', () => {
   it('accepts a full node id and returns undefined when unknown', () => {
     expect(resolveRegionRef('hook:useSession', ids)).toBe('hook:useSession');
     expect(resolveRegionRef('Nope', ids)).toBeUndefined();
+  });
+  it('ビューアと同じ規則（2026-11-09、8-3b: 正本は @stack-atlas/wiring。core の再 export をそのまま出す）', () => {
+    // ビューアは画面の HTML の data-component を wiring の resolveRegionRef で解く。抽出器と食い違わないよう同じ関数
+    expect(resolveRegionRef).toBe(sharedResolveRegionRef);
+    for (const name of ['Header', 'useSession', 'Dup', 'apiClient', 'hook:useSession', 'Nope', '/'])
+      expect(resolveRegionRef(name, ids)).toBe(sharedResolveRegionRef(name, ids));
   });
 });
 
