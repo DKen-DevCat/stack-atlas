@@ -3,15 +3,7 @@
 import type { ValidationIssue } from '@stack-atlas/schema';
 import { summarizeIssues } from '../graph/load';
 import { h } from '../ui/dom';
-
-/** リンクの文言（`エラー 1 件・警告 2 件`）。問題が無ければ空 */
-export function issuesLabel(issues: readonly ValidationIssue[]): string {
-  const { errors, warnings } = summarizeIssues(issues);
-  const parts: string[] = [];
-  if (errors) parts.push(`エラー ${errors} 件`);
-  if (warnings) parts.push(`警告 ${warnings} 件`);
-  return parts.join('・');
-}
+import { issuesLabel, issuesList } from '../ui/issues';
 
 export interface IssuesLink {
   /** 題名の横のリンク（問題が無ければ隠す） */
@@ -36,23 +28,11 @@ export function createIssuesLink(issues: readonly ValidationIssue[]): IssuesLink
     label,
   );
   link.hidden = !label;
+  // 文言と一覧の行は 3D の地図の枠（ui/issues.ts）と同じもの
   const panel = h(
     'div',
     { class: 'wv-issues', attrs: { role: 'dialog', 'aria-label': 'graph.json の検証' } },
-    h(
-      'ul',
-      {},
-      ...issues.map((i) =>
-        h(
-          'li',
-          { class: i.level },
-          h('span', { class: 'lv' }, i.level === 'error' ? 'エラー' : '警告'),
-          h('code', {}, i.path),
-          ' ',
-          i.message,
-        ),
-      ),
-    ),
+    issuesList(issues),
   );
   panel.hidden = true;
 

@@ -71,25 +71,55 @@ function itemsOf(n: NodeV2): Map<string, ItemV2> {
 const wireKey = (w: Pick<WireV2, 'from' | 'to'>) => `${w.from}\u0000${w.to}`;
 const wireRef = (w: WireV2): WireRef => ({ from: w.from, to: w.to, via: w.via });
 
+/** diffOverlayV2 が同じ走査で集めるもの（項目の木を箱ごとに 1 回だけ歩く） */
+interface ItemCollect {
+  /** 両方にある項目のうち `type` か `wireType` が変わったもの */
+  changed: Set<string>;
+  /** 今と前の全部の項目の参照（足した graph で解ける参照。今もある箱は今 ∪ 前の項目になる） */
+  refs: Set<string>;
+}
+
 export function diffGraphsV2(
   prev: Pick<GraphV2, 'nodes' | 'wires' | 'types'>,
   next: Pick<GraphV2, 'nodes' | 'wires' | 'types'>,
+): GraphDiffV2 {
+  return compareGraphs(prev, next);
+}
+
+function compareGraphs(
+  prev: Pick<GraphV2, 'nodes' | 'wires' | 'types'>,
+  next: Pick<GraphV2, 'nodes' | 'wires' | 'types'>,
+  collect?: ItemCollect,
 ): GraphDiffV2 {
   const p = new Map(prev.nodes.map((n) => [n.id, n]));
   const q = new Map(next.nodes.map((n) => [n.id, n]));
   const changedNodes: NodeChange[] = [];
   const addedItems: string[] = [];
   const removedItems: string[] = [];
+  const addRefs = (m: Map<string, ItemV2>) => {
+    if (collect) for (const r of m.keys()) collect.refs.add(r);
+  };
   for (const [id, b] of q) {
     const a = p.get(id);
-    if (!a) continue;
+    if (!a) {
+      if (collect) addRefs(itemsOf(b));
+      continue;
+    }
     const fields = COMPARED_V2.filter(([, get]) => get(a) !== get(b)).map(([f]) => f);
     if (fields.length) changedNodes.push({ id, fields });
     const ai = itemsOf(a);
     const bi = itemsOf(b);
-    for (const r of bi.keys()) if (!ai.has(r)) addedItems.push(r);
+    for (const [r, it] of bi) {
+      const x = ai.get(r);
+      if (!x) addedItems.push(r);
+      else if (collect && (x.type !== it.type || x.wireType !== it.wireType))
+        collect.changed.add(r);
+    }
     for (const r of ai.keys()) if (!bi.has(r)) removedItems.push(r);
+    addRefs(bi);
+    addRefs(ai);
   }
+  if (collect) for (const [id, a] of p) if (!q.has(id)) addRefs(itemsOf(a));
   const pw = new Map(prev.wires.map((w) => [wireKey(w), w]));
   const qw = new Map(next.wires.map((w) => [wireKey(w), w]));
   const changedWires: WireChange[] = [];
@@ -180,7 +210,11 @@ function withRemovedItems(cur: NodeV2, prev: NodeV2): NodeV2 {
  * - 前にしか無い線は、両端が足した graph で解けるものだけ足す（`broken` と `route` は外す。切れた線は今の graph の事実だけ描く）
  */
 export function diffOverlayV2(prev: GraphV2, next: GraphV2): DiffOverlayV2 {
-  const diff = diffGraphsV2(prev, next);
+  // 項目の木は compareGraphs の 1 回の走査で見る（増減・型の変わった項目・足した graph の参照）
+  const changed = new Set<string>();
+  // 足した graph（下の nodes）で解ける項目の参照: 今もある箱は今 ∪ 前の項目（mergeItems と同じ）、幽霊の箱は前の項目
+  const refs = new Set<string>();
+  const diff = compareGraphs(prev, next, { changed, refs });
   const prevById = new Map(prev.nodes.map((n) => [n.id, n]));
   const curIds = new Set(next.nodes.map((n) => n.id));
   const curHosts = new Set(next.nodes.flatMap((n) => (n.host === undefined ? [] : [n.host])));
@@ -203,8 +237,6 @@ export function diffOverlayV2(prev: GraphV2, next: GraphV2): DiffOverlayV2 {
     nodes.push(g);
   }
 
-  const refs = new Set<string>();
-  for (const n of nodes) for (const r of itemsOf(n).keys()) refs.add(r);
   const curWireKeys = new Set(next.wires.map(wireKey));
   const prevWireKeys = new Set(prev.wires.map(wireKey));
   const wires: WireV2[] = [...next.wires];
@@ -226,17 +258,6 @@ export function diffOverlayV2(prev: GraphV2, next: GraphV2): DiffOverlayV2 {
     ...(next.types ?? []),
     ...(prev.types ?? []).filter((t) => !curTypes.has(t.id)),
   ];
-
-  const changed = new Set<string>();
-  for (const b of next.nodes) {
-    const a = prevById.get(b.id);
-    if (!a) continue;
-    const ai = itemsOf(a);
-    for (const [ref, it] of itemsOf(b)) {
-      const x = ai.get(ref);
-      if (x && (x.type !== it.type || x.wireType !== it.wireType)) changed.add(ref);
-    }
-  }
 
   const graph: GraphV2 = { ...next, nodes, wires };
   if (types.length) graph.types = types;

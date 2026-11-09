@@ -1,11 +1,13 @@
 // 配線図のメモの規則（docs/18 §3.4）。DOM に触らない（単体テストできる）。
 // メモのキーは 3D の地図と同じ（memos.json。v1 のノード id）。配線図では箱 id・型 id・group（v1 の箱の id。D56）を見る
 import type { GraphIndex, Rect, Selection } from '@stack-atlas/wiring';
+import { memoOf } from '../ui/memos';
 
 export type MemoMap = Readonly<Record<string, string>>;
 
+/** id に空でないメモがあるか（自分のプロパティだけ。group が `constructor` などでも落ちない） */
 const hasMemo = (memos: MemoMap, id: string | undefined): id is string =>
-  id !== undefined && !!memos[id]?.trim();
+  id !== undefined && (memoOf(memos, id)?.trim() ?? '') !== '';
 
 /** 箱の group（v1 の箱の id。箱 id と同じなら無いのと同じ） */
 const groupOf = (index: GraphIndex, id: string): string | undefined => {

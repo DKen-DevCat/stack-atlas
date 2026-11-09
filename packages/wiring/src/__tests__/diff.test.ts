@@ -145,3 +145,39 @@ describe('diffOverlayV2（今の graph ＋ 前にしか無い箱・項目・線�
     expect(same.changed.size).toBe(0);
   });
 });
+
+describe('切れた線の端は差分の幽霊の項目に降りない（docs/18 §10.6）', () => {
+  // 例の v2 の切れた線: handleToday の resp → GET /today の body、path `entries.occurredAt`（受ける側に無い）。
+  // 前の graph の受ける側にだけ occurredAt がある（足した graph では幽霊の行）。配置は重いので describe で 1 回ずつ
+  const PATH = 'entries.occurredAt';
+  const GHOST = 'endpoint:GET /today#res/body.entries.occurredAt';
+  const next = read();
+  const prev = structuredClone(next);
+  const body = prev.nodes
+    .find((n) => n.id === 'endpoint:GET /today')!
+    .ports.find((p) => p.id === 'res')!.items[0]!;
+  const entries = body.children!.find((c) => c.id === 'entries')!;
+  entries.children!.push({
+    id: 'occurredAt',
+    name: 'occurredAt',
+    type: 'string',
+    wireType: 'datetime',
+  });
+  const ov = diffOverlayV2(prev, next);
+  const ui = indexGraph(ov.graph);
+  const plain = layoutWiring(indexGraph(next));
+  const drawn = layoutWiring(ui, { ghostItems: ov.ghost.items });
+  const unskipped = layoutWiring(ui);
+  const endOf = (layout: ReturnType<typeof layoutWiring>) => {
+    const b = layout.broken.find((x) => x.path === PATH)!;
+    return { from: b.from, to: b.to };
+  };
+
+  it('path が前にしか無い子を指しても、端は ?prev= が無いときと同じ（今の graph の最も近い祖先）', () => {
+    expect(ov.ghost.items.has(GHOST)).toBe(true);
+    expect(endOf(plain).to).toBe('endpoint:GET /today#res/body.entries');
+    expect(endOf(drawn)).toEqual(endOf(plain));
+    // 幽霊の項目を渡さなければ、足した graph にだけある幽霊の行まで降りる（直す前の配線図の描き方）
+    expect(endOf(unskipped).to).toBe(GHOST);
+  });
+});

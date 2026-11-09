@@ -5,6 +5,7 @@ import type { GraphIndex, Selection } from '@stack-atlas/wiring';
 import { h } from '../ui/dom';
 import {
   downloadMemos,
+  memoOf,
   saveMemosToServer,
   UNSUPPORTED_SAVE_MESSAGE,
   type SharedMemoStore,
@@ -157,7 +158,7 @@ export class WiringMemos {
 
   private orphanItems() {
     const all = this.opts.store.all();
-    return memoOrphans(this.opts.index, all).map((id) => ({ id, text: all[id] ?? '' }));
+    return memoOrphans(this.opts.index, all).map((id) => ({ id, text: memoOf(all, id) ?? '' }));
   }
 
   private refreshOrphans(): void {

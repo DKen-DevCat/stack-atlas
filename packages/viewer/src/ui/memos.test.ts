@@ -3,6 +3,7 @@ import {
   loadSharedMemos,
   LocalMemoStore,
   memoKey,
+  memoOf,
   mergeMemos,
   orphanIds,
   parseMemos,
@@ -219,5 +220,30 @@ describe('loadSharedMemos', () => {
       await loadSharedMemos('https://cdn.example/out/graph.json', 'http://localhost:4173/'),
     ).toEqual({ memos: { a: 'file' }, api: false });
     expect(calls).toEqual(['https://cdn.example/out/memos.json']);
+  });
+});
+
+describe('継承したプロパティの名前の id（constructor・toString・__proto__。8-3c のセキュリティレビュー）', () => {
+  const NAMES = ['constructor', 'toString', '__proto__', 'hasOwnProperty'];
+  it('memoOf は自分のプロパティで文字列のときだけ返す', () => {
+    for (const id of NAMES) expect(memoOf({ a: 'A' }, id), id).toBeUndefined();
+    expect(memoOf({ constructor: 'C' }, 'constructor')).toBe('C');
+    expect(memoOf({ a: 'A' }, 'a')).toBe('A');
+  });
+  it('SharedMemoStore・LocalMemoStore は空・メモなしとして扱う（関数や Object.prototype を返さない）', () => {
+    const s = new SharedMemoStore('p', { a: 'A' }, fakeStorage());
+    const l = new LocalMemoStore('p', fakeStorage());
+    for (const id of NAMES) {
+      expect(s.get(id), id).toBe('');
+      expect(s.status(id), id).toBe('none');
+      expect(l.get(id), id).toBe('');
+    }
+    // 名前が constructor のメモも書ける・読める（自分のプロパティになる）
+    s.set('constructor', 'C');
+    expect(s.get('constructor')).toBe('C');
+    expect(s.status('constructor')).toBe('local');
+    s.set('constructor', '');
+    expect(s.get('constructor')).toBe('');
+    expect(s.unsavedIds()).toEqual([]);
   });
 });

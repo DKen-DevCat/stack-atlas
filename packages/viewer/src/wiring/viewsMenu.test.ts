@@ -1,10 +1,10 @@
-// views のメニュー（docs/18 §3.4）: 選択肢、選んだ view とほかを選んだら外れること、?view= で開いたときに映す所
+// views のメニュー（docs/18 §3.4）: 選択肢、選んだ view とほかを選んだら外れること、選んだ view の当て方、?view= で開いたときに映す所
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { GraphV2 } from '@stack-atlas/schema';
-import { indexGraph, layoutWiring } from '@stack-atlas/wiring';
+import { defaultState, indexGraph, layoutWiring } from '@stack-atlas/wiring';
 import { SAMPLE_V2_PATH } from '../graph/testSample';
-import { selectionFocus, ViewChoice, viewOptions, VIEW_PLACEHOLDER } from './viewsMenu';
+import { selectionFocus, ViewChoice, viewOptions, viewPick, VIEW_PLACEHOLDER } from './viewsMenu';
 
 const graph = JSON.parse(readFileSync(SAMPLE_V2_PATH, 'utf8')) as GraphV2;
 const index = indexGraph(graph);
@@ -57,5 +57,21 @@ describe('selectionFocus（?view= で開いた直後に映す所）', () => {
     );
     expect(selectionFocus(index, layout, { kind: 'type', typeRef: 'type:Entry' })).toBeNull();
     expect(selectionFocus(index, layout, null)).toBeNull();
+  });
+});
+
+describe('viewPick（メニューで選んだ view を当てる）', () => {
+  const HIT = 'infra:static_site/this#hit';
+  it('view は既定 ＋ variants と start。空の選択肢は分岐を既定に戻して選択なし（前の view の分岐を残さない）', () => {
+    const hit = viewPick(
+      index,
+      graph.views!.find((v) => v.id === 'today-cdn-hit'),
+    );
+    expect(hit.state[HIT]).toBe(true);
+    expect(hit.selection).toEqual({ kind: 'box', id: 'actor:user' });
+    const none = viewPick(index, undefined);
+    expect(none.selection).toBeNull();
+    expect(none.state).toEqual(defaultState(index));
+    expect(none.state[HIT]).toBe(false);
   });
 });

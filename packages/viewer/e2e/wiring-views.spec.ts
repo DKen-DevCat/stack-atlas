@@ -18,6 +18,7 @@ interface WiringDbg {
   lit: { boxes: string[] } | null;
   state: Record<string, boolean>;
   viewId: string | null;
+  renders: number;
   memoBoxes: string[];
   diff: {
     ghost: { nodes: string[]; items: string[]; wires: string[] };
@@ -85,9 +86,19 @@ test('views のメニュー: 選ぶと始点と分岐が再現される。ほか
   await expect(menu).toHaveValue('');
   expect(await dbg(page, 'selection')).toBeNull();
 
-  // ?view= で開く: 始点と分岐が当たり、開いた直後はその始点のあたりを映す
+  // 空の選択肢を選ぶ: 選択を解き、分岐も既定に戻す（前の view の分岐を残さない）
+  await menu.selectOption('today-cdn-hit');
+  expect((await dbg(page, 'state'))[HIT]).toBe(true);
+  await menu.selectOption('');
+  expect(await dbg(page, 'selection')).toBeNull();
+  expect((await dbg(page, 'state'))[HIT]).toBe(false);
+  expect(await dbg(page, 'viewId')).toBeNull();
+  expect(new URL(page.url()).searchParams.get('view')).toBeNull();
+
+  // ?view= で開く: 始点と分岐が当たり、開いた直後はその始点のあたりを映す。描くのは 1 回だけ（当ててから描く）
   await page.goto(`${V2_URL}&view=today-cdn-hit`);
   await waitReady(page);
+  expect(await dbg(page, 'renders')).toBe(1);
   expect(await dbg(page, 'selection')).toEqual({ kind: 'box', id: 'actor:user' });
   expect((await dbg(page, 'state'))[HIT]).toBe(true);
   await expect(menu).toHaveValue('today-cdn-hit');
@@ -98,11 +109,33 @@ test('views のメニュー: 選ぶと始点と分岐が再現される。ほか
   expect(b.y).toBeGreaterThanOrEqual(0);
   expect(b.y + b.height).toBeLessThanOrEqual(vp.height);
 
-  // graph に無い view は無視して普通に開き、警告の一覧に出す
+  // graph に無い view は無視して普通に開き、警告の一覧に出す。URL の ?view= は外す（?graph= は残す）
   await page.goto(`${V2_URL}&view=nope`);
   await waitReady(page);
   expect(await dbg(page, 'selection')).toBeNull();
   await expect(page.locator('.wv-top [data-issues]')).toHaveText('警告 2 件');
+  const url = new URL(page.url());
+  expect(url.searchParams.get('view')).toBeNull();
+  expect(url.searchParams.get('graph')).toBe(SAMPLE);
+  expect(errors).toEqual([]);
+});
+
+test('views のメニュー: ファイルで開いた graph の view は URL に書かない（?graph= が無いので再読み込みで当たらない）', async ({
+  page,
+}) => {
+  const errors = collectErrors(page);
+  await page.goto('./');
+  await page
+    .locator('.empty input[type=file]')
+    .setInputFiles(
+      new URL('../../../examples/fixture-poly.today.v2.json', import.meta.url).pathname,
+    );
+  await waitReady(page);
+  const menu = page.locator('.wv-top select.wv-views');
+  await menu.selectOption('today-cdn-hit');
+  expect(await dbg(page, 'viewId')).toBe('today-cdn-hit');
+  expect((await dbg(page, 'state'))[HIT]).toBe(true);
+  expect(new URL(page.url()).search).toBe('');
   expect(errors).toEqual([]);
 });
 
@@ -174,10 +207,20 @@ test('メモ: 角を折った箱、選ぶと左下の札、その場で書くと
 
   // メモの無い箱に書くと角が折れ、消すと戻る
   await clickBox(page, 'comp:TotalCard');
-  await card.locator('textarea[data-memo-id="comp:TotalCard"]').fill('合計のカード');
+  const totalTa = card.locator('textarea[data-memo-id="comp:TotalCard"]');
+  await totalTa.fill('合計のカード');
   await expect(page.locator('[data-box="comp:TotalCard"] .memo-fold')).toHaveCount(1);
-  await card.locator('textarea[data-memo-id="comp:TotalCard"]').fill('');
+  await totalTa.fill('');
   await expect(page.locator('[data-box="comp:TotalCard"] .memo-fold')).toHaveCount(0);
+
+  // 札の中の Esc は欄から焦点を外すだけ（選択は解かない）。もう一度押すと選択を解く
+  // 2026-11-09 変更（8-3c のレビュー）: 以前は札で書いている途中の Esc でも選択が解けて札が閉じた
+  await expect(totalTa).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(totalTa).not.toBeFocused();
+  await expect(card).toBeVisible();
+  // TotalCard は getToday を選んで光っていたので、クリックは下流だけ（downOnly）の選択
+  expect(await dbg(page, 'selection')).toMatchObject({ kind: 'box', id: 'comp:TotalCard' });
 
   // 型をクリック（横断面）: 型の id のメモ（沈んだ箱は文字を消すので、選択を解いてから）
   await page.keyboard.press('Escape');

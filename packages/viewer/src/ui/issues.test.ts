@@ -1,7 +1,9 @@
-// 検証の一覧のリンク（D64）の文言。開く・Esc・外のクリックで閉じる・図の上の枠が無いことは e2e（wiring-views.spec.ts）
+// 検証の一覧の件数の文言（3D の地図の枠の見出しと配線図のリンク。D64）。
+// 2026-11-09（8-3c のレビュー）: wiring/issuesLink.test.ts から移した（文言の関数を ui/issues.ts に寄せた）。
+// リンクを開く・Esc・外のクリックで閉じる・図の上の枠が無いことは e2e（wiring-views.spec.ts）
 import { describe, expect, it } from 'vitest';
 import type { ValidationIssue } from '@stack-atlas/schema';
-import { issuesLabel } from './issuesLink';
+import { issuesLabel } from './issues';
 
 const w = (n: number): ValidationIssue[] =>
   Array.from({ length: n }, (_, i) => ({ level: 'warning', path: `/w${i}`, message: 'w' }));

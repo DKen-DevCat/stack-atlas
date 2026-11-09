@@ -5,6 +5,16 @@
  *   このブラウザでの編集（localStorage）をノード ID ごとに上書きする → SharedMemoStore（docs/09 §3.5、D13）
  */
 
+/**
+ * id のメモ（自分のプロパティで文字列のときだけ）。`constructor`・`toString`・`__proto__` など継承したプロパティを拾わない
+ * （箱 id や group は graph.json の文字列。拾うと文字列でない値に `.trim()` して配線図ごと落ちる）
+ */
+export function memoOf(memos: Readonly<Record<string, string>>, id: string): string | undefined {
+  if (!Object.hasOwn(memos, id)) return undefined;
+  const t: unknown = memos[id];
+  return typeof t === 'string' ? t : undefined;
+}
+
 export interface MemoStore {
   get(id: string): string;
   /** 空文字（空白のみ）なら削除 */
@@ -51,7 +61,7 @@ export class LocalMemoStore implements MemoStore {
   }
 
   get(id: string): string {
-    return this.memos[id] ?? '';
+    return memoOf(this.memos, id) ?? '';
   }
 
   set(id: string, text: string): void {
@@ -178,11 +188,11 @@ export class SharedMemoStore implements MemoStore {
   }
 
   get(id: string): string {
-    return this.merged[id] ?? '';
+    return memoOf(this.merged, id) ?? '';
   }
 
   set(id: string, text: string): void {
-    const sharedText = this.shared[id];
+    const sharedText = memoOf(this.shared, id);
     if (!text.trim()) {
       this.local.set(id, '');
       if (sharedText !== undefined) this.deleted.add(id);
@@ -206,7 +216,7 @@ export class SharedMemoStore implements MemoStore {
   /** 'local' = このブラウザでの編集が共有と違う（未保存）、'shared' = 共有のまま、'none' = メモなし */
   status(id: string): MemoStatus {
     if (this.isLocal(id)) return 'local';
-    return this.merged[id] ? 'shared' : 'none';
+    return memoOf(this.merged, id) ? 'shared' : 'none';
   }
 
   /** 未保存（ローカルの上書き・削除）のノード ID */
@@ -241,20 +251,21 @@ export class SharedMemoStore implements MemoStore {
    */
   private prune(): void {
     for (const [id, t] of Object.entries(this.local.all())) {
-      if (this.shared[id] === t) this.local.set(id, '');
+      if (memoOf(this.shared, id) === t) this.local.set(id, '');
     }
     if (Object.keys(this.shared).length > 0) {
       for (const id of [...this.deleted])
-        if (this.shared[id] === undefined) this.deleted.delete(id);
+        if (memoOf(this.shared, id) === undefined) this.deleted.delete(id);
     }
     this.persistDeleted();
     this.recompute();
   }
 
   private isLocal(id: string): boolean {
-    const l = this.local.all()[id];
-    if (l !== undefined) return l !== this.shared[id];
-    return this.deleted.has(id) && this.shared[id] !== undefined;
+    const l = memoOf(this.local.all(), id);
+    const sharedText = memoOf(this.shared, id);
+    if (l !== undefined) return l !== sharedText;
+    return this.deleted.has(id) && sharedText !== undefined;
   }
 
   private recompute(): void {

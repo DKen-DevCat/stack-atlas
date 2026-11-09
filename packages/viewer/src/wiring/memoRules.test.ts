@@ -102,3 +102,27 @@ describe('memoFold（右下の角を折った形）', () => {
     ]);
   });
 });
+
+describe('group が継承したプロパティの名前（constructor・__proto__・toString。8-3c のセキュリティレビュー）', () => {
+  // 以前は memos[group]?.trim() が Object.prototype の関数・オブジェクトを拾って TypeError になり、配線図ごと落ちた
+  for (const group of ['constructor', '__proto__', 'toString']) {
+    it(`group "${group}": 落ちず、メモが無い group として扱う。書けば箱の角が折れる`, () => {
+      const g = structuredClone(graph);
+      g.nodes.find((n) => n.id === 'route:/')!.group = group;
+      const i = indexGraph(g);
+      expect([...memoBoxIds(i, {})]).toEqual([]);
+      expect(memoTargets(i, { kind: 'box', id: 'route:/' }, {})).toEqual([
+        { id: 'route:/', label: '/', role: 'box' },
+      ]);
+      expect(memoOrphans(i, {})).toEqual([]);
+      if (group === '__proto__') return; // __proto__ は通常のオブジェクトの自分のキーにできない（memos.json の読み込みで捨てる）
+      const memos = { [group]: 'group のメモ' };
+      expect([...memoBoxIds(i, memos)]).toEqual(['route:/']);
+      expect(memoTargets(i, { kind: 'box', id: 'route:/' }, memos).map((t) => t.role)).toEqual([
+        'box',
+        'group',
+      ]);
+      expect(memoOrphans(i, memos)).toEqual([]);
+    });
+  }
+});

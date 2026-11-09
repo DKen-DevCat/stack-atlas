@@ -3,7 +3,8 @@
  * - `version: 2` の graph は validateGraphV2 で検証し、3D の Viewer ではなく配線図（wiring/）で開く（SVG なので WebGL は要らない）
  * - `?prev=<URL>`（または「開く ▾ → 前回と比較…」）で前回の graph.json を読み、差分を色分けする。配線図は前も v2 のとき
  *   差分を描き、前が v1 なら題名の横に「前の graph が v1 です」（docs/18 §3.4）
- * - `?view=<id>` は配線図で graph の views を当てて開く（共有用。docs/18 §3.4）
+ * - `?view=<id>` は配線図で graph の views を当てて開く（共有用。docs/18 §3.4）。URL（?graph=）から開いたときだけ読み書きする
+ *   （ドロップ・ファイル選択で開いた graph の view は URL に書かない。graph に無い id は警告を出して URL から外す）
  * - graph.json と同じディレクトリの memos.json（と serve の GET /api/memos）を共有メモとして読む（3D の地図と配線図の両方）
  * - 検証の一覧は 3D の地図では図の上の枠、配線図では題名の横の「警告 N 件」のリンク（D64）
  * - build の出力（docs/16 §10）の graph.json（v2）と graph.v1.json（v1）は、隣にあれば左上のリンクで行き来する
@@ -129,11 +130,16 @@ function prevFrom(r: LoadResult): PrevGraph {
 /** 画面を出し直した回数（隣の graph の確かめが終わる前に別の graph を開いたら、リンクを出さない） */
 let shownSeq = 0;
 
+/** URL（?graph=）から開いたとき: ?view= の id（無ければ undefined）。ファイルで開いたときは渡さない */
+interface FromUrl {
+  viewId: string | undefined;
+}
+
 function showResult(
   res: LoadResult,
   shared: SharedMemoSource,
   prev: PrevGraph = {},
-  viewId?: string,
+  fromUrl?: FromUrl,
 ) {
   shownSeq++;
   overlays.replaceChildren();
@@ -158,7 +164,7 @@ function showResult(
     if (box) overlays.append(box);
   };
   if (view === 'wiring') {
-    showWiring(res, { shared, issues: allIssues, prev, viewId, showIssuesBox });
+    showWiring(res, { shared, issues: allIssues, prev, fromUrl, showIssuesBox });
     return;
   }
   showIssuesBox();
@@ -201,8 +207,8 @@ interface WiringStart {
   shared: SharedMemoSource;
   issues: ValidationIssue[];
   prev: PrevGraph;
-  /** ?view= の id（URL から開いたときだけ） */
-  viewId: string | undefined;
+  /** URL から開いたときだけ（?view= を読み、views のメニューで選んだ view を書く） */
+  fromUrl: FromUrl | undefined;
   /** 描けなかったときに検証の一覧の枠を出す */
   showIssuesBox: () => void;
 }
@@ -233,8 +239,9 @@ function showWiring(res: LoadResult, w: WiringStart) {
         : w.prev.graph
           ? { prev: { v1: true } }
           : {}),
-      ...(w.viewId ? { view: w.viewId } : {}),
-      onViewChange: (id) => setParam('view', id),
+      ...(w.fromUrl?.viewId ? { view: w.fromUrl.viewId } : {}),
+      // ファイルで開いた graph の view を URL に書くと、再読み込みで別の graph（?graph= が無い）に当たる
+      ...(w.fromUrl ? { onViewChange: (id: string | null) => setParam('view', id) } : {}),
     });
   } catch (e) {
     // 参照が解けない graph は索引が作れない（一覧のエラーを見て直す）
@@ -356,7 +363,7 @@ async function start() {
       ? await loadSharedMemos(res.baseUrl, location.href)
       : { memos: {}, api: false };
   const viewId = new URLSearchParams(location.search).get('view') ?? undefined;
-  showResult(res, shared, prevRes ? prevFrom(prevRes) : {}, viewId);
+  showResult(res, shared, prevRes ? prevFrom(prevRes) : {}, { viewId });
 }
 
 void start();

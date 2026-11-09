@@ -2,10 +2,13 @@
 // 選ぶと分岐を既定に戻して view の variants を当て、start から選ぶ（app.ts）。ほかを選んだらメニューは空に戻る
 import type { ViewV2 } from '@stack-atlas/schema';
 import {
+  applyView,
+  defaultState,
   findView,
   type GraphIndex,
   type Rect,
   type Selection,
+  type VariantState,
   type WiringLayout,
 } from '@stack-atlas/wiring';
 import { h } from '../ui/dom';
@@ -65,6 +68,17 @@ export class ViewChoice {
     this.current = id;
     this.onChange(id);
   }
+}
+
+/**
+ * メニューで選んだ view を当てた分岐の状態と選択。view は分岐を既定に戻して variants を当て、start から選ぶ。
+ * 空の選択肢（view 無し）は分岐を既定に戻して選択なし（前の view の分岐を残さない）
+ */
+export function viewPick(
+  index: GraphIndex,
+  view: ViewV2 | undefined,
+): { state: VariantState; selection: Selection | null } {
+  return view ? applyView(index, view) : { state: defaultState(index), selection: null };
 }
 
 export interface ViewsMenu {

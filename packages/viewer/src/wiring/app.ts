@@ -1,18 +1,14 @@
 // 配線図（graph.json v2）のアプリ。索引・レイアウト・たどる規則は @stack-atlas/wiring、ここは描画と入力だけ（D44）。
 // 部品: render（SVG）、interaction（クリック・hover・Esc）、balls（球と再生バー）、variantTable（分岐の表）、canvas（無限の平面）、
 // screenLayer（画面の箱の中のビルド成果物の HTML。SVG の下の iframe の層。docs/18 §3.3）、
-// viewsMenu・memoCard・issuesLink（views のメニュー、メモの札、検証の一覧のリンク。docs/18 §3.4）、差分は diffOverlayV2
+// viewsMenu・memoCard・issuesLink（views のメニュー、メモの札、検証の一覧のリンク。docs/18 §3.4）、drawPlan（差分を足した描く graph と配置）
 import type { GraphV2, ValidationIssue } from '@stack-atlas/schema';
 import {
-  applyView,
   defaultState,
-  diffOverlayV2,
   findView,
   indexGraph,
-  layoutWiring,
   select,
   variantKey,
-  type DiffOverlayV2,
   type GraphIndex,
   type LitSelection,
   type Selection,
@@ -24,6 +20,7 @@ import { h } from '../ui/dom';
 import type { SharedMemoStore } from '../ui/memos';
 import { Player, type BallPosition } from './balls';
 import { createCanvas, type Canvas } from './canvas';
+import { planDraw } from './drawPlan';
 import { installInteraction, TABLE } from './interaction';
 import { createIssuesLink } from './issuesLink';
 import { WiringMemos } from './memoCard';
@@ -32,7 +29,7 @@ import { ScreenLayer, type ScreenDebug } from './screenLayer';
 import { renderRegions } from './screens';
 import { VariantTable } from './variantTable';
 import { openingFocus } from './view';
-import { createViewsMenu, selectionFocus, ViewChoice } from './viewsMenu';
+import { createViewsMenu, selectionFocus, ViewChoice, viewPick } from './viewsMenu';
 import './style.css';
 
 /** e2e・デバッグ用（window.__stackAtlas.wiring） */
@@ -62,6 +59,8 @@ export interface WiringDebug {
   readonly screens: ScreenDebug;
   /** views のメニューで選んでいる view の id（docs/18 §3.4） */
   readonly viewId: string | null;
+  /** 図を描いた回数（開いた直後は 1 回。?view= で開いても 1 回） */
+  readonly renders: number;
   /** 右下の角を折った箱（メモのある箱） */
   readonly memoBoxes: string[];
   /** 差分の印（?prev= が v2 のとき。幽霊・今だけ・型の変わった項目） */
@@ -104,7 +103,10 @@ export interface WiringOptions {
   prev?: { v2: GraphV2 } | { v1: true };
   /** 開いた直後に当てる view の id（?view=）。開いた直後の表示はその始点のあたり */
   view?: string;
-  /** views のメニューで view を選んだ・外れた（main.ts が URL の ?view= を書き換える） */
+  /**
+   * views のメニューで view を選んだ・外れた（main.ts が URL の ?view= を書き換える）。
+   * opts.view が graph に無いときも、警告を出したあと null で呼ぶ（URL から外す）
+   */
   onViewChange?: (id: string | null) => void;
 }
 
@@ -119,24 +121,15 @@ export function mountWiring(opts: WiringOptions): WiringApp {
   const index = indexGraph(opts.graph);
   const issues: ValidationIssue[] = [...(opts.issues ?? [])];
   // 差分（docs/18 §3.4）: 前が v2 なら、今の graph に前にしか無い箱・項目・線を足した graph を 1 回だけ配置して描く。
-  // 選ぶ・たどる・分岐は今の graph の索引（index）で行うので、幽霊は光らない
-  let overlay: DiffOverlayV2 | null = null;
-  let drawIndex = index;
-  if (opts.prev && 'v2' in opts.prev) {
-    try {
-      overlay = diffOverlayV2(opts.prev.v2, opts.graph);
-      drawIndex = indexGraph(overlay.graph);
-    } catch (e) {
-      overlay = null;
-      drawIndex = index;
-      issues.push({
-        level: 'warning',
-        path: 'prev',
-        message: `前回の graph.json と比べられないため差分は表示しません: ${e instanceof Error ? e.message : String(e)}`,
-      });
-    }
-  }
-  const layout = layoutWiring(drawIndex);
+  // 選ぶ・たどる・分岐は今の graph の索引（index）で行うので、幽霊は光らない。
+  // 比べられない・足した graph を配置できないときは差分を外して描き、警告の一覧に足す（drawPlan.ts）
+  const plan = planDraw(
+    index,
+    opts.graph,
+    opts.prev && 'v2' in opts.prev ? opts.prev.v2 : undefined,
+  );
+  const { overlay, drawIndex, layout } = plan;
+  if (plan.issue) issues.push(plan.issue);
   let state: VariantState = defaultState(index);
   let selection: Selection | null = null;
   let lit: LitSelection | null = null;
@@ -256,7 +249,9 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     onChange: (nodeId, vid, value) => setVariant(nodeId, vid, value),
   });
 
+  let renders = 0;
   const render = (restart: boolean) => {
+    renders++;
     svg.innerHTML = `<g class="view">${renderScene({
       index: drawIndex,
       layout,
@@ -273,12 +268,16 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     table.refresh();
     root.classList.toggle('has-sel', !!lit);
   };
-  const doSelect = (next: Selection | null, fromView = false) => {
+  // 選択を変える（描き直しは呼ぶ側。開いた直後の ?view= は描く前に当てる）
+  const applySelection = (next: Selection | null, fromView: boolean) => {
     selection = next;
     lit = next ? select(index, state, next) : null;
     if (!lit) selection = null;
     if (!fromView) choice.clear();
     memoUi?.show(selection);
+  };
+  const doSelect = (next: Selection | null, fromView = false) => {
+    applySelection(next, fromView);
     render(true);
   };
   // 経路を計算し直して 0 秒から
@@ -288,13 +287,16 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     choice.clear();
     render(true);
   };
-  // view を選ぶ: 分岐を既定に戻して variants を当て、start から選ぶ。空の選択肢は選択の解除
-  const pickView = (id: string | null) => {
-    const v = choice.pick(id);
-    if (!v) return doSelect(null);
-    const a = applyView(index, v);
+  // view を選ぶ: 分岐を既定に戻して variants を当て、start から選ぶ。空の選択肢は分岐を既定に戻して選択の解除
+  // （前の view の分岐を残さない）
+  const applyPick = (id: string | null) => {
+    const a = viewPick(index, choice.pick(id));
     state = a.state;
-    doSelect(a.selection, true);
+    applySelection(a.selection, true);
+  };
+  const pickView = (id: string | null) => {
+    applyPick(id);
+    render(true);
   };
 
   const wireByKey = new Map(index.wires.map((w) => [w.key, w]));
@@ -315,10 +317,12 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     fitAll: () => canvas.fit(),
   });
 
+  // ?view= は描く前に当て（開いた直後に描くのは 1 回だけ）、その始点のあたりを映す（無ければ最初の画面の箱のあたり）。
+  // graph に無い id は警告を出して URL から外す
+  if (initialView) applyPick(initialView.id);
+  else if (opts.view) opts.onViewChange?.(null);
   // 配置は graph ごとにここで 1 回だけ（選択・分岐の切り替えは描き直すだけで、箱を動かさない。docs/18 §3.1）
   render(true);
-  // ?view= は開いた直後に当て、その始点のあたりを映す（無ければ最初の画面の箱のあたり）
-  if (initialView) pickView(initialView.id);
   canvas.open(
     (initialView && selectionFocus(index, layout, selection)) || openingFocus(index, layout),
   );
@@ -372,6 +376,9 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     },
     get viewId() {
       return choice.id;
+    },
+    get renders() {
+      return renders;
     },
     get memoBoxes() {
       return memoUi ? [...memoUi.boxIds()].sort() : [];
