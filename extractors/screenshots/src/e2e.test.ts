@@ -100,7 +100,8 @@ describe('screenshots extractor (e2e, real Chromium)', () => {
     for (const n of graph.nodes) {
       expect(Object.keys(n).sort()).toEqual(['id', 'screen']);
     }
-    expect(warnings).toEqual([]);
+    // 2026-11-10 変更（8-4）: CI は STACK_ATLAS_CHROMIUM_NO_SANDBOX=1 で起動するので、その警告だけは許す
+    expect(warnings.filter((w) => !w.includes('STACK_ATLAS_CHROMIUM_NO_SANDBOX=1'))).toEqual([]);
   });
 
   it('writes viewport-sized PNGs at shots/<slug>.png', () => {
