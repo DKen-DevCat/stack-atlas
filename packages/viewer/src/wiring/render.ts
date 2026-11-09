@@ -4,6 +4,7 @@ import {
   itemActive,
   segmentRoute,
   wireActive,
+  type DiffOverlayV2,
   type GraphIndex,
   type IndexedItem,
   type LitSelection,
@@ -12,7 +13,14 @@ import {
   type VariantState,
   type WiringLayout,
 } from '@stack-atlas/wiring';
+import { memoFold } from './memoRules';
 import { KIND, KIND_LABEL, LANE_TINT } from './theme';
+
+/**
+ * 前の graph との差分の印（docs/18 §3.4。@stack-atlas/wiring の diffOverlayV2）。幽霊（前にしか無いもの）は灰の点線で、
+ * クリックも hover も受けない（data-box・data-item・data-wire を付けない）。今だけのもの・型の変わった項目は緑の縁
+ */
+export type DiffMarks = Pick<DiffOverlayV2, 'ghost' | 'added' | 'changed'>;
 
 export interface SceneInput {
   index: GraphIndex;
@@ -21,6 +29,10 @@ export interface SceneInput {
   lit: LitSelection | null;
   /** 部品の領域の枠（`<g class="regions">` の中身。screens.ts の renderRegions）。無ければ空 */
   regions?: string;
+  /** メモのある箱（右下の角を折る。docs/18 §3.4。memoRules.ts の memoBoxIds） */
+  memos?: ReadonlySet<string>;
+  /** 差分の印。index と layout は今の graph に幽霊を足した graph（diffOverlayV2 の graph） */
+  diff?: DiffMarks;
 }
 
 export const esc = (s: string) =>
@@ -96,7 +108,8 @@ export const SCREEN_CUT_ID = 'wv-screen-cut';
  * 何も選んでいないときは全部が下の層（線は細く薄く）。画面の箱（画面の領域を持つ箱）は画面の領域を塗らず、
  * 下の層（ScreenLayer の iframe）が透けて見える。読んでいない間はプレースホルダ（文言は ScreenLayer が入れる）
  */
-export function renderScene({ index, layout, state, lit, regions }: SceneInput): string {
+export function renderScene(input: SceneInput): string {
+  const { index, layout, state, lit, regions, memos, diff } = input;
   let lanes = '';
   let baseWires = '';
   let hosts = '';
@@ -129,7 +142,12 @@ export function renderScene({ index, layout, state, lit, regions }: SceneInput):
   for (const w of index.wires) {
     const r = layout.routes.get(w.key);
     if (!r || litWireKeys.has(w.key)) continue;
-    const cls = `wire thin via-${esc(w.wire.via)}${lit ? ' dimmed' : ''}${wireActive(index, state, w) ? '' : ' inactive'}`;
+    if (diff?.ghost.wires.has(w.key)) {
+      baseWires += `<path class="wire thin ghost${lit ? ' dimmed' : ''}" data-ghost-wire="${w.key}" d="${pathD(r.points)}"/>`;
+      continue;
+    }
+    const added = diff?.added.wires.has(w.key) ? ' added' : '';
+    const cls = `wire thin via-${esc(w.wire.via)}${added}${lit ? ' dimmed' : ''}${wireActive(index, state, w) ? '' : ' inactive'}`;
     baseWires += `<path class="${cls}" data-key="${w.key}" data-ends="${esc(w.fromNode.id)}|${esc(w.toNode.id)}" d="${pathD(r.points)}"/>`;
   }
   if (lit) {
@@ -165,32 +183,58 @@ export function renderScene({ index, layout, state, lit, regions }: SceneInput):
   // host の枠（箱が動く・置かれる場所。D42）。枠は入れ物なので、光っていても箱より下の層に置く
   // （光る枠が中の沈んだ箱を覆って、箱のクリックを奪わないように）
   for (const h of layout.hosts.values()) {
-    const on = !lit || h.members.some((id) => lit.boxes.has(id));
     const name = index.nodes.get(h.id)?.node.name ?? h.id;
-    const g = `<g class="host${lit ? (on ? ' lit' : ' dim') : ''}" data-host="${esc(h.id)}"><rect class="frame" x="${n1(h.x)}" y="${n1(h.y)}" width="${n1(h.w)}" height="${n1(h.h)}" rx="6"/><text class="hname" x="${n1(h.x + 8)}" y="${n1(h.y + 15)}">${esc(name)}</text></g>`;
+    const ghost = !!diff?.ghost.nodes.has(h.id);
+    const on = !ghost && (!lit || h.members.some((id) => lit.boxes.has(id)));
+    const attr = ghost ? 'data-ghost-host' : 'data-host';
+    const st = ghost ? ` ghost${lit ? ' dim' : ''}` : lit ? (on ? ' lit' : ' dim') : '';
+    const g = `<g class="host${st}" ${attr}="${esc(h.id)}"><rect class="frame" x="${n1(h.x)}" y="${n1(h.y)}" width="${n1(h.w)}" height="${n1(h.h)}" rx="6"/><text class="hname" x="${n1(h.x + 8)}" y="${n1(h.y + 15)}">${esc(name)}</text></g>`;
     hosts += g;
   }
 
+  let memoDefs = '';
+  let memoN = 0;
   for (const b of layout.boxes.values()) {
     const n = index.nodes.get(b.id)!;
     const k = KIND[n.node.kind] ?? KIND.infra;
-    const on = !lit || lit.boxes.has(b.id);
-    const st = !lit ? '' : on ? ` lit${lit.startBoxes.has(b.id) ? ' start' : ''}` : ' dim';
+    // 幽霊の箱（前にしか無い）は光らず、選択中は沈む。data-box を付けないのでクリック・hover・分岐の表を受けない
+    const ghost = !!diff?.ghost.nodes.has(b.id);
+    const on = !ghost && (!lit || lit.boxes.has(b.id));
+    const st = ghost
+      ? ` ghost${lit ? ' dim' : ''}`
+      : !lit
+        ? ''
+        : on
+          ? ` lit${lit.startBoxes.has(b.id) ? ' start' : ''}`
+          : ' dim';
+    const added = !ghost && diff?.added.nodes.has(b.id) ? ' added' : '';
     const scr = b.screen;
-    let g = `<g class="box${scr ? ' scr' : ''}${st}" data-box="${esc(b.id)}" data-kind="${esc(n.node.kind)}" style="--c:${k.c}">`;
+    let g = `<g class="box${scr ? ' scr' : ''}${st}${added}" ${ghost ? 'data-ghost' : 'data-box'}="${esc(b.id)}" data-kind="${esc(n.node.kind)}" style="--c:${k.c}">`;
     const dash = k.dash ? ` stroke-dasharray="${k.dash}"` : '';
     // 丸い端（actor・trigger）は rx と ry を高さの半分に揃える（rx だけだと横長の箱が楕円になる）
     const rx = Math.min(k.rx, b.h / 2, b.w / 2);
+    // メモのある箱は右下の角を折る（文字の印は付けない）。角は clipPath で切り、折り返しを上に描く
+    const fold = !ghost && memos?.has(b.id) ? memoFold(b) : null;
+    let clip = '';
+    if (fold) {
+      const id = `wv-memo-${memoN++}`;
+      memoDefs += `<clipPath id="${id}" clipPathUnits="userSpaceOnUse"><path d="${fold.clip}"/></clipPath>`;
+      clip = ` clip-path="url(#${id})"`;
+    }
     if (scr) {
       // 画面の領域だけ塗らない（下の iframe が透ける）。枠の rect は透明の塗りでクリックを受ける
-      g += `<path class="screen-bg" d="${frameWithHole(b, rx, scr)}" fill="${k.c}1a" fill-rule="evenodd"/>`;
+      g += `<path class="screen-bg" d="${frameWithHole(b, rx, scr)}" fill="${k.c}1a" fill-rule="evenodd"${clip}/>`;
       g += `<g class="screen-ph" data-screen-ph="${esc(b.id)}"><rect x="${n1(scr.x)}" y="${n1(scr.y)}" width="${n1(scr.w)}" height="${n1(scr.h)}"/><text x="${n1(scr.x + scr.w / 2)}" y="${n1(scr.y + scr.h / 2)}" text-anchor="middle"></text></g>`;
     }
-    g += `<rect class="shape" x="${n1(b.x)}" y="${n1(b.y)}" width="${b.w}" height="${n1(b.h)}" rx="${n1(rx)}" ry="${n1(rx)}" fill="${scr ? 'transparent' : `${k.c}1a`}" stroke="${k.c}"${dash}/>`;
+    g += `<rect class="shape" x="${n1(b.x)}" y="${n1(b.y)}" width="${b.w}" height="${n1(b.h)}" rx="${n1(rx)}" ry="${n1(rx)}" fill="${scr ? 'transparent' : `${k.c}1a`}" stroke="${k.c}"${dash}${clip}/>`;
     if (k.double)
-      g += `<rect class="deco" x="${n1(b.x + 3)}" y="${n1(b.y + 3)}" width="${b.w - 6}" height="${n1(b.h - 6)}" fill="none" stroke="${k.c}" stroke-width=".8"/>`;
+      g += `<rect class="deco" x="${n1(b.x + 3)}" y="${n1(b.y + 3)}" width="${b.w - 6}" height="${n1(b.h - 6)}" fill="none" stroke="${k.c}" stroke-width=".8"${clip}/>`;
     if (k.band)
       g += `<line class="deco" x1="${n1(b.x)}" y1="${n1(b.y + 24)}" x2="${n1(b.x + b.w)}" y2="${n1(b.y + 24)}" stroke="${k.c}" stroke-width=".8"/>`;
+    if (fold) g += `<path class="memo-fold" d="${fold.fold}" fill="${k.c}55" stroke="${k.c}"/>`;
+    // 今だけの箱は外側に緑の縁（種類の色は残す）
+    if (added)
+      g += `<rect class="dmark" x="${n1(b.x - 3)}" y="${n1(b.y - 3)}" width="${b.w + 6}" height="${n1(b.h + 6)}" rx="${n1(rx + 2)}"/>`;
     g += `<text class="name" x="${n1(b.x + 10)}" y="${n1(b.y + 17)}">${esc(clipText(n.node.name, b.w - 20, 12 * 1.05))}</text>`;
     g += `<text class="kind" x="${n1(b.x)}" y="${n1(b.y - 4)}">${esc(KIND_LABEL[n.node.kind] ?? n.node.kind)}</text>`;
     // 反対側の同じ高さに項目があれば幅の半分、無ければ箱の幅いっぱいまで文字を使う
@@ -205,7 +249,7 @@ export function renderScene({ index, layout, state, lit, regions }: SceneInput):
       const other = p.side === 'in' ? outYs : inYs;
       const shared = other.some((y) => Math.abs(y - p.y) < 9);
       const avail = (shared ? b.w / 2 - 12 : b.w - 24) - it.depth * 10;
-      g += itemSvg({ index, layout, state, lit }, it, b.w, avail);
+      g += itemSvg(input, it, b.w, avail, ghost);
     }
     g += '</g>';
     if (lit && on) litBoxes += g;
@@ -213,22 +257,30 @@ export function renderScene({ index, layout, state, lit, regions }: SceneInput):
   }
 
   const cut = defs ? ` clip-path="url(#${SCREEN_CUT_ID})"` : '';
+  if (memoDefs) defs += `<defs>${memoDefs}</defs>`;
   return (
     `${defs}<g class="lanes"${cut}>${lanes}</g><g class="base-wires">${baseWires}</g><g class="hosts">${hosts}</g><g class="base-boxes">${baseBoxes}</g>` +
     `<g class="lit-wires">${litWires}</g><g class="lit-boxes">${litBoxes}</g><g class="regions">${regions ?? ''}</g><g class="balls"></g>`
   );
 }
 
-/** 項目の行（ピン・名前・型）。型に typeRef があれば下線を付け、クリックで型の横断面 */
+/**
+ * 項目の行（ピン・名前・型）。型に typeRef があれば下線を付け、クリックで型の横断面。
+ * 幽霊の行（幽霊の箱の項目と、前にしか無い項目）はクリックを受けない（data-item・data-type を付けない）。
+ * 今だけの項目と型の変わった項目は行の枠（hit）に緑の縁
+ */
 function itemSvg(
-  { index, layout, state, lit }: SceneInput,
+  { index, layout, state, lit, diff }: SceneInput,
   it: IndexedItem,
   boxW: number,
   avail: number,
+  ghostBox = false,
 ): string {
   const p = layout.pins.get(it.ref)!;
+  const ghost = ghostBox || !!diff?.ghost.items.has(it.ref);
   let st = '';
-  if (!itemActive(index, state, it))
+  if (ghost) st = ' ghost';
+  else if (!itemActive(index, state, it))
     st = ' off inactive'; // 今の分岐には無い項目（薄く残す）
   else if (lit) {
     const on = itemLit(lit, it.ref);
@@ -237,10 +289,12 @@ function itemSvg(
       : ' off';
   }
   const indent = it.depth * 10;
-  const ref = it.item.typeRef;
+  const ref = ghost ? undefined : it.item.typeRef;
   const ty = `<tspan class="ty${ref ? ' ref' : ''}"${ref ? ` data-type="${esc(ref)}"` : ''}>`;
   const label = fitLabel(it.item.name, it.item.type, avail);
-  let s = `<g class="item${st}${it.parent ? ' child' : ''}" data-item="${esc(it.ref)}">`;
+  const mark =
+    !ghost && (diff?.added.items.has(it.ref) || diff?.changed.has(it.ref)) ? ' added' : '';
+  let s = `<g class="item${st}${mark}${it.parent ? ' child' : ''}" ${ghost ? 'data-ghost-item' : 'data-item'}="${esc(it.ref)}">`;
   // 収まらずに削ったときだけ、元の文字をブラウザの吹き出しに入れる
   if (label.cut) s += `<title>${esc(`${it.item.name} ${it.item.type}`)}</title>`;
   // 当たり判定は文字の下に置く（型の文字のクリックを奪わないように）

@@ -274,3 +274,56 @@ viewer/wiring
 - 光る画面の箱は枠の `drop-shadow` が内側にも広がり、画面の下端がうっすら青くなる
 - fixture-poly の `next/font` の woff2 は 64 バイトの合成で、Chrome が「Failed to decode downloaded font」を console の warning に出す（e2e はエラーだけ見る）
 - 手元（macOS の Google Chrome、ヘッドレス。同梱の Chromium は無い）では 3D の地図の e2e（smoke・scale・sharing と built の 3D 側）が「graph.json を読み込み中…」のまま進まない（WebGL の描画と思われる。この変更は v1 の 3D の地図に触れていない）。配線図の e2e（wiring・built の 2 本目・screens）は通る。3D の地図の e2e は CI で確かめる
+
+## 10. 実装結果（Phase 8-3c: views・memos・diff・警告のリンク。2026-11-09）
+
+### 10.1 作ったもの
+
+| 所 | 内容 |
+|---|---|
+| `packages/wiring/src/diff.ts` | `diffGraphsV2`・`isEmptyDiffV2` と型（`GraphDiffV2`・`NodeChange`・`WireRef`・`WireChange`）を core から移した。core の `diff.ts` は wiring から再 export する（core の公開 API・`stack-atlas diff` の結果は同じ。同じ関数であることをテストで固定）。新しく `diffOverlayV2(prev, next)`: 今の graph に前にしか無い箱・項目・線（幽霊）を足した graph と、印（幽霊・今だけ・型の変わった項目）を返す |
+| `packages/wiring/src/views.ts` | `viewSelection`（start → 選択。host の枠の id は枠、箱、項目、`{from,to}` は線。解けなければ null）、`applyView`（既定の状態 ＋ view の variants と選択）、`findView` |
+| `packages/viewer/src/wiring/viewsMenu.ts` | 題名の横の `select`（views が無ければ隠す。先頭は空の選択肢「ビューを選ぶ…」）、選んでいる view の状態 `ViewChoice`（DOM に触らない）、`selectionFocus`（`?view=` で開いた直後に映す所） |
+| `packages/viewer/src/wiring/memoRules.ts` | DOM に触らない規則: 角を折る箱（`memoBoxIds`）、孤立メモ（`memoOrphans`）、札に並べるメモ（`memoTargets`）、折った角の形（`memoFold`） |
+| `packages/viewer/src/wiring/memoCard.ts` | 左下の札（その場で書く。`SharedMemoStore`）、「サーバーに保存」/「memos.json を書き出す」、題名の横の `孤立メモ N 件`（`ui/orphans.ts` の一覧を使い回す） |
+| `packages/viewer/src/wiring/issuesLink.ts` | 題名の横の `警告 N 件`（エラーがあれば `エラー N 件・警告 N 件`）と一覧。Esc・外のクリックで閉じる |
+| `render.ts`・`app.ts`・`style.css`・`main.ts` | `SceneInput` に `memos`（角を折る箱）と `diff`（印）。`mountWiring` に `issues`・`memos`・`prev`・`view`・`onViewChange`。`main.ts` は v2 でも memos.json（と `GET /api/memos`）を読み、`?prev=` の v2 / v1 を振り分け、`?view=` を渡し、配線図では検証の一覧の枠を出さない |
+
+### 10.2 §3.4 から決めた・変えた所（D67〜D71）
+
+| # | 決定 | 理由 |
+|---|---|---|
+| D67 | 差分は「今の graph ＋ 前にしか無いもの」を 1 回だけ配置して描き、**選ぶ・たどる・分岐は今の graph の索引**で行う。今の graph の線は同じ順で先頭に置くので、線のキー（`w<i>`）は今の索引と足した graph の索引で同じ。幽霊は `data-box`・`data-item`・`data-wire`・`data-type` を持たない（`data-ghost`・`data-ghost-item`・`data-ghost-wire`・`data-ghost-host`）。幽霊の箱は `screen.html` を外す（画面の HTML は読まない・画面の領域を取らない）、`host` は今の host の枠か幽霊の箱を指すときだけ残す（今は枠でない箱が幽霊の中身で枠に変わらないように）。前にしか無い線は両端が解けるものだけ足し、`broken` は外す（切れた線は今の graph の事実だけ描く）。今もある箱の消えた項目は口ごと足す | たどる規則（wiring）を幽霊のために変えない。幽霊はクリックしても今の索引に無いので選べず、選択が解ける |
+| D68 | 「`type` / `wireType` が変わった項目」は `diffOverlayV2` で数え、`diffGraphsV2` には足さない | `diffGraphsV2` の結果（`stack-atlas diff` の出力・空の判定）を移す前と同じにする |
+| D69 | 角を折る箱は**箱 id か、その箱の group（v1 の箱の id。D56）にメモがある箱**（host の枠は箱として描かないので入れない）。札は箱・項目（その箱）・host の枠・型の選択で出し、メモが無くても空の欄を出す（書けるように）。group のメモはあるときだけ並べる。線の選択と選択なしは札を出さない。保存は 3D の地図と同じ `SharedMemoStore`（localStorage のキーも同じで、scope は `project.name`。build の graph.json と graph.v1.json は同じ project 名なのでメモを共有する）と、API があれば札の「サーバーに保存」（3D の地図と同じく押したときだけ POST。無ければ「memos.json を書き出す」）。孤立メモは箱（host の枠を含む）・型・group のどれの id でもないメモで、題名の横のリンクから一覧（移す・消す） | group のメモは v1 のメモ（3D の地図で書いたもの）の行き先。印が無いと見つけられない |
+| D70 | views: 選ぶと分岐を既定に戻して variants を当て、start から選ぶ。**ほかを選ぶ・分岐を変える・空の選択肢を選ぶ**と外れる（メニューは空、URL の `?view=` も消える）。選んだら URL の `?view=<id>` に書く（そのまま共有できる）。`?view=` で開くと、開いた直後は始点のあたりを映す（最初の画面の箱より優先）。graph に無い id は普通に開いて警告の一覧に出す。`?view=` は配線図だけ（3D の地図は無視）、`?prev=` と一緒に使える | 分岐を変えたら view の状態ではなくなる。共有用の URL は選んだときに作る |
+| D71 | 警告のリンクは `button.wv-link`（`.alt-link` と同じ見た目。`a.alt-link` を数える e2e と被らない）。Esc は捕捉の段階で一覧だけを閉じる（選択は解かない）。外を押したら閉じ、押したものの操作はそのまま通す。図の上の枠は**配線図を描けなかったときだけ**（スキーマ違反・索引が作れない）。前回の graph を読めない・比べられないときの警告もリンクの一覧に入る。3D の地図で前回が v2 なら「前回の graph.json は version 2 のため差分は表示しません」（以前は「読めないため」） | 一覧が開いた直後の図を隠さない（D64）。Esc で一覧を閉じたら選択が消えるのは意外 |
+
+折った角: 右辺と下辺の 10px の所を結ぶ線で角を切り（`clipPath`。光る箱の `drop-shadow` を切らないよう箱の外へ 20px 広げる）、切った線を斜辺にした三角形（箱の色の半透明）を内側に描く。箱の形（`rect.shape`）・二重の枠・画面の箱の穴の空いた塗りを同じ角で切る。項目の文字とピンは切らない（最後の行のピンは下端から 18px）。文字の印は付けない。
+
+差分の色: 幽霊は灰（`#6b7280`）の点線（箱・行・線・host の枠）、今だけの箱は外側 3px に緑（`#4ade80`）の縁（種類の色は残す）、今だけの線は緑の細い線、今だけの項目と型の変わった項目は行の枠（`hit`）に緑の縁。選択中は幽霊も沈む（光る層に入らない）。今もある箱が光ると、その中の消えた項目は灰の行のまま光る層に入る。
+
+### 10.3 数字
+
+| | 8-3b の後 | 8-3c |
+|---|---|---|
+| 単体テスト（`STACK_ATLAS_REQUIRE_GO=1 pnpm test`） | 1126 | **1154**（wiring +11、viewer +16、core +1） |
+| ビューアの e2e | 41 | **47**（`wiring-views.spec.ts` の 6 本） |
+
+### 10.4 テスト
+
+- 単体（wiring）: `diff.test.ts`（移した `diffGraphsV2` を例の v2 で、口の無い箱で落ちない・箱・線・型・項目の増減と変更。`diffOverlayV2`: 今の graph を変えない、今の線のキーが同じ、幽霊の箱・消えた項目（口ごと）・解ける線だけ・`broken` を外す、`screen.html` を外す、host の残し方、今だけ・型の変わった項目、1 回で配置できる、今の索引で選ぶと幽霊が光らない、同じ graph なら空）、`views.test.ts`（start の 5 通り、既定に戻してから variants）。前の graph は `__tests__/diff-fixture.ts` の `prevOfToday`（e2e も使う）
+- 単体（core）: core の `diffGraphsV2`・`isEmptyDiffV2` が wiring と同じ関数（既存の v1 → v2 のテストはそのまま通る）
+- 単体（viewer）: `memoRules.test.ts`（角を折る箱、group が箱 id と同じとき、孤立メモ、札の中身、折った角の形）、`render-marks.test.ts`（clipPath と折り返し、文字の数は同じ、箱の座標は同じ、幽霊の属性、消えた項目・今だけ・型の変わった項目、幽霊の線、選択中の幽霊）、`viewsMenu.test.ts`（選択肢、`ViewChoice` の外れ方、`selectionFocus`）、`issuesLink.test.ts`（文言）
+- e2e（`wiring-views.spec.ts`）: views のメニュー（始点と分岐、ほかのクリックで空に戻る・URL の `?view=`、`?view=` で開く、無い id は警告）、メモ（角・札の位置と不透明・光る層の上・再生バーに重ならない、その場で書くと localStorage、group と型のメモ、書くと角が折れる・消すと戻る、孤立メモの一覧、再読み込みで残る）、`/api/memos` への保存、v2 の差分（幽霊の灰の点線・緑の縁・幽霊は光らず選べない）、v1 の前（文言だけ）、警告のリンク（枠が無い、開く、外のクリック・Esc で閉じる、Esc で選択は解けない）。前の graph はテストのたびに例を写して作る
+- 既存の e2e: `wiring.spec.ts` の `openV2` は枠を閉じていた所を「枠が無い・リンクの文言」に変えた（2026-11-09 変更（8-3c）のコメント）。`screens.spec.ts` の `openBuilt` は枠が出たときのために閉じる処理を残し、コメントだけ足した
+
+手元（macOS の Google Chrome、ヘッドレス）では `wiring.spec.ts`・`wiring-views.spec.ts`・`screens.spec.ts`・`built.spec.ts` の 2 本目を走らせた。`screens.spec.ts` の「fixture-repo: 画面の箱に iframe が出て…」は手元で落ちる（`measured['route:/']` が 0 のまま）が、8-3c の変更を外した 8-3b の先端（d3b49e7）でも同じく落ちるので、この変更とは関係ない。3D の地図の e2e は手元では進まない（§9.5）ので CI で確かめる。
+
+### 10.5 気づいたこと（直していない）
+
+- 幽霊の画面の箱は HTML を外すので、前の graph での大きさ（画面の領域の高さ）ではなく項目の行の高さで描く
+- 画面の箱の角を折ると、画面の領域が箱の下端まで届くときは切った角の三角形に iframe の端が少し見える（折り返しは半透明）
+- 札で group のメモを空にしても、選び直すまで欄は残る（書いている途中で欄が消えないように、選択が変わったときだけ並べ直す）
+- 幽霊の箱にあるメモ（前の graph の箱 id）は孤立メモとして数える（幽霊は選べないので札は出ない）
+- 今の線の `broken` の path が、前にしか無い子の項目（足した graph にだけある）を指すと、切れた線の端がその幽霊の行まで降りる（今の graph では祖先で止まる）。今のデータには無い

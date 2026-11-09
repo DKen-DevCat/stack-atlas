@@ -58,16 +58,18 @@ const size = (page: Page) =>
   page.evaluate(() => (window as unknown as Win).__stackAtlas.wiring!.size);
 
 /**
- * 開いて、検証の一覧（警告 1 件）を閉じる（画面の上の方の箱に重なるので）。
+ * 開いて、F キーで全体を映す。
  * 2026-11-09 変更（8-3a）: 開いた直後は読める倍率で画面の箱のあたりだけを映すので、F キーで全体を映してから操作する
  * （以前は開いた直後が全体表示だった）
+ * 2026-11-09 変更（8-3c）: 検証の一覧（警告 1 件）は図の上の枠ではなく題名の横のリンクになった（D64）。以前は枠を
+ * 閉じてから操作していた（画面の上の方の箱に重なるので）。今は枠が無いことと、リンクの文言を確かめる
  */
 async function openV2(page: Page) {
   await page.goto(V2_URL);
   await waitReady(page);
   await expect(page.locator('.wv')).toBeVisible();
-  await expect(page.locator('.issues li.warning')).toHaveCount(1);
-  await page.locator('.issues .x').click();
+  await expect(page.locator('.issues')).toHaveCount(0);
+  await expect(page.locator('.wv-top [data-issues]')).toHaveText('警告 1 件');
   await page.keyboard.press('f');
 }
 

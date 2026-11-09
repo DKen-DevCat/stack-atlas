@@ -122,7 +122,8 @@ async function openBuilt(page: Page, name: string, opts: ServeOpts = {}) {
   await page.goto(`?graph=built-screens/${name}/graph.json`);
   await waitReady(page);
   await expect(page.locator('.wv')).toBeVisible();
-  // 検証の一覧（あれば）を閉じる
+  // 検証の一覧（あれば）を閉じる。2026-11-09 変更（8-3c）: 配線図では一覧が題名の横のリンクになり（D64）、図の上の枠は
+  // 出ない（描けなかったときだけ）。枠が出たときのために残す
   const x = page.locator('.issues .x');
   if (await x.count()) await x.click();
 }
