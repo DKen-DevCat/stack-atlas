@@ -23,7 +23,9 @@
  * - `--dry-run`: 抽出から strict の判定まで行い、出力先には書かない（screens は一時ディレクトリの中の staging に書いて消す。
  *   screenshots は強制的に無効。--with-viewer は無視）。出力先の screens/ が印の無いディレクトリかリンクなら、本番の build と
  *   同じく画面を写さずに警告する（dry-run の報告が本番の build と食い違わないように）
- * - `--json`: 標準出力は build の報告の JSON だけ（docs/19 §3.2）。ログと要約は標準エラー
+ * - `--json`: 標準出力は build の報告の JSON だけ（docs/19 §3.2）。ログと要約は標準エラー。報告を作れずに止まったとき
+ *   （repo が無い・設定が壊れている・出力先のリンク・例外）も、標準出力に `{ "error": { "message", "exitCode" } }` を出す
+ *   （2026-11-10 8-4 のレビュー: 以前は標準出力が空で、エージェントが JSON として読めなかった）
  * - `--strict`: strict の違反（strictIssues）があれば終了コード 1（CI の関門）
  */
 import {
@@ -315,12 +317,27 @@ export function swapScreens(outDir: string, stage: string | undefined, log?: Log
   renameSync(fresh, dir);
 }
 
+/** --json のとき、報告を作れずに止まった理由を標準出力に JSON で出す */
+function writeJsonError(opts: Pick<BuildOptions, 'json'>, exitCode: number, message: string) {
+  if (opts.json)
+    process.stdout.write(`${JSON.stringify({ error: { message, exitCode } }, null, 2)}\n`);
+}
+
+/** 止まる: log に出し、--json なら標準出力に JSON の error も出す。終了コードを返す */
+function fail(opts: BuildOptions & { log: Logger }, exitCode: number, message: string): number {
+  opts.log.error(message);
+  writeJsonError(opts, exitCode, message);
+  return exitCode;
+}
+
 export async function runBuild(opts: BuildOptions): Promise<number> {
   const log = opts.log ?? (opts.json ? createStderrLogger() : createConsoleLogger());
-  if ((opts.strict || opts.json) && opts.v1Only) {
-    log.error('--strict / --json は v2 の graph の報告を使うので、--v1 とは一緒に使えません');
-    return 2;
-  }
+  if ((opts.strict || opts.json) && opts.v1Only)
+    return fail(
+      { ...opts, log },
+      2,
+      '--strict / --json は v2 の graph の報告を使うので、--v1 とは一緒に使えません',
+    );
   // --json: 標準出力は JSON だけ（抽出器が直に console.log しても標準エラーへ）
   const restore = opts.json ? redirectConsoleLog() : undefined;
   // --dry-run: 一時ディレクトリに書いて捨てる（screens もここで測る）。出力先は読むだけ（screens/ の印とリンク）
@@ -336,6 +353,10 @@ export async function runBuild(opts: BuildOptions): Promise<number> {
       scratch,
     );
     return code;
+  } catch (e) {
+    restore?.();
+    writeJsonError(opts, 1, `build が例外で止まりました: ${(e as Error).message}`);
+    throw e;
   } finally {
     restore?.();
     if (scratch) rmSync(scratch, { recursive: true, force: true });
@@ -353,29 +374,24 @@ async function buildInto(
 ): Promise<number> {
   const log = opts.log;
   const repo = resolve(opts.repo);
-  if (!existsSync(repo) || !statSync(repo).isDirectory()) {
-    log.error(`リポジトリ ${repo} がありません`);
-    return 2;
-  }
+  if (!existsSync(repo) || !statSync(repo).isDirectory())
+    return fail(opts, 2, `リポジトリ ${repo} がありません`);
   const outDir = resolve(opts.outDir ?? join(repo, '.stack-atlas', 'out'));
   // 書く先（dry-run なら一時ディレクトリ）
   const writeDir = scratch ?? outDir;
   const viewerDist = opts.viewerDist ?? VIEWER_DIST;
-  if (opts.withViewer && !existsSync(join(viewerDist, 'index.html'))) {
-    log.error(
+  if (opts.withViewer && !existsSync(join(viewerDist, 'index.html')))
+    return fail(
+      opts,
+      2,
       `ビューアのビルド成果物（${viewerDist}）がありません。先に pnpm build を実行してください`,
     );
-    return 2;
-  }
 
   let config: ReturnType<typeof loadConfig>;
   try {
     config = loadConfig(repo, log);
   } catch (e) {
-    if (e instanceof AtlasConfigError) {
-      log.error(e.message);
-      return 2;
-    }
+    if (e instanceof AtlasConfigError) return fail(opts, 2, e.message);
     throw e;
   }
   // スクショ抽出器は <shotsOutDir>/shots/<slug>.png に書き、graph.json からは shots/… で参照する。
@@ -403,13 +419,13 @@ async function buildInto(
     opts.withViewer ? viewerDist : undefined,
     touchesScreens,
   );
-  if (unsafe.length && !scratch) {
-    log.error(
+  if (unsafe.length && !scratch)
+    return fail(
+      opts,
+      2,
       `出力先にシンボリックリンクがあるので書きません（リンクの先のファイルを書き換えないため）: ${unsafe.join(', ')}。` +
         'リンクを消すか、-o で別の出力先を指定してください',
     );
-    return 2;
-  }
 
   let res: BuildGraphResult;
   // screens 抽出器の書き出し先（書く先の中の一時ディレクトリ。成功したら swapScreens で screens/ に入れ替える）
@@ -441,10 +457,7 @@ async function buildInto(
     });
   } catch (e) {
     if (stage) rmSync(stage, { recursive: true, force: true });
-    if (e instanceof AtlasConfigError) {
-      log.error(e.message);
-      return 2;
-    }
+    if (e instanceof AtlasConfigError) return fail(opts, 2, e.message);
     throw e;
   }
 

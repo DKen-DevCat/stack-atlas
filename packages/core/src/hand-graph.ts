@@ -8,7 +8,10 @@
  * - それ以外の箱はそのまま足す（`meta.by: "hand"`・`meta.handFile`）。runtime は必須（言語アダプタと違い推せない）
  * - 形は validateGraphV2 の schema と箱の中の参照で確かめる（線の参照は他の箱を指すので最後の検証に任せる）。
  *   壊れたファイルはファイルごと捨て、解けない補い（kind hand）にする
- * - 上限: ファイル 64、1 ファイル 1MB、箱は全部で 2000、項目は全部で 20000。YAML の別名は 100 まで。シンボリックリンクは読まない
+ * - 上限: ファイル 64、1 ファイル 1MB、箱は全部で 2000、項目は全部で 20000、線は全部で 5000（2026-11-10 8-4 のレビュー S3）。
+ *   YAML の別名は 100 まで。シンボリックリンクは読まない
+ * - 線には `meta.by: "hand"` と `meta.handFile` を付ける。端が最後の graph に無い線（typo）は cleanupV2 が落とし、pipeline が
+ *   そのファイルを解けない補いにする（2026-11-10 8-4 のレビュー: 以前は警告だけでファイルは applied のままだった）
  */
 import { validateGraphV2, type ItemV2, type NamedType, type WireV2 } from '@stack-atlas/schema';
 import {
@@ -25,7 +28,13 @@ import { mergeItemLists, walkItems } from './v2-parts.js';
 
 export const HAND_ADAPTER = 'hand';
 export const HAND_DIR = 'graph';
-export const HAND_LIMITS = { files: 64, bytes: 1024 * 1024, nodes: 2000, items: 20000 } as const;
+export const HAND_LIMITS = {
+  files: 64,
+  bytes: 1024 * 1024,
+  nodes: 2000,
+  items: 20000,
+  wires: 5000,
+} as const;
 
 export interface HandGraphResult {
   /** 足す部分グラフ（新しい箱・線・型）。何も無ければ undefined */
@@ -127,11 +136,12 @@ export function loadHandGraphs(
     for (const n of fileNodes) for (const p of n.ports) walkItems(p.items, () => fileItems++);
     if (
       nodes.length + fileNodes.length > HAND_LIMITS.nodes ||
-      items + fileItems > HAND_LIMITS.items
+      items + fileItems > HAND_LIMITS.items ||
+      wires.length + v.graph!.wires.length > HAND_LIMITS.wires
     )
       return result(
         'unresolved',
-        `上限（箱 ${HAND_LIMITS.nodes}・項目 ${HAND_LIMITS.items}。全部のファイルの合計）を超えるので読みません`,
+        `上限（箱 ${HAND_LIMITS.nodes}・項目 ${HAND_LIMITS.items}・線 ${HAND_LIMITS.wires}。全部のファイルの合計）を超えるので読みません`,
       );
     const dup = fileNodes.find((n) => ids.has(n.id));
     if (dup) return result('unresolved', `箱 ${dup.id} が別の手書きのファイルにもあります`);
@@ -150,7 +160,7 @@ export function loadHandGraphs(
       nodes.push(copy);
     }
     for (const w of v.graph!.wires)
-      wires.push({ ...clone(w), meta: { ...(w.meta ?? {}), by: HAND_ADAPTER } });
+      wires.push({ ...clone(w), meta: { ...(w.meta ?? {}), by: HAND_ADAPTER, handFile: file } });
     for (const t of v.graph!.types ?? []) types.push(clone(t));
     result('applied', notes.length ? notes.join('。') : undefined);
     for (const m of notes) out.issues.push({ level: 'warning', path: `hand:${file}`, message: m });

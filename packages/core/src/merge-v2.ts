@@ -54,8 +54,10 @@ import { clone, deepMerge, isPlainObject } from './util.js';
 import { endpointRoute, httpCallOf, usesTable } from './join.js';
 import { apiPathMatches, methodMatches } from './paths.js';
 import {
+  MAX_DEFAULT_LINKS,
   UNDERSCORE,
   boxOf,
+  defaultLinkCount,
   isUnderscoreRef,
   mergeLinkLists,
   mergeNamedTypes,
@@ -419,6 +421,16 @@ export interface CleanupV2Result {
   undeterminedList: UndeterminedWire[];
   /** 使った retarget のキー（`<group>\u0000<peer>`） */
   retargetUsed: Set<string>;
+  /**
+   * 補いの線（段 A の v2.wires。`meta.by: "overrides"`）が箱の単位の線を置き換えた group と peer の retarget のキー
+   * （付け替えが要らなかった。finishRetarget が解けない補いにしない。2026-11-10 8-4 のレビュー）
+   */
+  retargetSatisfied: Set<string>;
+  /**
+   * 端が graph に無いので落とした手書きの線（`meta.by: "hand"`）。pipeline がそのファイルを解けない補いにする
+   * （2026-11-10 8-4 のレビュー: 以前は警告だけで、ファイルは applied のままだった）
+   */
+  droppedHand: WireV2[];
   issues: ValidationIssue[];
 }
 
@@ -462,6 +474,8 @@ export function cleanupV2(state: MergedV2, opts: CleanupV2Options = {}): Cleanup
 
   // 1. 細かい方が勝つ: アダプタ・合流の線の箱の対（向き付き）
   const finePairs = new Set<string>();
+  /** そのうち補いの線（v2.wires）の対（retarget が要らなくなったかを決める） */
+  const supplementPairs = new Set<string>();
   /** 合流の線が出ている呼び出しの項目（`<箱>#out/call_n`） */
   const joinedCalls = new Set<string>();
   const addPair = (x: string, y: string) => {
@@ -470,6 +484,9 @@ export function cleanupV2(state: MergedV2, opts: CleanupV2Options = {}): Cleanup
   for (const w of graph.wires) {
     if (upgradeWires.has(w)) continue;
     addPair(boxOf(w.from), boxOf(w.to));
+    if (w.meta?.by === 'overrides')
+      for (const a of reps(boxOf(w.from)))
+        for (const b of reps(boxOf(w.to))) supplementPairs.add(`${a}\u0000${b}`);
     // アダプタは http の線を引かない（D49）ので、upgrade でない http の行きの線は合流の線（endpoint・handler へ）
     if (w.via === 'http' && !w.reply) {
       const m = /^[^#]*#[^/]*\/[^.]*/.exec(w.from);
@@ -487,10 +504,17 @@ export function cleanupV2(state: MergedV2, opts: CleanupV2Options = {}): Cleanup
   const undeterminedList: UndeterminedWire[] = [];
   const undeterminedSeen = new Set<string>();
   const retargetUsed = new Set<string>();
+  const retargetSatisfied = new Set<string>();
   const kept: WireV2[] = [];
   for (const w of graph.wires) {
-    if (upgradeWires.has(w) && finePairs.has(`${boxOf(w.from)}\u0000${boxOf(w.to)}`)) {
+    const a = boxOf(w.from);
+    const b = boxOf(w.to);
+    if (upgradeWires.has(w) && finePairs.has(`${a}\u0000${b}`)) {
       replaced++;
+      // 補いの線で置き換わった group の端の retarget は、付け替えが要らなかった（満たされた）
+      if (supplementPairs.has(`${a}\u0000${b}`))
+        for (const key of [`${a}\u0000${b}`, `${b}\u0000${a}`])
+          if (opts.retarget?.has(key)) retargetSatisfied.add(key);
       continue;
     }
     kept.push(w);
@@ -655,18 +679,24 @@ export function cleanupV2(state: MergedV2, opts: CleanupV2Options = {}): Cleanup
     }
   }
 
-  // 4. 参照が解けない線を落とす（アダプタが upgrade に無い箱・項目を指したもの）
+  // 4. 参照が解けない線を落とす（アダプタが upgrade に無い箱・項目を指したもの）。手書きの線（typo など）は
+  // pipeline がそのファイルを解けない補いにする（droppedHand）
   const itemRefs = new Set<string>();
   for (const n of graph.nodes)
     for (const p of n.ports)
       walkItems(p.items, (_, path) => itemRefs.add(`${n.id}#${p.id}/${path}`));
+  const droppedHand: WireV2[] = [];
   graph.wires = out.filter((w) => {
     if (itemRefs.has(w.from) && itemRefs.has(w.to)) return true;
     dropped++;
+    const hand = w.meta?.by === 'hand';
+    if (hand) droppedHand.push(w);
     issues.push({
       level: 'warning',
       path: `v2:wire:${w.from}->${w.to}`,
-      message: `線 "${w.from}" → "${w.to}" の端が graph にありません（アダプタの線を落とします）`,
+      message: hand
+        ? `手書きの線 "${w.from}" → "${w.to}" の端が graph にありません（${String(w.meta?.handFile ?? '手書きのファイル')}。箱・項目の id を確かめてください）`
+        : `線 "${w.from}" → "${w.to}" の端が graph にありません（アダプタの線を落とします）`,
     });
     return false;
   });
@@ -684,7 +714,13 @@ export function cleanupV2(state: MergedV2, opts: CleanupV2Options = {}): Cleanup
       p.items = p.items.filter((i) => i.id !== UNDERSCORE || used.has(`${n.id}#${p.id}/${i.id}`));
     // `_` だけだった口は消す（部品の out など。endpoint の 4 口は形なので残す）
     if (n.kind !== 'endpoint') n.ports = n.ports.filter((p) => p.items.length > 0);
-    linkUnderscores(n);
+    const skipped = linkUnderscores(n);
+    if (skipped)
+      issues.push({
+        level: 'warning',
+        path: `v2:node:${n.id}`,
+        message: `箱 ${n.id} の既定の links（${skipped} 本）が上限 ${MAX_DEFAULT_LINKS} 本を超えるので書き出しません（links を書かない既定の「全 in → 全 out」のまま）`,
+      });
   }
   return {
     graph,
@@ -695,6 +731,8 @@ export function cleanupV2(state: MergedV2, opts: CleanupV2Options = {}): Cleanup
     dropped,
     undeterminedList,
     retargetUsed,
+    retargetSatisfied,
+    droppedHand,
     issues,
   };
 }
@@ -706,11 +744,16 @@ const roots = (n: NodeV2, dir: 'in' | 'out', portId?: string) =>
 
 /**
  * 残った `_` に crude の links を足す。links を持たない箱は、先に既定（wiring の defaultLinks と同じ）を書き出す
- * （links を 1 本でも書くと既定が効かなくなるため）
+ * （links を 1 本でも書くと既定が効かなくなるため）。既定が MAX_DEFAULT_LINKS を超える箱は何も書かず、その本数を返す
+ * （links の無いままなら既定の「全 in → 全 out」が `_` も通す。2026-11-10 8-4 のレビュー S3）
  */
-function linkUnderscores(n: NodeV2) {
+function linkUnderscores(n: NodeV2): number | undefined {
   const hasUnderscore = n.ports.some((p) => p.items.some((i) => i.id === UNDERSCORE));
-  if (!hasUnderscore) return;
+  if (!hasUnderscore) return undefined;
+  if (!n.links) {
+    const count = defaultLinkCount(n);
+    if (count > MAX_DEFAULT_LINKS) return count;
+  }
   const named = (dir: 'in' | 'out', portId?: string) =>
     roots(n, dir, portId).filter((r) => r.item.id !== UNDERSCORE);
   const unders = (dir: 'in' | 'out') => roots(n, dir).filter((r) => r.item.id === UNDERSCORE);
@@ -771,6 +814,7 @@ function linkUnderscores(n: NodeV2) {
   }
   const merged = mergeLinkLists(n.links, links);
   if (merged?.length) n.links = merged;
+  return undefined;
 }
 
 /** 自動率のサマリ（docs/17 §4。CLI の build の要約に出す） */

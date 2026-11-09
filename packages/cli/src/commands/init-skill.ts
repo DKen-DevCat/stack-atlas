@@ -9,7 +9,10 @@
  * ファイルは上書きしない）が止まり、始点の候補を書けなかった。views.yaml は `init-views` が作る
  *
  * 安全（対象のディレクトリは解析対象の repo で、信用しない）:
- * - `<dir>` が home か `/` なら断る
+ * - `<dir>` が home か `/` なら断る（同じものかは dev と ino で比べる。2026-11-10 8-4 のレビュー: 以前はパスの字面で
+ *   比べ、大文字小文字を区別しないファイルシステムで `…/FAKEHOME` のように書くと通った）
+ * - `--update` 無しで、既にある skill のファイルが公式のものと違えば（repo が持ち込んだ SKILL.md など）、触らずに
+ *   警告して終了コード 1（2026-11-10 8-4 のレビュー: 以前は黙って残し、0 で終わった）
  * - `.claude`・`.claude/skills`・`stack-atlas/`・その中のディレクトリとファイルの**どの段**がシンボリックリンクでも、何も書かずに
  *   断る（書く前にまとめて確かめる。書くときも core の SafeOutput が段ごとに確かめる）。雛形は、置き場の `.stack-atlas` が
  *   リンクなら断り、ファイルが既にあれば（リンクでも）書かない
@@ -121,14 +124,17 @@ export function initSkill(opts: InitSkillOptions = {}): { code: number; report?:
     log.error(`ディレクトリ ${target} がありません`);
     return fail(2);
   }
-  const home = (() => {
+  /** a と b が同じディレクトリか（dev と ino。大文字小文字・リンクの違いに左右されない） */
+  const same = (a: string, b: string) => {
     try {
-      return realpathSync(opts.home ?? homedir());
+      const x = statSync(a);
+      const y = statSync(b);
+      return x.dev === y.dev && x.ino === y.ino;
     } catch {
-      return resolve(opts.home ?? homedir());
+      return false;
     }
-  })();
-  if (real === '/' || real === resolve('/') || real === home) {
+  };
+  if (real === '/' || same(real, resolve('/')) || same(real, opts.home ?? homedir())) {
     log.error(
       `${real} には置きません（home と / は断ります。解析対象の repo のディレクトリを指定してください）`,
     );
@@ -202,6 +208,8 @@ export function initSkill(opts: InitSkillOptions = {}): { code: number; report?:
     skipped: [],
   };
   const show = (rel: string) => [...SKILL_DEST, rel].join('/');
+  /** --update 無しで残した、公式と違う skill のファイル */
+  const differing: string[] = [];
   try {
     for (const [rel, data] of files) {
       const segs = skillSeg(rel);
@@ -222,6 +230,7 @@ export function initSkill(opts: InitSkillOptions = {}): { code: number; report?:
       const installed = manifest?.files[rel];
       if (!opts.update) {
         report.skipped.push(show(rel));
+        differing.push(show(rel));
         if (installed) next.files[rel] = installed;
         continue;
       }
@@ -264,6 +273,14 @@ export function initSkill(opts: InitSkillOptions = {}): { code: number; report?:
   );
   sec('手で変えてあるので .new に出した', report.conflicts);
   log.info(lines.join('\n'));
+  if (differing.length) {
+    log.error(
+      `既にある skill のファイル ${differing.length} が公式の skill（${version}）と違います: ${differing.join(', ')}。` +
+        '触っていません。中を確かめてから、公式のものにするなら stack-atlas init --skill --update を実行してください' +
+        '（手で変えたものは .new に出します）',
+    );
+    return { code: 1, report };
+  }
   return { code: 0, report };
 }
 

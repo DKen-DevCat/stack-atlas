@@ -4,19 +4,22 @@
  *
  * 数は最後の graph（補いの段 B の後）から数え直す（D73）:
  * - unjoined: 合流で結べなかった HTTP の呼び出し（呼び出しの項目かその子から via http の行きの線が出ていれば解決）、
- *   OpenAPI に無い handler のルート（endpoint から・via http / event で入る線があれば解決）、結べなかった SQL（via sql の
- *   線が出ていれば解決）、handler の無い endpoint（`req` から線が出ていれば解決）
+ *   OpenAPI に無い handler のルート（ルートごと: そのルートに合う endpoint から入る線、そのルートを label か呼び出しの
+ *   meta.http で名指しした via http / event の線、ルートが 1 つだけの箱なら via http / event で入る線があれば解決。
+ *   2026-11-10 8-4 のレビュー: 以前は箱に入る線が 1 本でもあれば、同じ箱の別のルートも解決にしていた）、結べなかった SQL
+ *   （via sql の線が出ていれば解決）、handler の無い endpoint（`req` から線が出ていれば解決）
  * - undetermined: cleanupV2 が付け替え先を決められなかった group の端（retarget で決めたものは入らない）
  * - opaque: links の無い箱（in と out の両方に項目がある）と、crude の links を持つ箱
  */
-import type { GraphV2, HarnessReportV2, NodeV2, ValidationIssue } from '@stack-atlas/schema';
+import type { GraphV2, HarnessReportV2, ValidationIssue } from '@stack-atlas/schema';
 import { HARNESS_REPORT_VERSION } from '@stack-atlas/schema';
-import { handlerRoutes, httpCallOf, sqlOf, type JoinReport } from './join.js';
+import { endpointRoute, handlerRoutes, httpCallOf, sqlOf, type JoinReport } from './join.js';
 import { coverageV2, type CoverageV2, type UndeterminedWire } from './merge-v2.js';
+import { apiPathMatches, methodMatches } from './paths.js';
 import type { BuildGraphResult } from './pipeline.js';
 import { countSupplements, supplementText, type SupplementResult } from './supplements.js';
 import type { BuildIssue, StackAtlasConfig } from './types.js';
-import { boxOf } from './v2-parts.js';
+import { boxOf, itemAt, topItems, under } from './v2-parts.js';
 
 export type CheckedEntry = HarnessReportV2['checked'][string];
 
@@ -81,19 +84,54 @@ export interface HarnessInput {
   multi: boolean;
 }
 
-const outItems = (n: NodeV2) =>
-  n.ports
-    .filter((p) => p.dir === 'out')
-    .flatMap((p) => p.items.map((it) => ({ it, ref: `${n.id}#${p.id}/${it.id}` })));
+/** `METHOD /path`（線の label）→ { method, path } */
+const labelRoute = (label: string | undefined) => {
+  const m = label ? /^([A-Za-z]+)\s+(\/\S*)$/.exec(label.trim()) : null;
+  return m ? { method: m[1]!.toUpperCase(), path: m[2]! } : undefined;
+};
 
-const under = (ref: string, root: string) => ref === root || ref.startsWith(`${root}.`);
+/** handler のルート r に、endpoint・呼び出しの method と path（x）が合うか */
+const routeHit = (r: { method: string; path: string }, x: { method: string; path: string }) =>
+  methodMatches(r.method, x.method) && apiPathMatches(r.path, x.path);
 
 /** 最後の graph から報告を作る */
 export function computeHarnessReport(input: HarnessInput): HarnessReport {
   const g = input.graph;
-  const kindOf = new Map(g.nodes.map((n) => [n.id, n.kind]));
+  const byId = new Map(g.nodes.map((n) => [n.id, n]));
   const outgoing = (root: string, ok: (w: GraphV2['wires'][number]) => boolean) =>
     g.wires.some((w) => !w.reply && under(w.from, root) && ok(w));
+  /** 線の元の項目（呼び出しなら meta.http） */
+  const fromItem = (ref: string) => {
+    const hash = ref.indexOf('#');
+    const slash = ref.indexOf('/', hash);
+    const n = byId.get(ref.slice(0, hash));
+    return (
+      n &&
+      itemAt(
+        n.ports.find((p) => p.id === ref.slice(hash + 1, slash)),
+        ref.slice(slash + 1),
+      )
+    );
+  };
+  /** ルート r がこの線で解決するか（ルートごと。many は箱のルートが 2 つ以上） */
+  const feedsRoute = (
+    w: GraphV2['wires'][number],
+    r: { method: string; path: string },
+    many: boolean,
+  ) => {
+    const from = byId.get(boxOf(w.from));
+    if (from?.kind === 'endpoint') {
+      const er = endpointRoute(from);
+      return !!er && routeHit(r, er);
+    }
+    if (w.via !== 'http' && w.via !== 'event') return false;
+    const named = labelRoute(w.label);
+    if (named) return routeHit(r, named);
+    const it = fromItem(w.from);
+    const call = it ? httpCallOf(it) : undefined;
+    if (call) return routeHit(r, call);
+    return !many;
+  };
 
   // unjoined（合流の時点で結べなかったもののうち、補いの線がまだ無いもの）
   const calls: UnjoinedCall[] = [];
@@ -107,7 +145,7 @@ export function computeHarnessReport(input: HarnessInput): HarnessReport {
     const noHandler = new Set(input.join.server.withoutHandler);
     for (const n of g.nodes) {
       if (n.kind !== 'endpoint')
-        for (const { it, ref } of outItems(n)) {
+        for (const { item: it, ref } of topItems(n, 'out')) {
           const c = httpCallOf(it);
           if (
             c &&
@@ -119,15 +157,12 @@ export function computeHarnessReport(input: HarnessInput): HarnessReport {
           if (s && unSql.has(`${ref} ${s.table}`) && !outgoing(ref, (w) => w.via === 'sql'))
             sql.push({ item: ref, table: s.table });
         }
-      for (const r of handlerRoutes(n)) {
+      const own = handlerRoutes(n);
+      const incoming = own.length ? g.wires.filter((w) => !w.reply && boxOf(w.to) === n.id) : [];
+      for (const r of own) {
         if (!unRoutes.has(`${n.id} ${r.method} ${r.path}`)) continue;
-        const fed = g.wires.some(
-          (w) =>
-            !w.reply &&
-            boxOf(w.to) === n.id &&
-            (kindOf.get(boxOf(w.from)) === 'endpoint' || w.via === 'http' || w.via === 'event'),
-        );
-        if (!fed) routes.push({ box: n.id, method: r.method, path: r.path });
+        if (!incoming.some((w) => feedsRoute(w, r, own.length > 1)))
+          routes.push({ box: n.id, method: r.method, path: r.path });
       }
       if (noHandler.has(n.id) && !g.wires.some((w) => w.from.startsWith(`${n.id}#req/`)))
         endpointsWithoutHandler.push(n.id);
@@ -217,7 +252,8 @@ export interface StrictResult {
 /**
  * strict の判定（docs/19 §3.3）。エラーは「埋められる隙間」だけ（D69）: 結べない呼び出し・OpenAPI に無いルート・結べない SQL、
  * 付け替え先を決められない線、screens を設定しているのに HTML の無い route、解けない・指紋が合わない・reason の無い補い、
- * 解けない views、v1 にも v2 にも無い remove の id、見つけたのに飛ばした言語アダプタ（D87）。
+ * 解けない views、v1 にも v2 にも無い remove の id、見つけたのに飛ばした言語アダプタ（D87）、失敗した抽出器（2026-11-10
+ * 8-4 のレビュー: 以前は failed を見ていなかった）。
  * 警告: handler の無い endpoint（D86）、口の単位の線、不透明な箱、wireType unknown、typeRef の欠け、カバー率 0、broken、
  * overrides で足した線の無い箱（D71）
  */
@@ -282,13 +318,20 @@ export function strictIssues(
       'overrides:remove',
       `overrides の remove の "${id}" は v1 にも v2 にもありません`,
     );
-  for (const [name, c] of Object.entries(h.checked))
+  for (const [name, c] of Object.entries(h.checked)) {
     if (c.status === 'skipped' && c.role === 'language')
       err(
         'skipped',
         `extractor:${name}`,
         `言語アダプタ ${name} を飛ばしました（${c.reason ?? '理由なし'}）。項目の単位の検査が弱まるので strict では失敗にします`,
       );
+    if (c.status === 'failed')
+      err(
+        'failed',
+        `extractor:${name}`,
+        `${c.role === 'language' ? '言語アダプタ' : c.role === 'contract' ? '契約の抽出器' : '抽出器'} ${name} が失敗しました（${c.reason ?? '理由なし'}）`,
+      );
+  }
 
   for (const id of h.unjoined.endpointsWithoutHandler)
     warn(

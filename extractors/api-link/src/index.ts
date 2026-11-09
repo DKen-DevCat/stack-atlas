@@ -22,7 +22,14 @@ import type { Extractor, PartialGraph, PartialNode, RepoContext } from '@stack-a
 import { clientFiles, linkClients, linkTargets, sameFile } from './link.js';
 import { infraType, routeComments, toPosix, walk } from './util.js';
 import { gatewayRoutesFromMeta, loadGateway, type GatewayRoute } from './gateway.js';
-import { globBase, globToRegExp, sectionFor, toArray } from '@stack-atlas/core';
+import {
+  confineRepoPath,
+  globBase,
+  globInRepo,
+  globToRegExp,
+  sectionFor,
+  toArray,
+} from '@stack-atlas/core';
 
 export {
   constResolverFor,
@@ -114,7 +121,9 @@ export const extractor: Extractor = {
     if (clientFiles(ctx, api).length > 0) return true;
     if ((api?.targets?.length ?? 0) > 0) return true;
     const hasHandlers = Object.values(ctx.config.deploy ?? {}).some((d) => d.handlers);
-    const out = ctx.resolve(ctx.config.cdktf?.out ?? 'infra/cdktf.out', 'stacks');
+    const conf = confineRepoPath(ctx.root, ctx.config.cdktf?.out ?? 'infra/cdktf.out');
+    if (!('abs' in conf)) return false;
+    const out = join(conf.abs, 'stacks');
     if (!hasHandlers || !existsSync(out)) return false;
     return readdirSync(out).some((s) => {
       try {
@@ -174,6 +183,13 @@ export const extractor: Extractor = {
       const files = new Set<string>();
       const tableDirs = new Set<string>();
       for (const g of globs) {
+        // repo の外（絶対パス・`..`・外へ出るリンク）は読まない（2026-11-10 8-4 のレビュー S2）
+        if (!globInRepo(ctx.root, g)) {
+          ctx.log.warn(
+            `api-link: config.deploy の ${lambdaId} の handlers "${g}" は repo の外を指すので読みません`,
+          );
+          continue;
+        }
         const re = globToRegExp(g);
         const base = globBase(g);
         for (const abs of walk(ctx.resolve(base))) {

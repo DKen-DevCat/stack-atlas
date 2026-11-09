@@ -97,7 +97,8 @@ jobs:
       # 対象アプリの依存が必要な抽出器（ts-imports の型解決など）があれば、先に target で install しておく:
       #   - run: pnpm install --frozen-lockfile
       #     working-directory: target
-      # Go の関数の単位の解析（go-types）は go 1.21 以上が要る。go が無いと build --strict は失敗する（飛ばした言語アダプタ。D87）
+      # Go の関数の単位の解析（go-types）は go 1.21 以上が要る。go が無いと build --strict は失敗する（飛ばした言語アダプタ
+      # checked の skipped は strict のエラー。D87）。環境変数（STACK_ATLAS_REQUIRE_GO）は要らない
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22" # ★ 要変更: 対象の go.mod に合わせる（Go を使わないなら消す）
@@ -113,8 +114,6 @@ jobs:
       # 関門: 埋められる隙間（結べない呼び出し・解けない補い・HTML の無い route など）があれば失敗にする。
       # 出力先には書かない（--dry-run）。落ちたら手元でハーネス（docs/19。stack-atlas init --skill）のエージェントを呼ぶ
       - name: strict（関門）
-        env:
-          STACK_ATLAS_REQUIRE_GO: "1"
         run: node stack-atlas/packages/cli/bin/stack-atlas.js build target --strict --dry-run --no-screenshots
 
       - name: graph.json を作る（ビューア同梱）

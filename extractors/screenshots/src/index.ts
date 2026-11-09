@@ -8,6 +8,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import type { Browser, LaunchOptions } from 'playwright';
 import {
+  confineRepoPath,
   resolveRegionRef,
   type Extractor,
   type PartialGraph,
@@ -138,9 +139,15 @@ export function joinUrl(baseUrl: string, path: string): string {
   return baseUrl.replace(/\/+$/, '') + (path.startsWith('/') ? path : `/${path}`);
 }
 
+/**
+ * Chromium の起動の設定。サンドボックスを有効にする（2026-11-10 8-4 のレビュー S1: Playwright の既定は --no-sandbox で、
+ * 解析対象の repo の screenshots.baseUrl のページを、サンドボックスの無いブラウザで開いていた）
+ */
+export const LAUNCH_OPTIONS: Readonly<LaunchOptions> = { headless: true, chromiumSandbox: true };
+
 async function launchBrowser(ctx: RepoContext): Promise<Browser> {
   const { chromium } = await import('playwright');
-  const opts: LaunchOptions = { headless: true };
+  const opts: LaunchOptions = { ...LAUNCH_OPTIONS };
   try {
     return await chromium.launch(opts);
   } catch (err) {
@@ -197,7 +204,13 @@ export const extractor: Extractor = {
     if (targets.length === 0) return { nodes: [], edges: [] };
 
     mkdirSync(shotsDir, { recursive: true });
-    const storageState = cfg.storageState ? ctx.resolve(cfg.storageState) : undefined;
+    // repo の外（絶対パス・`..`・外へ出るリンク）は読まない（2026-11-10 8-4 のレビュー S2）
+    const stateConf = cfg.storageState ? confineRepoPath(ctx.root, cfg.storageState) : undefined;
+    if (stateConf && !('abs' in stateConf))
+      ctx.log.warn(
+        `screenshots: storageState "${cfg.storageState}" は repo の外を指すので使いません`,
+      );
+    const storageState = stateConf && 'abs' in stateConf ? stateConf.abs : undefined;
     const useStorage = storageState !== undefined && existsSync(storageState);
     if (storageState && !useStorage) {
       ctx.log.debug(`screenshots: storageState ${storageState} が無いので未ログインで撮る`);

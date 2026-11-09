@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { resolveRegionRef as sharedResolveRegionRef, type RepoContext } from '@stack-atlas/core';
 import {
+  LAUNCH_OPTIONS,
   clipRegion,
   extractor,
   isDynamicRoute,
@@ -150,5 +151,12 @@ describe('detect', () => {
     );
     expect(await extractor.detect(ctx({ screenshots: {} }))).toBe(false);
     expect(await extractor.detect(ctx({}))).toBe(false);
+  });
+});
+
+// 2026-11-10 追加（8-4 のレビュー S1）: 直す前は { headless: true } だけで、Playwright の既定の --no-sandbox で開いていた
+describe('Chromium の起動', () => {
+  it('サンドボックスを有効にする（chromiumSandbox: true）', () => {
+    expect(LAUNCH_OPTIONS).toEqual({ headless: true, chromiumSandbox: true });
   });
 });

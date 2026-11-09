@@ -99,6 +99,100 @@ describe('build --strict（CI の関門。docs/19 §3.3）: fixture は補い無
 });
 
 describe('build --dry-run --json（docs/19 §3.2）', () => {
+  // 8-3b の screens の出力先の規則を dry-run でも（build.test.ts の screens の代わりと同じ形）。tmpdir の
+  // stack-atlas-dry-run-* を数えるテストと同じファイルに置く（別のファイルで並行に作ると数がずれる）
+  const screensStub: Extractor = {
+    name: 'screens',
+    detect: async (ctx) => Boolean(ctx.config.screens),
+    extract: async (ctx) => {
+      if (!ctx.config.screens?.outDir) return { nodes: [], edges: [] };
+      const dir = join(ctx.config.screens.outDir, 'screens', 'index');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'index.html'), '<!DOCTYPE html>');
+      writeFileSync(join(ctx.config.screens.outDir, 'screens', '.stack-atlas-screens'), '');
+      return { nodes: [{ id: 'lib:x', file: 'src/x.ts' }], edges: [] };
+    },
+  };
+  const withScreens = () => {
+    const root = tmp('stack-atlas-dry-screens-');
+    writeFileSync(
+      join(root, 'stack-atlas.config.yaml'),
+      'project: { name: demo }\nscreens: { from: dir, dir: site }\n',
+    );
+    return root;
+  };
+  // 2026-11-10 追加（8-3c を 8-4 に合流）: dry-run も本番の build と同じ screens/ の規則で判定し、出力先には書かない
+  it('dry-run: 印の無い screens/ なら画面を写さずに警告を JSON に出す。印のある screens/ は消さない（書くのは一時ディレクトリだけ）', async () => {
+    const run = async (out: string, extractors: Extractor[], root: string) => {
+      const writes: string[] = [];
+      const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+        writes.push(String(chunk));
+        return true;
+      });
+      const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        const code = await runBuild({
+          repo: root,
+          outDir: out,
+          extractors,
+          dryRun: true,
+          json: true,
+          log: createMemoryLogger(),
+        });
+        return { code, json: JSON.parse(writes.join('')) };
+      } finally {
+        stdout.mockRestore();
+        stderr.mockRestore();
+      }
+    };
+    let seen: string | undefined = 'unset';
+    const spy: Extractor = {
+      ...screensStub,
+      extract: async (ctx, up) => {
+        seen = ctx.config.screens?.outDir;
+        return screensStub.extract(ctx, up);
+      },
+    };
+    // 印の無い screens/: 抽出器に書き出し先を渡さない（本番と同じ）、警告を出す、出力先はそのまま
+    const r1 = withScreens();
+    const o1 = join(r1, 'o');
+    mkdirSync(join(o1, 'screens', 'mine'), { recursive: true });
+    const a = await run(o1, [spy], r1);
+    expect(a.code).toBe(0);
+    expect(seen).toBeUndefined();
+    expect(a.json.issues).toContainEqual({
+      level: 'warning',
+      path: 'screens',
+      message: expect.stringContaining('画面を書きません（消しも上書きもしない）'),
+    });
+    expect(readdirSync(o1)).toEqual(['screens']);
+    expect(readdirSync(join(o1, 'screens'))).toEqual(['mine']);
+    // 印のある screens/: 抽出器は出力先の外（一時ディレクトリの staging）に書く。出力先の screens/ は消さない
+    const r2 = withScreens();
+    const o2 = join(r2, 'o');
+    mkdirSync(join(o2, 'screens', 'old'), { recursive: true });
+    writeFileSync(join(o2, 'screens', '.stack-atlas-screens'), '');
+    const b = await run(o2, [spy], r2);
+    expect(b.code).toBe(0);
+    expect(seen).toMatch(/stack-atlas-dry-run-.*\.screens-staging-/);
+    expect(seen!.startsWith(o2)).toBe(false);
+    expect(readdirSync(o2)).toEqual(['screens']);
+    expect(readdirSync(join(o2, 'screens')).sort()).toEqual(['.stack-atlas-screens', 'old']);
+    // screens/ がリンク: dry-run は書かないので止まらないが、本番は止まることと画面を写さないことを警告する
+    const r3 = withScreens();
+    const o3 = join(r3, 'o');
+    mkdirSync(o3);
+    const victim = mkdtempSync(join(tmpdir(), 'stack-atlas-victim-'));
+    symlinkSync(victim, join(o3, 'screens'));
+    const c = await run(o3, [spy], r3);
+    expect(c.code).toBe(0);
+    expect(seen).toBeUndefined();
+    expect(c.json.issues.map((i: { path: string }) => i.path)).toEqual(
+      expect.arrayContaining(['screens', 'build']),
+    );
+    expect(readdirSync(victim)).toEqual([]);
+  });
+
   it('出力先に何も書かず（一時ディレクトリも消す）、標準出力は JSON だけ', async () => {
     const out = join(tmp('stack-atlas-dry-'), 'never');
     const dryDirs = () => readdirSync(tmpdir()).filter((d) => d.startsWith('stack-atlas-dry-run-'));
@@ -447,7 +541,8 @@ describe('init --skill（docs/19 §3.6）', () => {
     writeFileSync(skillFile(dir, 'SKILL.md'), 'mine');
     writeFileSync(join(dir, 'stack-atlas.config.yaml'), 'project: { name: mine }\n');
     const again = initSkill({ dir, log: quiet });
-    expect(again.code).toBe(0);
+    // 2026-11-10 変更（8-4 のレビュー）: 公式と違う skill のファイルを残したときは終了コード 1（以前は 0）
+    expect(again.code).toBe(1);
     expect(again.report!.created).toEqual([]);
     expect(again.report!.skipped).toContain('.claude/skills/stack-atlas/SKILL.md');
     expect(readFileSync(skillFile(dir, 'SKILL.md'), 'utf8')).toBe('mine');

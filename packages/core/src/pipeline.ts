@@ -15,6 +15,10 @@
  * views.yaml → validateGraphV2 → 最後の graph から数え直した報告（harness）と strict（strictIssues）。報告は
  * `project.generator.report` にも書く（validate --strict が読む）
  *
+ * 秘密らしいファイル（`.env*`・鍵・`*secret*`・認証情報など）と repo の外のファイル（`../`・絶対パス）を `file` に持つ箱は、
+ * 抽出器と手書きの部分グラフの `code` を外す（箱は残す。graph.json はエージェントも人も読むので、中身の抜粋を載せない。
+ * 2026-11-10 8-4 のレビュー S2。secrets.ts）
+ *
  * 複数リポジトリ（config.repos、docs/12 §3.2）: 抽出器ごとに、repo を宣言順に回す
  * （`for extractor { for repo { detect; extract } }`）。そのため後続の抽出器（api-link など）は、
  * 先行する抽出器の **全 repo 分** の結果を upstream で読める。
@@ -53,11 +57,13 @@ import { addExtractorName } from './meta.js';
 import { completeNodes } from './nodes.js';
 import { applyOverrides, loadOverrides, OVERRIDES_FILE } from './overrides.js';
 import { HAND_ADAPTER, loadHandGraphs } from './hand-graph.js';
+import { stripSecretCode } from './secrets.js';
 import {
   applySupplementsA,
   applySupplementsB,
   finishRetarget,
   supplementText,
+  type PendingWhen,
   type SupplementResult,
 } from './supplements.js';
 import {
@@ -316,6 +322,14 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
     if (hand.files.length)
       log.info(`- ${HAND_ADAPTER}: 手書きの部分グラフ ${hand.files.length} ファイル`);
   }
+  // 秘密らしいファイル・repo の外のファイルの code を外す（S2）
+  const stripped = stripSecretCode([...merged.nodes, ...(merged.v2?.nodes ?? [])]);
+  if (stripped.length)
+    issues.push({
+      level: 'info',
+      path: 'secrets',
+      message: `秘密らしいファイルか repo の外のファイルの箱 ${stripped.length} の code（中身の抜粋）を graph に入れませんでした: ${stripped.slice(0, 10).join(', ')}${stripped.length > 10 ? ` ほか ${stripped.length - 10}` : ''}`,
+    });
 
   // 2. kind / name の補完 → classify → config.deploy → overrides
   const repoOf = repoOfNames(repoNames);
@@ -395,6 +409,15 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
     const v2path = (i: ValidationIssue): ValidationIssue => ({ ...i, path: `v2:${i.path}` });
     let graphV2 = upgradeGraph(graph, { onIssue: (i) => issues.push(v2path(i)) });
     const supplements: SupplementResult[] = [...(hand?.results ?? [])];
+    /** 手書きのファイルの結果（ファイル → 結果。端の解けない線・when の解けない線で解けないにする） */
+    const handResult = new Map((hand?.results ?? []).map((r) => [r.target ?? '', r]));
+    /** when の付いた手書きの線（段 B の後で when のキーを確かめる。重ねるときに写されるので、graph の中の線から引く） */
+    const handPending = (wires: GraphV2['wires']): PendingWhen[] =>
+      wires.flatMap((w) => {
+        const r =
+          w.meta?.by === HAND_ADAPTER ? handResult.get(String(w.meta.handFile ?? '')) : undefined;
+        return w.when && r ? [{ wire: w, result: r }] : [];
+      });
     let groups: ReadonlyMap<string, string[]> = new Map();
     let undeterminedList: UndeterminedWire[] = [];
     let joinReport: Pick<JoinReport, 'client' | 'server' | 'table'> | undefined;
@@ -422,11 +445,21 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
       // 補いの段 A（wires・remove・nodes。retarget は cleanupV2 が使う。docs/19 §3.1）
       const stageA = applySupplementsA(state.graph, overrides.v2, { groups: state.groups });
       const cleaned = cleanupV2(state, { pairs: joined.pairs, retarget: stageA.retarget });
-      finishRetarget(stageA, cleaned.retargetUsed);
+      finishRetarget(stageA, cleaned.retargetUsed, cleaned.retargetSatisfied);
       issues.push(...joined.issues, ...cleaned.issues);
       graphV2 = cleaned.graph;
+      // 端の解けない手書きの線（typo）: そのファイルを解けない補いにする（黙って落とさない）
+      for (const w of cleaned.droppedHand) {
+        const r = handResult.get(String(w.meta?.handFile ?? ''));
+        if (!r) continue;
+        r.status = 'unresolved';
+        const what = `線 ${w.from} → ${w.to} の端が graph にありません（箱・項目の id を確かめる）`;
+        r.message = r.message ? `${r.message}。${what}` : what;
+      }
       // 補いの段 B（items・variants・links・when）は掃除（`_` の crude の links）の後
-      const stageB = applySupplementsB(graphV2, overrides.v2);
+      const stageB = applySupplementsB(graphV2, overrides.v2, {
+        pendingWhen: [...stageA.pendingWhen, ...handPending(graphV2.wires)],
+      });
       supplements.push(...stageA.results, ...stageB);
       const broken = writeBroken(graphV2, { fixed: joined.fixedBroken });
       groups = state.groups;
@@ -449,7 +482,7 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
       // 言語アダプタが無くても補いは当てる（箱の単位の graph の線・箱）
       const stageA = applySupplementsA(graphV2, overrides.v2);
       finishRetarget(stageA, new Set());
-      supplements.push(...stageA.results, ...applySupplementsB(graphV2, overrides.v2));
+      supplements.push(...stageA.results, ...applySupplementsB(graphV2, overrides.v2, stageA));
     }
     // views.yaml（同じ id は flows.yaml 由来の view に勝つ。docs/19 §3.4）
     const views = applyViewsYaml(graphV2, configDir, groups);
@@ -477,16 +510,35 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
     const checked: Record<string, CheckedEntry> = {};
     for (const r of reports) {
       const role = opts.extractors.find((e) => e.name === r.name)?.v2Role;
-      const c: CheckedEntry = { status: r.skipped ? 'skipped' : r.status };
+      // failed（ある repo で失敗）を skipped（別の repo で飛ばした）で隠さない（2026-11-10 8-4 のレビュー）
+      const c: CheckedEntry = {
+        status: r.status === 'failed' ? 'failed' : r.skipped ? 'skipped' : r.status,
+      };
       if (role) c.role = role;
-      const reason = r.skipped ?? r.error;
+      const reason = r.status === 'failed' ? (r.error ?? r.skipped) : (r.skipped ?? r.error);
       if (reason) c.reason = reason;
       checked[r.name] = c;
     }
-    checked[HAND_ADAPTER] = {
-      status: hand?.files.length ? 'ok' : 'not-detected',
-      role: 'language',
-    };
+    // 手書きの部分グラフ: ファイルごとの結果を映す（全部が解けなければ failed。2026-11-10 8-4 のレビュー）
+    const handFiles = supplements.filter((r) => r.kind === 'hand');
+    const handBad = handFiles.filter((r) => r.status !== 'applied').length;
+    checked[HAND_ADAPTER] = !handFiles.length
+      ? { status: 'not-detected', role: 'language' }
+      : handBad === handFiles.length
+        ? {
+            status: 'failed',
+            role: 'language',
+            reason: `手書きのファイル ${handFiles.length} がどれも解けません（supplements の kind hand）`,
+          }
+        : {
+            status: 'ok',
+            role: 'language',
+            ...(handBad
+              ? {
+                  reason: `${handFiles.length} ファイルのうち ${handBad} が解けません（supplements の kind hand）`,
+                }
+              : {}),
+          };
     result.harness = computeHarnessReport({
       graph: graphV2,
       ...(joinReport ? { join: joinReport } : {}),

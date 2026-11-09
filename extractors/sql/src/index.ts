@@ -11,11 +11,11 @@
  * - v2（docs/17 §7 #5、8-2b）: `PartialGraph.v2` に table の 3 つの口（key / write / read）とカラムの項目を出す（v2.ts）。
  *   カラムの型は CREATE TABLE の型（SQL の型 → wireType は v2.ts の sqlWireType）。go-types も readTables で同じ表を読む
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import type { Edge } from '@stack-atlas/schema';
 import type { Extractor, PartialGraph, PartialNode, RepoContext } from '@stack-atlas/core';
-import { globBase, globToRegExp, sectionFor } from '@stack-atlas/core';
+import { globBase, globInRepo, globToRegExp, repoGlobs, sectionFor } from '@stack-atlas/core';
 import { tableNodeV2, tableTypeV2 } from './v2.js';
 
 export { sqlWireType, tableNodeV2, tableTypeV2, columnItem } from './v2.js';
@@ -44,7 +44,10 @@ function walk(dir: string, out: string[] = []): string[] {
     if (name === 'node_modules' || name.startsWith('.')) continue;
     const p = join(dir, name);
     try {
-      if (statSync(p).isDirectory()) walk(p, out);
+      // シンボリックリンクは辿らない（repo の外へ出させない。2026-11-10 8-4 のレビュー S2）
+      const st = lstatSync(p);
+      if (st.isSymbolicLink()) continue;
+      if (st.isDirectory()) walk(p, out);
       else out.push(p);
     } catch {
       /* 読めないものは飛ばす */
@@ -53,10 +56,14 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** マイグレーションファイル（repo 相対、ソート済み）。down は up と並んでいれば除く */
+/**
+ * マイグレーションファイル（repo 相対、ソート済み）。down は up と並んでいれば除く。静的な先頭が repo の外（絶対パス・
+ * `..`・外へ出るリンク）の glob は読まない
+ */
 export function migrationFiles(root: string, globs: string[]): string[] {
   const found = new Set<string>();
   for (const g of globs) {
+    if (!globInRepo(root, g)) continue;
     const re = globToRegExp(g);
     for (const abs of walk(join(root, globBase(g) || '.'))) {
       const rel = toPosix(relative(root, abs));
@@ -457,10 +464,9 @@ export const extractor: Extractor = {
   },
   async extract(ctx, upstream): Promise<PartialGraph> {
     const cfg = sectionFor(ctx, ctx.config.sql) ?? {};
-    const files = migrationFiles(ctx.root, cfg.migrations ?? DEFAULT_MIGRATIONS);
-    const tables = readTables(ctx.root, cfg.migrations ?? DEFAULT_MIGRATIONS, (m) =>
-      ctx.log.warn(m),
-    );
+    const globs = repoGlobs(ctx, cfg.migrations ?? DEFAULT_MIGRATIONS, 'sql.migrations');
+    const files = migrationFiles(ctx.root, globs);
+    const tables = readTables(ctx.root, globs, (m) => ctx.log.warn(m));
     const nodes: PartialNode[] = [...tables.values()].map((t) => {
       const sql: Record<string, unknown> = { table: t.table, columns: t.columns };
       if (t.schema) sql['schema'] = t.schema;

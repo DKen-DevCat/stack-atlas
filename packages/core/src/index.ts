@@ -178,6 +178,9 @@ export {
   countSupplements,
   supplementText,
   MAX_SUPPLEMENT_CHILDREN,
+  MAX_SUPPLEMENTS_PER_KIND,
+  MAX_DEFAULT_LINKS,
+  type PendingWhen,
   type SupplementKind,
   type SupplementResult,
   type SupplementStatus,
@@ -191,6 +194,15 @@ export {
   HAND_LIMITS,
   type HandGraphResult,
 } from './hand-graph.js';
+export {
+  isSecretFile,
+  stripSecretCode,
+  repoPathProblem,
+  confineRepoPath,
+  repoPath,
+  repoGlobs,
+  globInRepo,
+} from './secrets.js';
 export { applyViewsYaml, VIEWS_FILES, VIEWS_LIMITS, type ViewsYamlResult } from './views-yaml.js';
 export {
   computeHarnessReport,

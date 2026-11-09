@@ -853,7 +853,11 @@ wires:
       'fn:x#in/extra はアダプタの箱に無いので足しません（アダプタが勝つ）',
     ]);
     expect(r.part!.nodes.map((n) => n.id)).toEqual(['external:stripe']);
-    expect(r.part!.wires[0]!.meta).toEqual({ by: 'hand' });
+    // 2026-11-10 変更（8-4 のレビュー）: 線にも handFile を付ける（端の解けない線でそのファイルを解けない補いにするため）
+    expect(r.part!.wires[0]!.meta).toEqual({
+      by: 'hand',
+      handFile: '.stack-atlas/graph/a.v2.yaml',
+    });
   });
 
   it('形の違うファイル・runtime の無い新しい箱・別名の爆弾・シンボリックリンクは読まない', () => {

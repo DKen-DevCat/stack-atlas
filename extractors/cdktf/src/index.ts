@@ -3,9 +3,9 @@
  * 解析は @stack-atlas/tf-graph（terraform / cloudformation と共通）。ここは cdk.tf.json を読むのと、
  * construct id で .ts ソースの file / line を探すだけの薄いアダプタ。docs/04 §1・§5、docs/12 §3.3。
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { sectionFor } from '@stack-atlas/core';
+import { repoPath, sectionFor } from '@stack-atlas/core';
 import type { Extractor, PartialGraph, RepoContext } from '@stack-atlas/core';
 import {
   buildInfraGraph,
@@ -42,8 +42,9 @@ const section = (ctx: RepoContext) => sectionFor(ctx, ctx.config.cdktf);
 /** cdktf.out ディレクトリ（存在しなければ undefined） */
 export function cdktfOutDir(ctx: RepoContext): string | undefined {
   if (ctx.config.cdktf && !section(ctx)) return undefined; // 別の repo 向けの設定
-  const dir = ctx.resolve(section(ctx)?.out ?? 'infra/cdktf.out');
-  return existsSync(join(dir, 'stacks')) ? dir : undefined;
+  // repo の外（絶対パス・`..`・外へ出るリンク）は読まない（2026-11-10 8-4 のレビュー S2）
+  const dir = repoPath(ctx, section(ctx)?.out ?? 'infra/cdktf.out', 'cdktf.out');
+  return dir && existsSync(join(dir, 'stacks')) ? dir : undefined;
 }
 
 /** stacks/<stack>/cdk.tf.json を列挙する。config.cdktf.stack があればそれだけ */
@@ -91,8 +92,9 @@ interface SourceIndex {
 }
 
 function indexSources(ctx: RepoContext): SourceIndex {
-  const dir = ctx.resolve(section(ctx)?.sourceDir ?? 'infra');
+  const dir = repoPath(ctx, section(ctx)?.sourceDir ?? 'infra', 'cdktf.sourceDir');
   const files: SourceIndex['files'] = [];
+  if (!dir) return { files };
   const outDir = cdktfOutDir(ctx);
   const walk = (d: string) => {
     let entries: string[];
@@ -105,7 +107,9 @@ function indexSources(ctx: RepoContext): SourceIndex {
       if (name === 'node_modules' || name === '.gen' || name.startsWith('.')) continue;
       const p = join(d, name);
       if (outDir && p === outDir) continue;
-      const st = statSync(p);
+      // シンボリックリンクは辿らない（repo の外へ出させない）
+      const st = lstatSync(p);
+      if (st.isSymbolicLink()) continue;
       if (st.isDirectory()) walk(p);
       else if (name.endsWith('.ts') && !name.endsWith('.d.ts')) {
         files.push({ rel: relative(ctx.root, p), lines: readFileSync(p, 'utf8').split('\n') });

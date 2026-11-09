@@ -5,7 +5,7 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
-import { sectionFor } from '@stack-atlas/core';
+import { repoPath, sectionFor } from '@stack-atlas/core';
 import type { Extractor, PartialGraph, RepoContext } from '@stack-atlas/core';
 import {
   buildInfraGraph,
@@ -64,8 +64,9 @@ export function findRoot(ctx: RepoContext): string | undefined {
   if (ctx.config.terraform && !section(ctx)) return undefined; // 別の repo 向け
   const configured = section(ctx)?.root;
   if (configured) {
-    const dir = ctx.resolve(configured);
-    return hasTf(dir) ? dir : undefined;
+    // repo の外（絶対パス・`..`・外へ出るリンク）は読まない（2026-11-10 8-4 のレビュー S2）
+    const dir = repoPath(ctx, configured, 'terraform.root');
+    return dir && hasTf(dir) ? dir : undefined;
   }
   for (const b of SEARCH_BASES) {
     const base = ctx.resolve(b);

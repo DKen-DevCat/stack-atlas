@@ -12,6 +12,9 @@
  * - テンプレートの置換: `{path}`（repo 相対パス）`{dir}` `{basename}`（拡張子あり）`{stem}`（拡張子なし）`{repo}`
  * - `file` は repo 相対（複数 repo ならパイプラインが `<repo>/` を付ける）、`line: 1`、`code` はテキストファイルの先頭 20 行
  * - `rule.repo` があればその repo でだけ走る。node_modules / .git は見ない
+ * - glob は repo の中だけ（2026-11-10 8-4 のレビュー S2）: 絶対パス・`..` は設定の読み込みで外し、静的な先頭が repo の外へ
+ *   出るシンボリックリンクなら読まない。途中のシンボリックリンクは辿らない。秘密らしいファイル（`.env*`・鍵・`*secret*`
+ *   など。core の isSecretFile）は箱を作るが中身を読まない（code なし）
  *
  * ノードを作るだけでエッジは出さない（結線は overrides で）。そのため CLI では最初に走らせる。
  */
@@ -20,6 +23,8 @@ import { join, posix } from 'node:path';
 import {
   globBase,
   globToRegExp,
+  isSecretFile,
+  repoPath,
   sectionFor,
   type Extractor,
   type FileRule,
@@ -114,6 +119,7 @@ export function extractFiles(ctx: RepoContext): PartialGraph {
   const nodes: PartialNode[] = [];
   const seen = new Set<string>();
   for (const rule of rulesFor(ctx)) {
+    if (!repoPath(ctx, globBase(rule.glob.replace(/^\.\//, '')) || '.', 'files の glob')) continue;
     if (!/^[a-z]+$/.test(rule.kind)) {
       ctx.log.warn(
         `files: kind "${rule.kind}" は英小文字だけにしてください（ID の接頭辞になるため。無視します）`,
@@ -145,7 +151,7 @@ export function extractFiles(ctx: RepoContext): PartialGraph {
         file: path,
         line: 1,
       };
-      const code = readHead(ctx.resolve(path));
+      const code = isSecretFile(path) ? undefined : readHead(ctx.resolve(path));
       if (code) node.code = code;
       if (rule.layer) node.layer = rule.layer;
       nodes.push(node);

@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs';
 
 export interface ValidateOptions {
   /**
-   * graph.json の build の報告（project.generator.report）を読み、strict の違反・報告の無い graph・飛ばした言語アダプタを
-   * エラーにする（docs/19 §3.3、D72。CI の関門は build --strict で、これは補助）
+   * graph.json の build の報告（project.generator.report）を読み、strict の違反・報告の無い graph・飛ばした言語アダプタ・
+   * 失敗した抽出器をエラーにする（docs/19 §3.3、D72。CI の関門は build --strict で、これは補助）
    */
   strict?: boolean;
 }
@@ -20,11 +20,17 @@ export function strictReportErrors(json: unknown): string[] {
       'build の報告（project.generator.report）がありません。stack-atlas build で作った graph ではないので、strict を確かめられません',
     ];
   const errors: string[] = [];
-  for (const [name, c] of Object.entries(report.checked ?? {}))
+  for (const [name, c] of Object.entries(report.checked ?? {})) {
     if (c?.status === 'skipped' && c.role === 'language')
       errors.push(
         `言語アダプタ ${name} が飛ばされた graph です（${c.reason ?? '理由なし'}）。検査が弱まっているので strict ではエラー`,
       );
+    // 2026-11-10（8-4 のレビュー）: 失敗した抽出器も（以前は skipped だけを見ていた）
+    if (c?.status === 'failed')
+      errors.push(
+        `抽出器 ${name} が失敗した graph です（${c.reason ?? '理由なし'}）。strict ではエラー`,
+      );
+  }
   const n = report.counts?.strictErrors ?? 0;
   if (n > 0) {
     errors.push(`build の strict の違反が ${n} 件あります`);

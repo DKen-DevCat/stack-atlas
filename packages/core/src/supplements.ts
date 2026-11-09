@@ -16,6 +16,11 @@
  *
  * 既定: 補いで足した線・links・項目は `confidence: crude`（線は meta.confidence）、`meta.by: "overrides"` と reason。
  * reason は必須（無ければ警告。strict ではエラー）。結果は補いごとに applied / unresolved / mismatch（report の supplements）
+ *
+ * 2026-11-10（8-4 のレビュー）: nodes のパッチは全部を確かめてから当てる（解けないなら何も変えない）。when のキーは宣言した
+ * 分岐で解く（links・when は当てる前、段 A の線は段 B の variants の後。解けなければ名指しの解けない補いにし、線は足さない）。
+ * 同じ group と peer の retarget は 1 つ目だけ。上限（DoS）: 既定の links の実体化は MAX_DEFAULT_LINKS まで（超えたら
+ * `mode: replace` を勧めて解けない補い）、補いは種類ごとに MAX_SUPPLEMENTS_PER_KIND まで、意味の参照は線の索引で引く
  */
 import {
   CONFIDENCES,
@@ -37,7 +42,18 @@ import { httpCallOf } from './join.js';
 import { apiPathMatches } from './paths.js';
 import type { SupplementFingerprint, SupplementRef, SupplementsV2 } from './types.js';
 import { clone, isPlainObject } from './util.js';
-import { boxOf, mergeItemLists, wireKey } from './v2-parts.js';
+import {
+  MAX_DEFAULT_LINKS,
+  boxOf,
+  materializeDefaultLinks,
+  mergeItemLists,
+  topItems,
+  topRef,
+  whenProblem,
+  wireKey,
+} from './v2-parts.js';
+
+export { MAX_DEFAULT_LINKS, materializeDefaultLinks } from './v2-parts.js';
 
 /** 補いの種類（overrides の v2: のキーと、手書きの部分グラフ・views.yaml） */
 export type SupplementKind =
@@ -75,6 +91,8 @@ const ITEM_ID = /^[A-Za-z0-9_$-]+$/;
 const VARIANT_ID = /^[a-z][a-z0-9_]*$/;
 /** 1 つの items の補いで足せる子の数の上限 */
 export const MAX_SUPPLEMENT_CHILDREN = 500;
+/** 補いの種類ごとの数の上限（超えた分は 1 件の解けない補いにまとめて無視する。8-4 のレビュー S3） */
+export const MAX_SUPPLEMENTS_PER_KIND = 2000;
 
 interface Entry {
   node: NodeV2;
@@ -84,11 +102,45 @@ interface Entry {
   path: string;
 }
 
-/** 参照 → 項目の索引（graph が変わったら作り直す） */
+/** 参照 → 項目の索引（graph の箱が変わったら作り直す） */
 class RefIndex {
   readonly nodes: Map<string, NodeV2>;
+  /** 最上位の項目（`<箱>#<口>/<項目>`）→ その項目かその子から出る線の相手の箱 / そこへ入る線の元の箱（遅延して作る） */
+  private outTo?: Map<string, Set<string>>;
+  private inFrom?: Map<string, Set<string>>;
   constructor(readonly graph: GraphV2) {
     this.nodes = new Map(graph.nodes.map((n) => [n.id, n]));
+  }
+  private build() {
+    this.outTo = new Map();
+    this.inFrom = new Map();
+    for (const w of this.graph.wires) this.addWire(w);
+  }
+  /** 足した線を索引にも入れる（段 A の線が後の意味の参照の手がかりになる） */
+  addWire(w: WireV2) {
+    if (!this.outTo || !this.inFrom) return;
+    const add = (m: Map<string, Set<string>>, k: string, v: string) => {
+      const s = m.get(k);
+      if (s) s.add(v);
+      else m.set(k, new Set([v]));
+    };
+    add(this.outTo, topRef(w.from), boxOf(w.to));
+    add(this.inFrom, topRef(w.to), boxOf(w.from));
+  }
+  /** 線を消した・入れ替えた（次に引くときに作り直す） */
+  invalidateWires() {
+    this.outTo = undefined;
+    this.inFrom = undefined;
+  }
+  /** その最上位の項目（か子）から出る線の相手の箱 */
+  partnersOut(top: string): ReadonlySet<string> {
+    if (!this.outTo) this.build();
+    return this.outTo!.get(top) ?? EMPTY;
+  }
+  /** その最上位の項目（か子）へ入る線の元の箱 */
+  partnersIn(top: string): ReadonlySet<string> {
+    if (!this.inFrom) this.build();
+    return this.inFrom!.get(top) ?? EMPTY;
   }
   /** `<箱>#<口>/<a>.<b>` の項目と、パスの途中の項目（番号の段の指紋を見る） */
   resolve(ref: string): { entry: Entry; chain: ItemV2[] } | undefined {
@@ -108,6 +160,8 @@ class RefIndex {
     return { entry: { node, port, item: chain[chain.length - 1]!, path: p.path.join('.') }, chain };
   }
 }
+
+const EMPTY: ReadonlySet<string> = new Set();
 
 type Resolved =
   | { ok: true; ref: string; entry: Entry }
@@ -225,14 +279,6 @@ function resolveDirect(
   return { ok: true, ref, entry: r.entry };
 }
 
-const topItems = (n: NodeV2, dir: 'in' | 'out') =>
-  n.ports
-    .filter((p) => p.dir === dir)
-    .flatMap((p) => p.items.map((it) => ({ port: p, item: it, ref: `${n.id}#${p.id}/${it.id}` })));
-
-/** ref がその項目か、その子孫か */
-const under = (ref: string, root: string) => ref === root || ref.startsWith(`${root}.`);
-
 function pick(
   cands: Array<{ ref: string; port: PortV2; item: ItemV2 }>,
   node: NodeV2,
@@ -270,10 +316,9 @@ function resolveCall(
   if (typeof call.to !== 'string')
     return fail('call には to（呼ばれる箱）か http を書いてください');
   const to = call.to;
+  const hits = (top: string) => [...idx.partnersOut(top)].some((b) => isBox(idx.nodes, b, to));
   return pick(
-    outs.filter((o) =>
-      idx.graph.wires.some((w) => under(w.from, o.ref) && isBox(idx.nodes, boxOf(w.to), to)),
-    ),
+    outs.filter((o) => hits(o.ref)),
     node,
     `${to} への呼び出し`,
   );
@@ -291,16 +336,13 @@ function resolveRet(
   const node = idx.nodes.get(inId);
   if (!node) return fail(`箱 ${inId} がありません`);
   const calls = new Map(topItems(node, 'out').map((o) => [o.item.id, o.ref]));
+  const isFrom = (boxes: ReadonlySet<string>) => [...boxes].some((b) => isBox(idx.nodes, b, from));
   const cands = topItems(node, 'in').filter((o) => {
     const n = /^ret_(\d+)$/.exec(o.item.id)?.[1];
     if (!n) return false;
-    if (idx.graph.wires.some((w) => under(w.to, o.ref) && isBox(idx.nodes, boxOf(w.from), from)))
-      return true;
+    if (isFrom(idx.partnersIn(o.ref))) return true;
     const call = calls.get(`call_${n}`);
-    return (
-      !!call &&
-      idx.graph.wires.some((w) => under(w.from, call) && isBox(idx.nodes, boxOf(w.to), from))
-    );
+    return !!call && isFrom(idx.partnersOut(call));
   });
   return pick(cands, node, `${from} からの戻り`);
 }
@@ -324,6 +366,24 @@ class Collector {
     else r.noReason = true;
     this.results.push(r);
     return r;
+  }
+  /**
+   * 種類ごとの上限（MAX_SUPPLEMENTS_PER_KIND）まで。超えた分は 1 件の解けない補いにまとめて無視する
+   * （reason は問わない。上限の文が strict のエラーになる）
+   */
+  capped<T extends Record<string, unknown>>(
+    kind: SupplementKind,
+    list: readonly T[] | undefined,
+  ): T[] {
+    const xs = list ?? [];
+    if (xs.length <= MAX_SUPPLEMENTS_PER_KIND) return [...xs];
+    this.results.push({
+      kind,
+      index: MAX_SUPPLEMENTS_PER_KIND,
+      status: 'unresolved',
+      message: `v2.${kind} が ${xs.length} 件あり、上限 ${MAX_SUPPLEMENTS_PER_KIND} を超えた ${xs.length - MAX_SUPPLEMENTS_PER_KIND} 件を無視しました`,
+    });
+    return xs.slice(0, MAX_SUPPLEMENTS_PER_KIND);
   }
 }
 
@@ -353,6 +413,17 @@ export interface StageAResult {
   retarget: Map<string, string[]>;
   /** retarget のキー → results の要素（cleanupV2 が使わなかったものを解けない補いにする） */
   retargetResults: Map<string, SupplementResult>;
+  /**
+   * when を付けて足した線（段 B の variants の後で when のキーを確かめる。解けなければ線を消して解けない補いにする）。
+   * pipeline は手書きの部分グラフの when の付いた線もここに足す
+   */
+  pendingWhen: PendingWhen[];
+}
+
+/** when のキーを後で確かめる線と、その補いの結果 */
+export interface PendingWhen {
+  wire: WireV2;
+  result: SupplementResult;
 }
 
 /**
@@ -366,7 +437,8 @@ export function applySupplementsA(
   const col = new Collector();
   const retarget = new Map<string, string[]>();
   const retargetResults = new Map<string, SupplementResult>();
-  if (!sup) return { results: col.results, retarget, retargetResults };
+  const pendingWhen: PendingWhen[] = [];
+  if (!sup) return { results: col.results, retarget, retargetResults, pendingWhen };
   const groups = opts.groups ?? new Map<string, string[]>();
   let idx = new RefIndex(graph);
   const notGroup = (r: Resolved): Resolved => {
@@ -379,8 +451,9 @@ export function applySupplementsA(
       : r;
   };
 
-  // nodes（箱のパッチ）。線の参照より先（host・kind は参照に影響しない）
-  (sup.nodes ?? []).forEach((e, i) => {
+  // nodes（箱のパッチ）。線の参照より先（host・kind は参照に影響しない）。全部のフィールドを確かめてから当てる
+  // （2026-11-10 8-4 のレビュー: 以前は確かめながら書き換え、解けない補いでも途中のフィールドが変わっていた）
+  col.capped('nodes', sup.nodes).forEach((e, i) => {
     const id = e.id;
     if (typeof id !== 'string')
       return col.add('nodes', i, e, 'unresolved', undefined, 'id がありません');
@@ -389,14 +462,11 @@ export function applySupplementsA(
     if (groups.has(id))
       return col.add('nodes', i, e, 'unresolved', id, `${id} は group になって掃除で消えます`);
     const problems: string[] = [];
-    let changed = 0;
+    const patch: Array<[keyof NodeV2, unknown]> = [];
     const set = (k: keyof NodeV2, ok: boolean, why: string) => {
       if (e[k] === undefined) return;
       if (!ok) problems.push(`${k}: ${why}`);
-      else {
-        (n as unknown as Record<string, unknown>)[k] = clone(e[k]);
-        changed++;
-      }
+      else patch.push([k, clone(e[k])]);
     };
     set(
       'runtime',
@@ -434,7 +504,7 @@ export function applySupplementsA(
         ].includes(k),
     );
     if (unknownKeys.length) problems.push(`未知のキー ${unknownKeys.join(', ')}`);
-    if (problems.length || !changed)
+    if (problems.length || !patch.length)
       return col.add(
         'nodes',
         i,
@@ -443,12 +513,13 @@ export function applySupplementsA(
         id,
         problems.length ? problems.join('、') : '変えるフィールドがありません',
       );
+    for (const [k, v] of patch) (n as unknown as Record<string, unknown>)[k] = v;
     col.add('nodes', i, e, 'applied', id);
   });
 
   // wires（足す）
   const keys = new Set(graph.wires.map(wireKey));
-  (sup.wires ?? []).forEach((e, i) => {
+  col.capped('wires', sup.wires).forEach((e, i) => {
     const via = e.via;
     if (typeof via !== 'string' || !(WIRE_VIAS as readonly string[]).includes(via))
       return col.add(
@@ -502,11 +573,13 @@ export function applySupplementsA(
       return col.add('wires', i, e, 'applied', target, '同じ線が既にあります');
     keys.add(wireKey(w));
     graph.wires.push(w);
-    col.add('wires', i, e, 'applied', target);
+    idx.addWire(w);
+    const r = col.add('wires', i, e, 'applied', target);
+    if (w.when) pendingWhen.push({ wire: w, result: r });
   });
 
   // remove（線を消す。箱 id どうしなら、その向きの線を全部）
-  (sup.remove ?? []).forEach((e, i) => {
+  col.capped('remove', sup.remove).forEach((e, i) => {
     const spec = isPlainObject(e.wire) ? e.wire : undefined;
     if (!spec)
       return col.add(
@@ -541,12 +614,15 @@ export function applySupplementsA(
       return col.add('remove', i, e, 'unresolved', target, '消す線がありません');
     keys.clear();
     for (const w of graph.wires) keys.add(wireKey(w));
+    idx.invalidateWires();
     col.add('remove', i, e, 'applied', target, `${before - graph.wires.length} 本`);
   });
   idx = new RefIndex(graph);
 
   // retarget（cleanupV2 が使う）
-  (sup.retarget ?? []).forEach((e, i) => {
+  /** retarget のキー → 最初に書いた番号（重複の検出） */
+  const firstRetarget = new Map<string, number>();
+  col.capped('retarget', sup.retarget).forEach((e, i) => {
     const g = e.group;
     const peer = e.peer;
     const to = e.to;
@@ -584,48 +660,45 @@ export function applySupplementsA(
         `${outside.join(', ')} は ${g} の中にありません（中: ${members.join(', ')}）`,
       );
     const key = `${g}\u0000${peer}`;
+    // 同じ group と peer の 2 つ目は使わない（2026-11-10 8-4 のレビュー: 以前は黙って 1 つ目を置き換え、1 つ目は applied の
+    // まま残った）
+    const first = firstRetarget.get(key);
+    if (first !== undefined)
+      return col.add(
+        'retarget',
+        i,
+        e,
+        'unresolved',
+        target,
+        `v2.retarget[${first}] と同じ group と peer です（1 つ目を使います。1 つにまとめてください）`,
+      );
+    firstRetarget.set(key, i);
     retarget.set(key, list as string[]);
     // 使われたかは cleanupV2 の後で決める（finishRetarget）
     retargetResults.set(key, col.add('retarget', i, e, 'applied', target));
   });
-  return { results: col.results, retarget, retargetResults };
+  return { results: col.results, retarget, retargetResults, pendingWhen };
 }
 
-/** cleanupV2 が使わなかった retarget を解けない補いにする */
-export function finishRetarget(stage: StageAResult, used: ReadonlySet<string>) {
-  for (const [key, r] of stage.retargetResults)
-    if (!used.has(key)) {
-      r.status = 'unresolved';
-      r.message = 'group と peer の間に付け替える箱の単位の線がありません';
+/**
+ * cleanupV2 が使わなかった retarget を解けない補いにする。satisfied（補いの線が group と peer の箱の単位の線を置き換えた。
+ * cleanupV2 の retargetSatisfied）は付け替えが要らなかったものとして applied のまま（2026-11-10 8-4 のレビュー）
+ */
+export function finishRetarget(
+  stage: StageAResult,
+  used: ReadonlySet<string>,
+  satisfied: ReadonlySet<string> = new Set(),
+) {
+  for (const [key, r] of stage.retargetResults) {
+    if (used.has(key)) continue;
+    if (satisfied.has(key)) {
+      r.message =
+        '補いの線（v2.wires）が group と peer の箱の単位の線を置き換えたので、付け替えは要りませんでした';
+      continue;
     }
-}
-
-/** links の無い箱の既定の links（wiring の defaultLinks と同じ規則）を書き出す */
-export function materializeDefaultLinks(n: NodeV2): LinkV2[] {
-  const roots = (dir: 'in' | 'out', portId?: string) =>
-    n.ports
-      .filter((p) => p.dir === dir && (portId === undefined || p.id === portId))
-      .flatMap((p) => p.items.map((it) => ({ port: p.id, id: it.id })));
-  const ref = (r: { port: string; id: string }) => `${r.port}/${r.id}`;
-  const product = (ins: ReturnType<typeof roots>, outs: ReturnType<typeof roots>, crude: boolean) =>
-    ins.flatMap((a) =>
-      outs.map((b): LinkV2 => ({
-        from: ref(a),
-        to: ref(b),
-        ...(crude ? { confidence: 'crude' } : {}),
-      })),
-    );
-  if (n.kind === 'table') return product(roots('in', 'key'), roots('out', 'read'), false);
-  if (n.kind === 'endpoint' && n.ports.some((p) => p.id === 'req' || p.id === 'res')) {
-    const identity = (from: string, to: string) => {
-      const outs = roots('out', to);
-      return roots('in', from)
-        .filter((a) => outs.some((b) => b.id === a.id))
-        .map((a): LinkV2 => ({ from: ref(a), to: `${to}/${a.id}` }));
-    };
-    return [...identity('in', 'req'), ...identity('res', 'out')];
+    r.status = 'unresolved';
+    r.message = 'group と peer の間に付け替える箱の単位の線がありません';
   }
-  return product(roots('in'), roots('out'), true);
 }
 
 const linkKey = (l: Pick<LinkV2, 'from' | 'to' | 'when'>) =>
@@ -679,13 +752,17 @@ function checkChildren(
 export function applySupplementsB(
   graph: GraphV2,
   sup: SupplementsV2 | undefined,
+  stageA?: Pick<StageAResult, 'pendingWhen'>,
 ): SupplementResult[] {
   const col = new Collector();
-  if (!sup) return col.results;
+  if (!sup) {
+    checkPendingWhen(graph, stageA?.pendingWhen);
+    return col.results;
+  }
   let idx = new RefIndex(graph);
 
   // items（不透明な項目に子を足す。アダプタの子がある項目には足せない）
-  (sup.items ?? []).forEach((e, i) => {
+  col.capped('items', sup.items).forEach((e, i) => {
     const r = resolveRef(idx, e.at, undefined, asFingerprint(e.expect));
     if (!r.ok)
       return col.add(
@@ -714,7 +791,7 @@ export function applySupplementsB(
   idx = new RefIndex(graph);
 
   // variants（id で upsert）
-  (sup.variants ?? []).forEach((e, i) => {
+  col.capped('variants', sup.variants).forEach((e, i) => {
     const n = typeof e.node === 'string' ? idx.nodes.get(e.node) : undefined;
     if (!n)
       return col.add(
@@ -757,7 +834,7 @@ export function applySupplementsB(
       e: Record<string, unknown>;
     }>
   >();
-  (sup.links ?? []).forEach((e, i) => {
+  col.capped('links', sup.links).forEach((e, i) => {
     const n = typeof e.node === 'string' ? idx.nodes.get(e.node) : undefined;
     if (!n)
       return col.add(
@@ -801,6 +878,8 @@ export function applySupplementsB(
         n.id,
         'when は { <分岐>: true|false } で書いてください',
       );
+    const wp = e.when !== undefined ? whenProblem(e.when as When, [n.id], idx.nodes) : undefined;
+    if (wp) return col.add('links', i, e, 'unresolved', n.id, wp);
     const link: LinkV2 = {
       from: `${f.entry.port.id}/${f.entry.path}`,
       to: `${t.entry.port.id}/${t.entry.path}`,
@@ -814,6 +893,19 @@ export function applySupplementsB(
   });
   for (const [n, list] of planned) {
     const base = list.some((x) => x.replace) ? [] : (n.links ?? materializeDefaultLinks(n));
+    if (!base) {
+      // 既定（全 in → 全 out）が上限を超える（8-4 のレビュー S3）: 書き出さない
+      for (const x of list)
+        col.add(
+          'links',
+          x.i,
+          x.e,
+          'unresolved',
+          n.id,
+          `${n.id} の既定の links が上限 ${MAX_DEFAULT_LINKS} 本を超えるので書き出せません。mode: replace で、通る links を全部書いてください`,
+        );
+      continue;
+    }
     for (const x of list) {
       const target = `${n.id} ${x.link.from} → ${x.link.to}`;
       const same = base.find((l) => linkKey(l) === linkKey(x.link));
@@ -838,7 +930,7 @@ export function applySupplementsB(
   }
 
   // when（links か線に条件を付ける）
-  (sup.when ?? []).forEach((e, i) => {
+  col.capped('when', sup.when).forEach((e, i) => {
     if (!isWhen(e.when))
       return col.add(
         'when',
@@ -866,7 +958,18 @@ export function applySupplementsB(
       if (bad) return col.add('when', i, e, bad.status, n.id, bad.message);
       const lf = `${(from as Extract<Resolved, { ok: true }>).entry.port.id}/${(from as Extract<Resolved, { ok: true }>).entry.path}`;
       const lt = `${(to as Extract<Resolved, { ok: true }>).entry.port.id}/${(to as Extract<Resolved, { ok: true }>).entry.path}`;
+      const wp = whenProblem(when, [n.id], idx.nodes);
+      if (wp) return col.add('when', i, e, 'unresolved', `${n.id} ${lf} → ${lt}`, wp);
       const links = n.links ?? materializeDefaultLinks(n);
+      if (!links)
+        return col.add(
+          'when',
+          i,
+          e,
+          'unresolved',
+          `${n.id} ${lf} → ${lt}`,
+          `${n.id} の既定の links が上限 ${MAX_DEFAULT_LINKS} 本を超えるので書き出せません。links の mode: replace で書いてください`,
+        );
       const hits = links.filter((l) => l.from === lf && l.to === lt);
       if (!hits.length)
         return col.add(
@@ -890,6 +993,8 @@ export function applySupplementsB(
       const t = (to as Extract<Resolved, { ok: true }>).ref;
       const w = graph.wires.find((x) => x.from === f && x.to === t);
       if (!w) return col.add('when', i, e, 'unresolved', `${f} → ${t}`, 'その線がありません');
+      const wp = whenProblem(when, [boxOf(f), boxOf(t)], idx.nodes);
+      if (wp) return col.add('when', i, e, 'unresolved', `${f} → ${t}`, wp);
       w.when = { ...when };
       return col.add('when', i, e, 'applied', `${f} → ${t}`);
     }
@@ -902,7 +1007,28 @@ export function applySupplementsB(
       'node と link: { from, to }、か wire: { from, to } で書いてください',
     );
   });
+  checkPendingWhen(graph, stageA?.pendingWhen);
   return col.results;
+}
+
+/**
+ * 段 A の線（と手書きの線）の when のキーを、段 B の variants の後の graph で確かめる。解けない線は消し、その補いを
+ * 解けない（名指し）にする（2026-11-10 8-4 のレビュー: 以前は最後の validateGraphV2 のエラーになり、build が毎回失敗した）
+ */
+function checkPendingWhen(graph: GraphV2, pending: readonly PendingWhen[] | undefined) {
+  if (!pending?.length) return;
+  const nodes = new Map(graph.nodes.map((n) => [n.id, n]));
+  const drop = new Set<WireV2>();
+  for (const { wire, result } of pending) {
+    if (!wire.when) continue;
+    const wp = whenProblem(wire.when, [boxOf(wire.from), boxOf(wire.to)], nodes);
+    if (!wp) continue;
+    drop.add(wire);
+    result.status = 'unresolved';
+    const what = `線 ${wire.from} → ${wire.to}: ${wp}（この線は足しません）`;
+    result.message = result.message ? `${result.message}。${what}` : what;
+  }
+  if (drop.size) graph.wires = graph.wires.filter((w) => !drop.has(w));
 }
 
 /** 補いの結果の数（applied / unresolved / mismatch） */

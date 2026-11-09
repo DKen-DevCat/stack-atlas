@@ -2,7 +2,18 @@
  * 言語アダプタの v2 の部分グラフ（PartialGraph.v2）どうしのマージと、項目の木の小さな道具（docs/17 §3.1）。
  * 抽出器どうしのマージ（mergePartialGraphs）と、upgrade の箱へのマージ（mergeV2）の両方で使う。
  */
-import type { ItemV2, LinkV2, NamedType, PortV2, VariantV2, WireV2 } from '@stack-atlas/schema';
+import {
+  parseWhenKey,
+  type ItemV2,
+  type LinkV2,
+  type NamedType,
+  type NodeV2,
+  type PortV2,
+  type VariantV2,
+  type When,
+  type WireV2,
+} from '@stack-atlas/schema';
+import { defaultLinks, indexGraph } from '@stack-atlas/wiring';
 import type { PartialGraphV2, PartialNodeV2 } from './types.js';
 import { clone, deepMerge } from './util.js';
 
@@ -27,6 +38,85 @@ export const boxOf = (ref: string) => ref.slice(0, Math.max(0, ref.indexOf('#'))
 
 /** 参照が口の単位（`<box>#<port>/_`）か */
 export const isUnderscoreRef = (ref: string) => ref.endsWith(`/${UNDERSCORE}`);
+
+/** ref がその項目（root）か、その子孫か（補いの意味の参照と strict の数え直しで共用） */
+export const under = (ref: string, root: string) => ref === root || ref.startsWith(`${root}.`);
+
+/** 項目の参照の最上位の項目（`<箱>#<口>/a.b` → `<箱>#<口>/a`） */
+export const topRef = (ref: string) => {
+  const slash = ref.indexOf('/', ref.indexOf('#'));
+  const dot = ref.indexOf('.', slash);
+  return dot < 0 ? ref : ref.slice(0, dot);
+};
+
+/** 箱の dir の口の最上位の項目と、その参照（`<箱>#<口>/<項目>`） */
+export const topItems = (n: Pick<NodeV2, 'id' | 'ports'>, dir: 'in' | 'out') =>
+  n.ports
+    .filter((p) => p.dir === dir)
+    .flatMap((p) => p.items.map((it) => ({ port: p, item: it, ref: `${n.id}#${p.id}/${it.id}` })));
+
+/**
+ * links を書いていない箱の既定の links の本数と、書き出すときの上限（2026-11-10 8-4 のレビュー S3: 全 in × 全 out を
+ * 書き出すので、項目の多い箱で数千万本になり heap を使い切った。補いの links と掃除の `_` の links で共用）
+ */
+export const MAX_DEFAULT_LINKS = 10_000;
+
+/** 既定の links の本数（書き出さずに数える。wiring の defaultLinks と同じ規則） */
+export function defaultLinkCount(n: Pick<NodeV2, 'kind' | 'ports'>): number {
+  const count = (dir: 'in' | 'out', portId?: string) =>
+    n.ports
+      .filter((p) => p.dir === dir && (portId === undefined || p.id === portId))
+      .reduce((s, p) => s + p.items.length, 0);
+  if (n.kind === 'table') return count('in', 'key') * count('out', 'read');
+  if (n.kind === 'endpoint' && n.ports.some((p) => p.id === 'req' || p.id === 'res'))
+    return count('in', 'in') + count('in', 'res');
+  return count('in') * count('out');
+}
+
+/**
+ * links の無い箱の既定の links を書き出す（規則は @stack-atlas/wiring の defaultLinks。全 in → 全 out は crude、
+ * table の key → read と endpoint の恒等は confidence なし）。MAX_DEFAULT_LINKS を超えるなら undefined（書き出さない）
+ */
+export function materializeDefaultLinks(n: NodeV2): LinkV2[] | undefined {
+  if (defaultLinkCount(n) > MAX_DEFAULT_LINKS) return undefined;
+  const inode = indexGraph({ version: 2, nodes: [n], wires: [] }).nodes.get(n.id)!;
+  const exact =
+    n.kind === 'table' ||
+    (n.kind === 'endpoint' && n.ports.some((p) => p.id === 'req' || p.id === 'res'));
+  return defaultLinks(inode).map((l): LinkV2 => ({
+    from: `${l.from.port.id}/${l.from.path}`,
+    to: `${l.to.port.id}/${l.to.path}`,
+    ...(exact ? {} : { confidence: 'crude' }),
+  }));
+}
+
+/**
+ * when のキーが宣言した分岐に解けるか（validateGraphV2 の checkWhen と同じ規則）。owners は無修飾のキーの候補の箱
+ * （線なら両端、links ならその箱）。解けなければ理由の文
+ */
+export function whenProblem(
+  when: When,
+  owners: readonly string[],
+  nodes: ReadonlyMap<string, Pick<NodeV2, 'variants'>>,
+): string | undefined {
+  const declares = (id: string, v: string) =>
+    nodes.get(id)?.variants?.some((x) => x.id === v) ?? false;
+  for (const key of Object.keys(when)) {
+    const { nodeId, variantId } = parseWhenKey(key);
+    if (nodeId !== undefined) {
+      if (!nodes.has(nodeId)) return `when のキー "${key}" の箱 ${nodeId} がありません`;
+      if (!declares(nodeId, variantId))
+        return `when のキー "${key}": ${nodeId} は分岐 ${variantId} を宣言していません（v2.variants で足す）`;
+      continue;
+    }
+    const found = [...new Set(owners)].filter((o) => declares(o, variantId));
+    if (!found.length)
+      return `when のキー "${key}" を宣言している箱がありません（候補 ${[...new Set(owners)].join(', ')}。v2.variants で足す）`;
+    if (found.length > 1)
+      return `when のキー "${key}" は ${found.join(', ')} が宣言しています。"<箱>#${key}" で書いてください`;
+  }
+  return undefined;
+}
 
 /** 項目の並びを id で合わせる（先に出た方を残し、子は再帰で合わせる） */
 export function mergeItemLists(a: ItemV2[], b: ItemV2[]): ItemV2[] {

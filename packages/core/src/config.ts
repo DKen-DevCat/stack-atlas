@@ -9,6 +9,7 @@ import { parse } from 'yaml';
 import type { Logger, RepoContext, StackAtlasConfig } from './types.js';
 import { isPlainObject } from './util.js';
 import { silentLogger } from './logger.js';
+import { repoPathProblem } from './secrets.js';
 
 export const CONFIG_FILES = ['stack-atlas.config.yaml', 'stack-atlas.config.yml'] as const;
 
@@ -175,6 +176,7 @@ export function checkConfig(
       }
     }
   }
+  dropOutsidePaths(cfg, log, file);
   if (cfg.screens) checkScreens(cfg.screens as Record<string, unknown>, log, file);
   if (cfg.extractors) {
     for (const [k, v] of Object.entries(cfg.extractors)) {
@@ -185,6 +187,66 @@ export function checkConfig(
     }
   }
   return cfg;
+}
+
+/**
+ * 抽出器が読むパス・glob のうち、repo の外を字面で指すもの（絶対パス・`~`・`..` の段）を警告して取り除く
+ * （2026-11-10 8-4 のレビュー S2: 設定は解析対象の repo のもので信用しない。`files: [{ glob: "../../x/*.env" }]` で
+ * repo の外のファイルの中身が graph.json の code に入った）。repo の中を指すシンボリックリンクの先は、抽出器が読む前に
+ * realpath で確かめる（secrets.ts の repoPath）。`repos`（config の外の repo を並べる）と、照合にだけ使う glob
+ * （classify・deploy の handlers・go.entries）は対象外
+ */
+function dropOutsidePaths(cfg: StackAtlasConfig, log: Logger, file: string) {
+  const bad = (v: unknown) => typeof v === 'string' && repoPathProblem(v) !== undefined;
+  const warn = (where: string, v: unknown) =>
+    log.warn(
+      `${file}: ${where} の "${String(v)}" は repo の外を指す（絶対パスか ..）ので無視します`,
+    );
+  /** セクションの文字列のキー */
+  const scalar = (section: Record<string, unknown> | undefined, name: string, keys: string[]) => {
+    if (!isPlainObject(section)) return;
+    for (const k of keys)
+      if (bad(section[k])) {
+        warn(`${name}.${k}`, section[k]);
+        delete section[k];
+      }
+  };
+  /** セクションの文字列の配列のキー（{ path } のオブジェクトも） */
+  const list = (section: Record<string, unknown> | undefined, name: string, keys: string[]) => {
+    if (!isPlainObject(section)) return;
+    for (const k of keys) {
+      const v = section[k];
+      if (typeof v === 'string') {
+        scalar(section, name, [k]);
+        continue;
+      }
+      if (!Array.isArray(v)) continue;
+      section[k] = v.filter((x, i) => {
+        const p = isPlainObject(x) ? x.path : x;
+        if (!bad(p)) return true;
+        warn(`${name}.${k}[${i}]`, p);
+        return false;
+      });
+    }
+  };
+  const c = cfg as Record<string, Record<string, unknown> | undefined>;
+  if (cfg.files)
+    cfg.files = cfg.files.filter((r, i) => {
+      if (!bad(r.glob)) return true;
+      warn(`files[${i}].glob`, r.glob);
+      return false;
+    });
+  scalar(c.cdktf, 'cdktf', ['out', 'sourceDir']);
+  scalar(c.terraform, 'terraform', ['root', 'sourceDir']);
+  list(c.cloudformation, 'cloudformation', ['templates']);
+  scalar(c.next, 'next', ['appDir', 'pagesDir', 'tsconfig']);
+  list(c.ts, 'ts', ['tsconfig']);
+  list(c.openapi, 'openapi', ['files']);
+  list(c.sql, 'sql', ['migrations']);
+  scalar(c.api, 'api', ['client']);
+  list(c.api, 'api', ['clients']);
+  scalar(c.screenshots, 'screenshots', ['storageState']);
+  scalar(c.screens, 'screens', ['dir', 'publicDir']);
 }
 
 /** screens（docs/18 §3.3）のキー。おかしな値は警告して取り除く。outDir は設定ファイルからは受け付けない */
