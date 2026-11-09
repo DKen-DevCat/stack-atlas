@@ -63,6 +63,21 @@ const upstream: PartialGraph = {
 };
 
 describe('helpers', () => {
+  it('toPath は線形（`{` が多くて `}` が無い・`?` の多い 100k 文字でも速い。2026-11-09 レビュー S2）', () => {
+    for (const p of [
+      `/a${'a{'.repeat(50_000)}`,
+      `/a${'?\n'.repeat(50_000)}`,
+      `{B}/x${'{'.repeat(100_000)}`,
+    ]) {
+      // CPU 時間で測る（並列に走る他のテストに待たされた分を含めない）。もとの正規表現では 1 本あたり数秒
+      const t0 = process.cpuUsage();
+      toPath(p);
+      const d = process.cpuUsage(t0);
+      expect((d.user + d.system) / 1000).toBeLessThan(100);
+    }
+    expect(toPath('/races?x=1\n#y')).toBe('/races');
+  });
+
   it('toPath strips base urls and query concatenation', () => {
     expect(toPath('/races')).toBe('/races');
     expect(toPath('{BASE}/races/{id}')).toBe('/races/{id}');

@@ -31,6 +31,7 @@ ts-types / go-types（v2 の部分グラフ）───────────�
 - `PartialGraph` に `v2?: { nodes: NodeV2[]; wires: WireV2[]; types?: TypeV2[]; groups?: Record<string, string> }` を足す。v1 の `nodes` / `edges` と同じ出力に並べてよい
 - **mergeV2 の規則**: 同じ箱 id は、口を口 id で、項目を項目 id で合わせる。アダプタの項目があれば upgrade の `_` 項目を消す。`_` どうしの線（箱の単位の線）は、同じ 2 つの箱の間にアダプタの項目の線が 1 本でもあれば消す（細かい方が勝つ）
 - v1 の `lib:` / `handler:`（ファイル・パッケージの箱）の中に関数の箱が出たら、その v1 の箱は消えて `group` になる（D47）。v1 の箱に付いていた線は、group の中の関数の箱どうしの線で置き換わる
+- （8-2a のレビューで追加）`PartialGraphV2.refs`（箱 → 参照先。型の注釈も含む）は掃除の付け替え先を決めるためだけに使い、graph.json には出さない。抽出器に `v2Role`（`language` / `contract`。openapi・sql は contract）。要約と `project.generator` は言語アダプタ（`adapters`）と契約（`contracts`）を分け、付け替え先を決められない線の数（`undetermined`）を出す
 - （8-2a で確定）`v2.nodes` は `PartialNodeV2[]`（`runtime` を省略できる。決められないときは upgrade の値か group の値、無ければ `browser`）。`groups` は「関数の箱 id → 置き換える v1 の箱 id」。config に `adapters: { depth, maxItems }`（既定 2 / 200。docs/13 §4.1）
 
 ### 3.2 `ts-types`（TS / TSX）
@@ -174,6 +175,17 @@ docs/15 §7 の見積り（項目 90%・線 80%）との比較: 項目の型が�
 2. 呼び出しでない参照: ts-types が `_` の線を引く（相手は ts-imports と同じ。同じファイルの非 export の宣言も推移的にたどる）。upgrade の線のうち group になる v1 の箱に付いて残ったものは、相手がアダプタの箱でなければ中の関数の箱へ付け替え、アダプタの箱なら消す。配信の線は画面の `in/html` へ付け替える
 3. runtime: どの閉包にも入らないファイルはアダプタでは決めない。画面は自分は browser のまま、複製のどちらを描くかは server component の文脈（server / build）で選ぶ
 4. v2 の印: `project.generator.v2 = "upgrade"` を残し、`adapters: [...]` を足した。ビューアの警告を畳む動きは今のまま（8-3 で見直す）
+
+### 8.3b レビューの指摘で決めたこと（コードレビュー 10 件・セキュリティ 2 件＋1 件、2026-11-09）
+
+1. **掃除の規則の改訂**（D50・D53）: group になった v1 の箱に残った線は消さない。付け替え先は、実際に参照している中の関数の箱だけ（手がかりは `refs` → HTTP の `meta.http` が合うもの → 合流できなかった呼び出しを持つ箱の順）。決められなければ中の全部へ付け替えて `undetermined` に数える。「相手がアダプタの箱なら消す」は廃止（合流できなかった呼び出しや overrides の線が消えていた）。group に入れるのは v1 の箱の export になっている箱（と複製）だけ
+2. **overrides を v2 にも当てる**: docs/13 §3.5 に書いた。v1 の kind → v2 の via の読み替えは uses → call / return / render / props / sql、http → http / call / return、schema → sql、deploy → deliver / http、flow → http / event / deliver
+3. **上限**: openapi も `adapters.maxItems` を 1 操作あたり（request と response の合計。4 口への写しは数えない）で数え、超えたら警告して打ち切る。allOf のまとめは schema ごとに 1 回（菱形で倍々にならない）。ts-types は repo の外で宣言されたプロパティ（React の DOM の属性など）と上限で切ったプロパティを、子の無い不透明な項目 `props`（型は引数の型）にまとめる
+4. **HTTP の呼び出しの判定**（D45 の補足）: `fetch` と `api.callers` は名前で、自動検出したラッパーは宣言が repo の中にあるときだけ、get / post などの動詞は api-link のクライアントファイルの中だけ。パスより後ろの引数に関数を渡すもの（`app.get(path, handler)`）は呼び出しにしない
+5. **型の id**: docs/16 §3 の表（`type:<file>~<名前>`）
+6. **パスの正規化**: 正規表現を全部線形にした。2048 文字を超えるパスは正規化も照合もしない（1 回だけ警告）。合流はパスを 1 回ずつだけ正規化する
+7. **YAML の別名**: openapi の YAML の別名の展開は yaml の既定の上限（100）で止める（無制限だと別名を倍々に重ねた YAML で指数時間。範囲外で見つかったものを一緒に直した）
+8. 見つかったこと（直していない）: アダプタだけが出す id（`fn:…`）を overrides の `remove` に書くと、v1 の側は「削除しようとしたノードはありません」と警告するが、v2 では消える。警告が実態と合わない → 8-4（`validate --strict` と一緒に）
 
 ### 8.4 残り（8-2b 以降）
 

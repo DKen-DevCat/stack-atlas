@@ -103,9 +103,11 @@ export function toPath(pattern: string): string | undefined {
     }
     if (!p.startsWith('/')) return undefined;
   }
-  p = p.replace(/[?#].*$/, '');
-  // `/races{qs}` のように / の直後でない末尾のプレースホルダ（クエリ文字列の連結）を落とす
-  p = p.replace(/(?<=[^/])\{[^}]*\}$/, '');
+  const q = p.search(/[?#]/);
+  if (q >= 0) p = p.slice(0, q);
+  // `/races{qs}` のように / の直後でない末尾のプレースホルダ（クエリ文字列の連結）を落とす。
+  // 中身の文字クラスから `{` も除く（`{` が多くて `}` が無い入力で二次の走査にならない。2026-11-09 レビュー S2）
+  p = p.replace(/(?<=[^/])\{[^{}]*\}$/, '');
   return p === '' ? '/' : p;
 }
 

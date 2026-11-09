@@ -17,6 +17,9 @@ export const underscoreItem = (): ItemV2 => ({
   wireType: 'unknown',
 });
 
+/** 項目 id の文字集合（docs/16 §3）。それ以外は _ に（言語アダプタと openapi で共有する） */
+export const itemId = (name: string) => name.replace(/[^A-Za-z0-9_$-]/g, '_') || '_';
+
 export const wireKey = (w: Pick<WireV2, 'from' | 'to'>) => `${w.from}\u0000${w.to}`;
 
 /** 参照の箱 id（最初の # まで） */
@@ -71,7 +74,8 @@ export function mergeLinkLists(a: LinkV2[] | undefined, b: LinkV2[] | undefined)
   return out;
 }
 
-function mergeVariants(a: VariantV2[] | undefined, b: VariantV2[] | undefined) {
+/** 分岐の和（同じ id は先のもの） */
+export function mergeVariants(a: VariantV2[] | undefined, b: VariantV2[] | undefined) {
   if (!a) return b && clone(b);
   if (!b) return clone(a);
   const out = clone(a);
@@ -91,7 +95,7 @@ export function mergePartialNodeV2(a: PartialNodeV2, b: PartialNodeV2): PartialN
   return out;
 }
 
-/** v2 の部分グラフの和（箱は id、線は (from, to)、型は id、groups はキーで、先に出たものを残す） */
+/** v2 の部分グラフの和（箱は id、線は (from, to)、型は id、groups はキーで、先に出たものを残す。refs は箱ごとの和） */
 export function mergePartialV2(
   parts: ReadonlyArray<PartialGraphV2 | undefined>,
 ): PartialGraphV2 | undefined {
@@ -101,7 +105,13 @@ export function mergePartialV2(
   const wires = new Map<string, WireV2>();
   const types = new Map<string, NamedType>();
   let groups: Record<string, string> | undefined;
+  const refs = new Map<string, Set<string>>();
   for (const p of present) {
+    for (const [k, list] of Object.entries(p.refs ?? {})) {
+      const acc = refs.get(k) ?? new Set<string>();
+      for (const x of list) acc.add(x);
+      refs.set(k, acc);
+    }
     for (const n of p.nodes) {
       const prev = nodes.get(n.id);
       nodes.set(n.id, prev ? mergePartialNodeV2(prev, n) : clone(n));
@@ -116,6 +126,7 @@ export function mergePartialV2(
   const out: PartialGraphV2 = { nodes: [...nodes.values()], wires: [...wires.values()] };
   if (types.size) out.types = [...types.values()];
   if (groups) out.groups = groups;
+  if (refs.size) out.refs = Object.fromEntries([...refs].map(([k, v]) => [k, [...v]]));
   return out;
 }
 

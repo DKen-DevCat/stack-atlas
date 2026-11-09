@@ -13,7 +13,14 @@
  */
 import { existsSync } from 'node:fs';
 import { basename, dirname, extname, relative, sep } from 'node:path';
-import { Node, Project, SyntaxKind, type ExportedDeclarations, type SourceFile } from 'ts-morph';
+import {
+  Node,
+  Project,
+  SyntaxKind,
+  ts,
+  type ExportedDeclarations,
+  type SourceFile,
+} from 'ts-morph';
 import type { Edge } from '@stack-atlas/schema';
 import type {
   ClassifyRule,
@@ -23,7 +30,12 @@ import type {
   RepoContext,
 } from '@stack-atlas/core';
 import { findClassifyRule, globToRegExp, sectionFor, toArray } from '@stack-atlas/core';
-import { findNextDirs, listNextFiles } from '@stack-atlas/extractor-nextjs-app';
+import {
+  findNextDirs,
+  listNextFiles,
+  type NextDirs,
+  type NextFile,
+} from '@stack-atlas/extractor-nextjs-app';
 
 export { segmentToUrl } from '@stack-atlas/core';
 
@@ -215,6 +227,11 @@ export interface TsProject {
   /** repo 相対の tsconfig のパス */
   tsconfig: string;
   project: Project;
+  /**
+   * 解けなかった `extends`（node_modules の共有設定など。paths が黙って消える。docs/17 §7 #10）。
+   * ts-morph が tsconfig を読んだときの診断から取る（読み直さない）
+   */
+  unresolvedExtends: string[];
 }
 
 /** ts-imports の分類と ID の結果（ts-types が同じ規則で箱を作るために共有する） */
@@ -228,6 +245,9 @@ export interface TsRepoAnalysis {
   projectOf: Map<string, Project>;
   /** Next の page / layout / route.ts（絶対パス → nextjs-app と同じ ID） */
   routeIdOf: Map<string, string>;
+  /** Next の app / pages のディレクトリと、その中のファイル（ts-types が同じ走査の結果を使う） */
+  nextDirs: NextDirs;
+  nextFiles: NextFile[];
   /** 分類した export（ファイルの絶対パスごと） */
   perFile: Map<string, DeclInfo[]>;
   /** 宣言（declKey）→ ノード ID */
@@ -288,7 +308,11 @@ function analyze(ctx: RepoContext, upstream: Readonly<PartialGraph>): TsRepoAnal
       ctx.log.warn(`ts-imports: ${tc} を読めません: ${String(e)}`);
       continue;
     }
-    projects.push({ tsconfig: tc, project });
+    projects.push({
+      tsconfig: tc,
+      project,
+      unresolvedExtends: unresolvedExtends(ctx, tc, project),
+    });
     for (const sf of project.getSourceFiles()) {
       const p = sf.getFilePath();
       if (sf.isDeclarationFile() || !SOURCE_EXT.test(p) || !inRepo(p) || files.has(p)) continue;
@@ -299,8 +323,9 @@ function analyze(ctx: RepoContext, upstream: Readonly<PartialGraph>): TsRepoAnal
 
   // 2) Next の page / layout / route.ts / pages（nextjs-app と同じ ID。ファイル単位）
   const routeIdOf = new Map<string, string>();
-  const dirs = findNextDirs(ctx.root, sectionFor(ctx, ctx.config.next) ?? {});
-  for (const f of listNextFiles(ctx.root, dirs).files) routeIdOf.set(toPosix(f.abs), f.id);
+  const nextDirs = findNextDirs(ctx.root, sectionFor(ctx, ctx.config.next) ?? {});
+  const nextFiles = listNextFiles(ctx.root, nextDirs).files;
+  for (const f of nextFiles) routeIdOf.set(toPosix(f.abs), f.id);
 
   const handlerGlobs = Object.values(ctx.config.deploy ?? {}).flatMap((d) =>
     toArray(d.handlers).map(globToRegExp),
@@ -413,7 +438,36 @@ function analyze(ctx: RepoContext, upstream: Readonly<PartialGraph>): TsRepoAnal
       n.line = statementOf(sorted[0]!).getStartLineNumber();
     }
   }
-  return { root, projects, files, projectOf, routeIdOf, perFile, nodeOfDecl, nodes, nodesOfFile };
+  return {
+    root,
+    projects,
+    files,
+    projectOf,
+    routeIdOf,
+    nextDirs,
+    nextFiles,
+    perFile,
+    nodeOfDecl,
+    nodes,
+    nodesOfFile,
+  };
+}
+
+/**
+ * tsconfig の `extends` のうち解けなかったもの。ts-morph が Project を作るときに読んだ診断（getConfigFileParsingDiagnostics）
+ * から取る。extends の値は tsconfig の生の JSON から（extends の連鎖は解き直さない）
+ */
+function unresolvedExtends(ctx: RepoContext, tc: string, project: Project): string[] {
+  const raw = ts.readConfigFile(ctx.resolve(tc), ts.sys.readFile);
+  const ext = (raw.config as { extends?: unknown } | undefined)?.extends;
+  const list = (typeof ext === 'string' ? [ext] : Array.isArray(ext) ? ext : []).filter(
+    (e): e is string => typeof e === 'string',
+  );
+  if (!list.length) return [];
+  const texts = project
+    .getConfigFileParsingDiagnostics()
+    .map((d) => ts.flattenDiagnosticMessageText(d.compilerObject.messageText, ' '));
+  return list.filter((e) => texts.some((t) => t.includes(e)));
 }
 
 export const extractor: Extractor = {

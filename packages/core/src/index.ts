@@ -72,8 +72,11 @@ export {
 export { gitCommit, gitRemote } from './git.js';
 export {
   apiPathMatches,
+  isRoutePathTooLong,
+  MAX_ROUTE_PATH,
   methodMatches,
   normalizeRoutePath,
+  rewriteRoutePath,
   pathMatches,
   pickMostSpecific,
   routeSpecificity,
@@ -101,6 +104,7 @@ export {
   mergeV2,
   cleanupV2,
   coverageV2,
+  removeOverrideWiresV2,
   type MergeV2Options,
   type MergedV2,
   type CleanupV2Result,
@@ -112,6 +116,8 @@ export {
   mergePortLists,
   mergeLinkLists,
   mergePartialNodeV2,
+  mergeVariants,
+  itemId,
   walkItems,
   itemAt,
   underscoreItem,
