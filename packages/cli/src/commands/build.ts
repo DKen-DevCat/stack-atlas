@@ -396,7 +396,9 @@ async function buildInto(
   }
   // スクショ抽出器は <shotsOutDir>/shots/<slug>.png に書き、graph.json からは shots/… で参照する。
   // そのため graph.json と同じディレクトリ。設定ファイルの値は出力先そのものだけ（confineShotsOutDir）
-  const shotsOutDir = scratch ?? confineShotsOutDir(repo, outDir, config.screenshots?.outDir, log);
+  // （dry-run も設定の値を確かめて警告する。書くのは一時ディレクトリ）
+  const confined = confineShotsOutDir(repo, outDir, config.screenshots?.outDir, log);
+  const shotsOutDir = scratch ?? confined;
 
   // 画面（screens）: 出力先の screens/ が印の無いディレクトリなら、この build では書かない（消しもしない）。
   // dry-run は出力先に書かないが、本番の build と同じ判定をする（リンクは本番では下の unsafeOutputs で止まる）

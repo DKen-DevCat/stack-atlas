@@ -257,6 +257,33 @@ describe('build --dry-run --json（docs/19 §3.2）', () => {
     expect(json.strict.errors).toEqual([]);
   }, 60_000);
 
+  // 2026-11-10 追加（8-3c を 8-4 に合流した後）: 合流の直後は dry-run で confineShotsOutDir を呼ばず、警告が消えていた
+  it('dry-run でも設定の screenshots.outDir（出力先の外）を警告する', async () => {
+    const root = tmp('stack-atlas-dry-shots-');
+    writeFileSync(
+      join(root, 'stack-atlas.config.yaml'),
+      'project: { name: s }\nscreenshots: { baseUrl: "http://localhost:1", outDir: /tmp/elsewhere }\n',
+    );
+    const log = createMemoryLogger();
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      expect(
+        await runBuild({
+          repo: root,
+          extractors: [stub('v1', { nodes: [], edges: [] })],
+          dryRun: true,
+          json: true,
+          log,
+        }),
+      ).toBe(0);
+    } finally {
+      stderr.mockRestore();
+      stdout.mockRestore();
+    }
+    expect(log.of('warn').join('\n')).toContain('screenshots.outDir');
+  });
+
   it('--strict は隙間があれば終了コード 1（--strict が無ければ 0）。--v1 とは一緒に使えない', async () => {
     const root = tmp('stack-atlas-gap-');
     writeFileSync(join(root, 'stack-atlas.config.yaml'), 'project: { name: gap }\n');
