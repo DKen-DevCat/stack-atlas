@@ -37,6 +37,7 @@ export interface Schedule {
 /**
  * 光っている区間に球の出発時刻を与える。
  * - flowStarts の項目を時刻 0 とし、そこから下流へ 1 本の流れ（上流は光るだけ）
+ * - 親の項目に着いた時刻は、その子から出る区間にも効く（値の全体は部分も運ぶ）
  * - 分かれる数は出て行く区間の数、合流は最長経路で待つ
  * - 深さ優先で見つけた「戻る辺」（いま辿っている経路上の項目へ戻る辺）は切る → DAG。残りをトポロジカル順に緩和する
  */
@@ -56,25 +57,41 @@ export function schedule(
     return lengthOf(s) / speed;
   };
 
-  // 項目 ref → 出て行く区間
-  const outOf = new Map<string, Segment[]>();
+  // 項目 ref → 出て行く辺。区間（球）に加えて、親から子への時間 0 の辺を足す:
+  // 親に届いた値は子も運ぶので、子に引かれた線は親が着いた時刻に出られる（8-0b で判明。fn:getToday#out/call_1 に
+  // 届いた対応の先で、子の call_1.url に引かれた HTTP の線が流れなかった）
+  interface Edge {
+    to: string;
+    seg: Segment | null;
+  }
+  const outOf = new Map<string, Edge[]>();
+  const add = (from: string, e: Edge) => {
+    const arr = outOf.get(from);
+    if (arr) arr.push(e);
+    else outOf.set(from, [e]);
+  };
+  for (const s of lit.segs) add(s.from.ref, { to: s.to.ref, seg: s });
+  const carried = new Set<string>();
   for (const s of lit.segs) {
-    const arr = outOf.get(s.from.ref);
-    if (arr) arr.push(s);
-    else outOf.set(s.from.ref, [s]);
+    for (let x = s.from; x.parent; x = x.parent) {
+      const k = `${x.parent.ref}>${x.ref}`;
+      if (carried.has(k)) break;
+      carried.add(k);
+      add(x.parent.ref, { to: x.ref, seg: null });
+    }
   }
 
   // 深さ優先で DAG を作る（戻る辺を切る）。訪問の完了順の逆がトポロジカル順
-  const taken = new Set<Segment>();
+  const taken = new Set<Edge>();
   const onStack = new Set<string>();
   const done = new Set<string>();
   const finish: string[] = [];
   const visit = (ref: string) => {
     onStack.add(ref);
-    for (const s of outOf.get(ref) ?? []) {
-      if (onStack.has(s.to.ref)) continue; // 戻る辺: この周回では流さない
-      taken.add(s);
-      if (!done.has(s.to.ref) && !onStack.has(s.to.ref)) visit(s.to.ref);
+    for (const e of outOf.get(ref) ?? []) {
+      if (onStack.has(e.to)) continue; // 戻る辺: この周回では流さない
+      taken.add(e);
+      if (!done.has(e.to) && !onStack.has(e.to)) visit(e.to);
     }
     onStack.delete(ref);
     done.add(ref);
@@ -91,12 +108,12 @@ export function schedule(
   for (const ref of order) {
     const a = t.get(ref);
     if (a === undefined) continue;
-    for (const s of outOf.get(ref) ?? []) {
-      if (!taken.has(s)) continue;
-      const dur = durOf(s);
-      ballOf.set(s, { seg: s, t0: a, dur });
+    for (const e of outOf.get(ref) ?? []) {
+      if (!taken.has(e)) continue;
+      const dur = e.seg ? durOf(e.seg) : 0;
+      if (e.seg) ballOf.set(e.seg, { seg: e.seg, t0: a, dur });
       const arrive = a + dur;
-      if ((t.get(s.to.ref) ?? -Infinity) < arrive) t.set(s.to.ref, arrive);
+      if ((t.get(e.to) ?? -Infinity) < arrive) t.set(e.to, arrive);
     }
   }
 
@@ -105,4 +122,20 @@ export function schedule(
   let end = 0;
   for (const b of balls) end = Math.max(end, b.t0 + b.dur);
   return { balls, end, cycle: end + rest, skipped };
+}
+
+/**
+ * 描く球: 線ごとに 1 球（1 通信 = 1 球）。親の単位の線を子の区間で何度も通るとき（`return` と `return.total` など）は
+ * 最も早い区間の球だけを描く。ほかの区間は時刻と項目の光り（出発・到着）にだけ使う。箱の中の対応はそのまま
+ */
+export function drawnBalls(s: Schedule): Ball[] {
+  const first = new Map<string, Ball>();
+  for (const b of s.balls) {
+    if (b.seg.kind !== 'wire' || !b.seg.wire) continue;
+    const cur = first.get(b.seg.wire.key);
+    if (!cur || b.t0 < cur.t0) first.set(b.seg.wire.key, b);
+  }
+  return s.balls.filter(
+    (b) => b.seg.kind !== 'wire' || !b.seg.wire || first.get(b.seg.wire.key) === b,
+  );
 }

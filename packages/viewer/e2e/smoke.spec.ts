@@ -148,7 +148,12 @@ test('graph の指定がなければ案内を出し、ファイル選択で開�
   await page.goto('./');
   await expect(page.locator('body')).toHaveAttribute('data-status', 'empty');
   await expect(page.locator('.empty')).toContainText('graph.json を選ぶ');
-  await expect(page.locator('.empty .samples a')).toContainText('race-site');
+  // サンプルは v1（race-site）と v2（fixture-poly.today の配線図）の 2 つになった（Phase 8-0b）。リンクを名前で選ぶ
+  await expect(page.locator('.empty .samples a', { hasText: 'race-site' })).toBeVisible();
+  await expect(page.locator('.empty .samples a', { hasText: '配線図' })).toHaveAttribute(
+    'href',
+    '?graph=samples%2Ffixture-poly.today.v2.json',
+  );
   await page
     .locator('.empty input[type=file]')
     .setInputFiles(new URL('../../../examples/race-site.graph.json', import.meta.url).pathname);

@@ -8,9 +8,10 @@ import {
   resolveAssetUrl,
   summarizeIssues,
 } from './load';
-import { SAMPLE_PATH } from './testSample';
+import { SAMPLE_PATH, SAMPLE_V2_PATH } from './testSample';
 
 const sampleText = readFileSync(SAMPLE_PATH, 'utf8');
+const sampleV2Text = readFileSync(SAMPLE_V2_PATH, 'utf8');
 
 describe('prevUrlFromSearch', () => {
   it('?prev= を ?graph= と同じ規則で解決する', () => {
@@ -97,11 +98,34 @@ describe('parseGraphText', () => {
   });
 
   it('未知の version は警告を出して v1 として読む', () => {
+    // version 2 は配線図（v2）として読むようになったので、未知の version の例は 3 にした（Phase 8-0b）
     const g = JSON.parse(sampleText);
-    g.version = 2;
+    g.version = 3;
     const r = parseGraphText(JSON.stringify(g), 'x');
-    expect(r.versionWarning).toMatch(/version 2/);
+    expect(r.versionWarning).toMatch(/version 3/);
     expect(r.graph).toBeDefined();
+    expect(r.v2).toBeUndefined();
+  });
+
+  it('version 2 は v2 の検証器で読み、エラーと警告を 1 列にする（v1 の graph は返さない）', () => {
+    const r = parseGraphText(sampleV2Text, 'v2.json', 'http://localhost/v2.json');
+    expect(r.v2).toBe(true);
+    expect(r.graph).toBeUndefined();
+    expect(r.graphV2?.nodes.length).toBeGreaterThan(0);
+    expect(r.versionWarning).toBeUndefined();
+    expect(r.baseUrl).toBe('http://localhost/v2.json');
+    // 例の v2 は警告 1 件（fetcher の戻りの wireType が unknown）
+    expect(summarizeIssues(r.issues)).toEqual({ errors: 0, warnings: 1 });
+  });
+
+  it('version 2 でスキーマ違反なら graphV2 なし（v2 のまま。v1 として読み直さない）', () => {
+    const g = JSON.parse(sampleV2Text);
+    delete g.nodes;
+    const r = parseGraphText(JSON.stringify(g), 'x');
+    expect(r.v2).toBe(true);
+    expect(r.graphV2).toBeUndefined();
+    expect(r.graph).toBeUndefined();
+    expect(summarizeIssues(r.issues).errors).toBeGreaterThan(0);
   });
 });
 

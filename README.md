@@ -49,6 +49,8 @@ pnpm atlas serve out-poly
 pnpm dev                    # → http://localhost:5173/?graph=samples/race-site.graph.json
 ```
 
+`version: 2` の graph.json（箱・口・項目・線。`docs/16`）は同じビューアが配線図で開く（例: `?graph=samples/fixture-poly.today.v2.json`。仕様は `docs/05` の「配線図」）。
+
 ## CLI
 
 `pnpm atlas <コマンド>`（ビルド後は `stack-atlas <コマンド>`）。

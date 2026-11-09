@@ -53,8 +53,8 @@ describe('validateGraphV2', () => {
     expect(messages(broken((g) => (g.wires[0]!.to = 'screen:/#in/path')))).toContainEqual(
       expect.stringContaining('線の終点 "screen:/#in/path" がありません'),
     );
-    // in → in
-    expect(messages(broken((g) => (g.wires[0]!.from = 'actor:user#in/html')))).toContainEqual(
+    // in → in（D42 改訂で利用者の in は無くなったので、画面の in/html を使う）
+    expect(messages(broken((g) => (g.wires[0]!.from = 'route:/#in/html')))).toContainEqual(
       expect.stringContaining('dir out の口の項目ではありません'),
     );
     // out → out
@@ -103,8 +103,8 @@ describe('validateGraphV2', () => {
     expect(
       messages(
         broken((g) => {
-          // route:/ にも hit を宣言すると、CloudFront → route:/ の線の when は曖昧
-          node(g, 'route:/').variants = [{ id: 'hit', name: 'x' }];
+          // S3 にも hit を宣言すると、CloudFront → S3 の線の when は曖昧（D42 改訂で wires[1] は CloudFront → S3）
+          node(g, 'infra:static_site/site').variants = [{ id: 'hit', name: 'x' }];
           g.wires[1]!.when = { hit: false };
         }),
       ),
@@ -131,7 +131,8 @@ describe('validateGraphV2', () => {
       messages(broken((g) => (node(g, 'route:/').links![0]!.from = 'in/nope'))),
     ).toContainEqual(expect.stringContaining('links の from "in/nope" がありません'));
     expect(
-      messages(broken((g) => (node(g, 'route:/').links![0]!.from = 'out/html'))),
+      // D42 改訂で画面の out は render_1 だけ
+      messages(broken((g) => (node(g, 'route:/').links![0]!.from = 'out/render_1'))),
     ).toContainEqual(expect.stringContaining('dir in の口ではありません'));
   });
 

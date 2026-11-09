@@ -33,5 +33,40 @@ export {
   type TraverseOptions,
 } from './traverse.js';
 export { select, type Selection, type LitSelection } from './select.js';
-export { schedule, type Schedule, type ScheduleOptions, type Ball } from './schedule.js';
-export { detectBroken, brokenOfWire, type BrokenWire } from './broken.js';
+export {
+  schedule,
+  drawnBalls,
+  type Schedule,
+  type ScheduleOptions,
+  type Ball,
+} from './schedule.js';
+export {
+  detectBroken,
+  brokenOfWire,
+  brokenEnds,
+  type BrokenWire,
+  type BrokenEnd,
+} from './broken.js';
+export {
+  layoutWiring,
+  routeBetween,
+  innerRoute,
+  routeLength,
+  pointAt,
+  segmentRoute,
+  LANES,
+  BROKEN_CUT,
+  type LayoutOptions,
+  type WiringLayout,
+  type BoxLayout,
+  type HostLayout,
+  type LaneLayout,
+  type LaneDef,
+  type Channel,
+  type Pin,
+  type Point,
+  type Rect,
+  type Route,
+  type RoutePlan,
+  type BrokenRoute,
+} from './layout.js';

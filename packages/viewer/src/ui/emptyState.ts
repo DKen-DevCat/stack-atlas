@@ -40,7 +40,7 @@ export function createEmptyState(
       h(
         'p',
         {},
-        'graph.json を読み込むと、インフラ → 画面 → コンポーネント → 型 を 3D で表示します。',
+        'graph.json を読み込むと、インフラ → 画面 → コンポーネント → 型 を 3D で表示します。version 2 の graph.json は、項目の単位でデータの流れを追う配線図で開きます。',
       ),
       opts.message ? h('p', { class: 'emsg' }, opts.message) : null,
       h('label', { class: 'btn primary filebtn' }, 'graph.json を選ぶ', input),

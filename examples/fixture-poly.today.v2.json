@@ -3,7 +3,7 @@
   "version": 2,
   "project": {
     "name": "fixture-poly（/today の縦スライス）",
-    "description": "画面 / → TodayIsland → getToday → GET /today → handleToday → ListByDate → transactions。手で組んだ v2（Phase 8-0）。POST /transactions の経路は契約の食い違いを出すために含めた",
+    "description": "画面 / → TodayIsland → getToday → GET /today → handleToday → ListByDate → transactions。手で組んだ v2（Phase 8-0）。HTML は CloudFront（MISS は S3 から）が画面へ配る。POST /transactions の経路は契約の食い違いを出すために含めた",
     "repo": "examples/fixture-poly",
     "sources": [
       "web",
@@ -77,18 +77,6 @@
               "id": "open",
               "name": "GET /",
               "type": "url",
-              "wireType": "string"
-            }
-          ]
-        },
-        {
-          "id": "in",
-          "dir": "in",
-          "items": [
-            {
-              "id": "html",
-              "name": "html",
-              "type": "text/html",
               "wireType": "string"
             }
           ]
@@ -190,17 +178,6 @@
       "name": "S3 site（静的サイト）",
       "runtime": "edge",
       "file": "platform/infra/modules/static-site/main.tf",
-      "ports": []
-    },
-    {
-      "id": "route:/",
-      "kind": "screen",
-      "name": "/",
-      "runtime": "browser",
-      "file": "web/src/app/page.tsx",
-      "line": 3,
-      "host": "infra:static_site/site",
-      "group": "web/src/app",
       "ports": [
         {
           "id": "in",
@@ -220,10 +197,39 @@
           "items": [
             {
               "id": "html",
+              "name": "index.html",
+              "type": "text/html",
+              "wireType": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "route:/",
+      "kind": "screen",
+      "name": "/",
+      "runtime": "browser",
+      "file": "web/src/app/page.tsx",
+      "line": 3,
+      "group": "web/src/app",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "html",
               "name": "html",
               "type": "text/html",
               "wireType": "string"
-            },
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
             {
               "id": "render_1",
               "name": "TodayIsland()",
@@ -235,12 +241,7 @@
       ],
       "links": [
         {
-          "from": "in/path",
-          "to": "out/html",
-          "confidence": "exact"
-        },
-        {
-          "from": "in/path",
+          "from": "in/html",
           "to": "out/render_1",
           "confidence": "exact"
         }
@@ -1124,8 +1125,29 @@
         }
       ],
       "meta": {
-        "operationId": "getToday"
-      }
+        "operationId": "getToday",
+        "auth": "internal/auth.Verifier.Middleware（Authorization ヘッダ）"
+      },
+      "variants": [
+        {
+          "id": "login",
+          "name": "ログイン済み",
+          "default": true
+        }
+      ],
+      "links": [
+        {
+          "from": "in/path",
+          "to": "req/path",
+          "when": {
+            "login": true
+          }
+        },
+        {
+          "from": "res/body",
+          "to": "out/body"
+        }
+      ]
     },
     {
       "id": "endpoint:POST /transactions",
@@ -2149,18 +2171,18 @@
     },
     {
       "from": "infra:static_site/this#out/key",
-      "to": "route:/#in/path",
+      "to": "infra:static_site/site#in/path",
       "via": "http"
     },
     {
-      "from": "route:/#out/html",
+      "from": "infra:static_site/site#out/html",
       "to": "infra:static_site/this#in/value",
       "via": "deliver",
       "reply": true
     },
     {
       "from": "infra:static_site/this#out/value",
-      "to": "actor:user#in/html",
+      "to": "route:/#in/html",
       "via": "deliver",
       "reply": true
     },

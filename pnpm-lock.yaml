@@ -284,6 +284,9 @@ importers:
       '@stack-atlas/schema':
         specifier: workspace:*
         version: link:../schema
+      '@stack-atlas/wiring':
+        specifier: workspace:*
+        version: link:../wiring
       three:
         specifier: 0.187.0
         version: 0.187.0

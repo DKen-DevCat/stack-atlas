@@ -3,6 +3,18 @@
 import { wireTypeCompatible, type BrokenV2 } from '@stack-atlas/schema';
 import type { GraphIndex, IndexedItem, IndexedWire } from './graph-index.js';
 
+/** 切れている線の端（書かれた broken の 1 件ごと）。配線図はこの 2 点の間を赤の破線で描き、受ける側の手前で切る */
+export interface BrokenEnd {
+  /** `b<i>`（全部の線の broken を宣言順に数えた番号） */
+  key: string;
+  wire: IndexedWire;
+  broken: BrokenV2;
+  /** 送る側で path が指す項目（無ければ最も近い祖先。最後は線の from） */
+  from: IndexedItem;
+  /** 受ける側で path が指す項目（無ければ最も近い祖先。最後は線の to） */
+  to: IndexedItem;
+}
+
 export interface BrokenWire {
   wire: IndexedWire;
   broken: BrokenV2[];
@@ -71,6 +83,38 @@ export function detectBroken(index: GraphIndex): BrokenWire[] {
   for (const w of index.wires) {
     const broken = brokenOfWire(w);
     if (broken.length) out.push({ wire: w, broken });
+  }
+  return out;
+}
+
+/** 線の端の項目から、相対パスの最も深い所まで降りる（無い段で止まる） */
+function descend(root: IndexedItem, path: string): IndexedItem {
+  if (!path) return root;
+  let cur = root;
+  for (const seg of path.split('.')) {
+    const next = cur.children.find((c) => c.id === seg);
+    if (!next) break;
+    cur = next;
+  }
+  return cur;
+}
+
+/**
+ * graph.json に書かれた broken（抽出時の照合の結果。コードの事実）を、描く端の組にする。
+ * 表示は書かれたものを正にする（detectBroken は抽出器とテストが使う）
+ */
+export function brokenEnds(index: GraphIndex): BrokenEnd[] {
+  const out: BrokenEnd[] = [];
+  for (const w of index.wires) {
+    for (const b of w.wire.broken ?? []) {
+      out.push({
+        key: `b${out.length}`,
+        wire: w,
+        broken: b,
+        from: descend(w.from, b.path),
+        to: descend(w.to, b.path),
+      });
+    }
   }
   return out;
 }
