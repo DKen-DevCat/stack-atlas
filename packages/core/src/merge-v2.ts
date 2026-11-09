@@ -1,28 +1,39 @@
 /**
  * 言語アダプタの v2 を、upgradeGraph（8-1。箱の単位）の v2 に重ねる（docs/17 §3.1・§7 #4、D50・D53）。
  *
- * 流れ（パイプライン）: mergeV2 → join（合流。join.ts）→ cleanupV2（細かい方が勝つ掃除）→ detectBroken
+ * 流れ（パイプライン）: mergeV2 → join（合流。join.ts）→ removeOverrideWiresV2（overrides の線の削除）
+ * → cleanupV2（細かい方が勝つ掃除）→ detectBroken
  *
  * mergeV2:
  * - 同じ箱 id: 口・項目・links・runtime・kind はアダプタが勝ち、host・cache・screen は upgrade の値を残す。
  *   upgrade の置き場の項目 `_` は、掃除まで残す（箱の単位の線がまだ指している）
  * - v1 のファイル・パッケージの箱（`lib:` / `handler:` など）が関数の箱で置き換わるもの（被覆）を集める（D47・D53）:
  *   ① アダプタが `groups`（関数の箱 → v1 の箱）で明示したもの ② TS: v1 の箱の `meta.ts.exports` が全部、同じ file の
- *   アダプタの箱（`meta.ts.exportName`）になっている ③ `meta.sharedOf`（`@runtime` の複製）④ Go: 同じ `meta.go.pkg` の
- *   関数の箱がある。接頭辞では判定しない
+ *   アダプタの箱（`meta.ts.exportName`）になっている。中に入れるのはその export の箱（と複製）だけ ③ `meta.sharedOf`
+ *   （`@runtime` の複製）④ Go: 同じ `meta.go.pkg` の関数の箱がある。接頭辞では判定しない
  * - 置き換わる v1 の箱の host・runtime は中の関数の箱が受け継ぐ。関数の箱の group は v1 の箱 id（折りたたみの単位。
  *   その id に付いたメモは group に出す）
+ * - overrides.yaml（2026-11-09 レビュー C2）: `remove` の箱 id はアダプタからも出さない。その `@runtime` の複製と、
+ *   消した v1 の箱が group になるはずだった中の関数の箱も消す（消す前の file・meta で被覆を判定する）。`nodes` の
+ *   上書き（kind・name・file・line・code・cache・screen）はアダプタの値に勝つ（upgrade の箱の値を戻す。複製にも）
+ *
+ * removeOverrideWiresV2（join の後）: overrides の `remove` の `{from, to, kind}`（v1 のエッジ）に当たる線を消す。
+ * 端は複製と group の中の箱にも広げ、その戻り（reply の逆向き）も消す
  *
  * cleanupV2（join の後）:
  * - upgrade の線（箱の単位）は、向き付きの同じ箱の対にアダプタか合流の線が 1 本でもあれば消す（D50）。
  *   group になった v1 の箱は、中の関数の箱の対として数える
  * - 残った upgrade の線: 画面の `in/_` に着くもの（配信）は `in/html` へ付け替える。group になった v1 の箱に付くものは、
- *   相手がアダプタの箱でなければ中の関数の箱へ付け替え、アダプタの箱なら消す（アダプタが関数の単位で引き直している）
+ *   相手がアダプタの箱でも消さず（細かい線が無い = 合流できなかった・overrides で足した線）、中の関数の箱のうち
+ *   **実際に参照しているもの**へ付け替える（2026-11-09 レビュー C1・C6）。参照の手がかりは、アダプタの refs（箱ごとの
+ *   参照先）と、HTTP の線なら呼び出しの項目の `meta.http`（endpoint に合うもの、無ければ合流できなかった呼び出し）。
+ *   決められなければ中の全部へ付け替え、その数を `undetermined` に数える（サマリに出す）
  * - group になった v1 の箱を消す。アダプタの箱の `_` は、どの線にも指されていなければ消す
  * - 残った `_`（呼び出しでない参照・合流の相手がまだ箱の単位の所）には crude の links を足す。起動の項目 → `out/_`、
  *   `in/_` → 全部の out（links を 1 本でも持つ箱は既定の「全 in → 全 out」が効かず、`_` が行き止まりになるため）
  */
 import type {
+  Edge,
   GraphV2,
   ItemV2,
   LinkV2,
@@ -31,24 +42,37 @@ import type {
   Runtime,
   ValidationIssue,
   WireV2,
+  WireVia,
 } from '@stack-atlas/schema';
-import type { PartialGraphV2, PartialNodeV2 } from './types.js';
+import type { Overrides, PartialGraphV2, PartialNode, PartialNodeV2 } from './types.js';
 import { clone, deepMerge, isPlainObject } from './util.js';
+import { endpointRoute, httpCallOf } from './join.js';
+import { apiPathMatches, methodMatches } from './paths.js';
 import {
   UNDERSCORE,
   boxOf,
   isUnderscoreRef,
   mergeLinkLists,
+  mergeVariants,
   underscoreItem,
   walkItems,
   wireKey,
 } from './v2-parts.js';
 
 export interface MergeV2Options {
-  /** overrides の remove で消した箱 id（アダプタが出し直さない） */
+  /**
+   * overrides.yaml（v1 の書き方。docs/09 §3.2）。`remove` の箱 id と `nodes` の上書きを v2 にも当てる。
+   * `remove` の `{from, to}` は join の後に removeOverrideWiresV2 で当てる
+   */
+  overrides?: Overrides;
+  /** overrides の remove で v1 から消した箱の、消す前の file・meta（group になるはずだった中の関数の箱を消すため） */
+  removedNodes?: ReadonlyArray<Pick<PartialNode, 'id' | 'file' | 'meta'>>;
+  /** overrides の remove で消した箱 id（overrides.remove の文字列と同じ扱い） */
   removed?: ReadonlySet<string>;
-  /** v2 の印に足すアダプタ名（project.generator.adapters） */
+  /** v2 の印に足す言語アダプタ名（project.generator.adapters） */
   adapters?: string[];
+  /** v2 の印に足す契約の抽出器名（project.generator.contracts。openapi・sql） */
+  contracts?: string[];
 }
 
 /** mergeV2 の結果。join と cleanupV2 がこの状態を受け継ぐ */
@@ -60,6 +84,10 @@ export interface MergedV2 {
   upgradeWires: Set<WireV2>;
   /** 置き換わる v1 の箱 id → 中の関数の箱 id */
   groups: Map<string, string[]>;
+  /** 箱 id → その箱が参照する箱・v1 の箱の id（アダプタの refs。付け替え先を決める手がかり） */
+  refs: Map<string, Set<string>>;
+  /** overrides で消した箱（指定した id、その複製、group になるはずだった中の関数の箱） */
+  removed: Set<string>;
 }
 
 const ACTIVATION = ['call', 'props', 'html', 'r'];
@@ -86,9 +114,22 @@ function withUnderscores(adapterPorts: PortV2[], upgradePorts: PortV2[]): PortV2
   return out;
 }
 
+/** group にするか判定する v1 の箱（upgrade の箱か、overrides で消す前の v1 の箱） */
+interface GroupCandidate {
+  id: string;
+  file?: string;
+  meta?: Record<string, unknown>;
+}
+
+const exportNameOf = (n: Pick<NodeV2, 'meta'>): string | undefined => {
+  const ts = n.meta?.ts;
+  return isPlainObject(ts) && typeof ts.exportName === 'string' ? ts.exportName : undefined;
+};
+
 /** v1 の箱 → 置き換える関数の箱（被覆。D53） */
 function findGroups(
-  graph: GraphV2,
+  candidates: ReadonlyMap<string, GroupCandidate>,
+  adapterNodes: readonly NodeV2[],
   part: PartialGraphV2,
   adapterIds: ReadonlySet<string>,
 ): Map<string, string[]> {
@@ -99,11 +140,9 @@ function findGroups(
     if (!list.includes(m)) list.push(m);
     groups.set(g, list);
   };
-  const nodes = indexNodes(graph);
   // ① 明示（関数の箱 → v1 の箱）
   for (const [member, v1] of Object.entries(part.groups ?? {}))
-    if (nodes.has(v1) && adapterIds.has(member)) add(v1, member);
-  const adapterNodes = graph.nodes.filter((n) => adapterIds.has(n.id));
+    if (candidates.has(v1) && adapterIds.has(member)) add(v1, member);
   const byFile = new Map<string, NodeV2[]>();
   const byPkg = new Map<string, NodeV2[]>();
   for (const n of adapterNodes) {
@@ -112,18 +151,20 @@ function findGroups(
     if (pkg) byPkg.set(pkg, [...(byPkg.get(pkg) ?? []), n]);
     // ③ @runtime の複製
     const shared = n.meta?.sharedOf;
-    if (typeof shared === 'string' && nodes.has(shared)) add(shared, n.id);
+    if (typeof shared === 'string' && candidates.has(shared)) add(shared, n.id);
   }
-  for (const u of graph.nodes) {
+  for (const u of candidates.values()) {
     if (adapterIds.has(u.id) || groups.has(u.id)) continue;
-    // ② TS のファイルの箱: export が全部アダプタの箱になっている
+    // ② TS のファイルの箱: export が全部アダプタの箱になっている。中に入れるのはその export の箱（と @runtime の複製）
+    // だけ。同じ file の部品・hook は ts-imports の別の v1 の箱（2026-11-09 レビュー C5）
     const ts = u.meta?.ts;
     const exports = isPlainObject(ts) && Array.isArray(ts.exports) ? (ts.exports as unknown[]) : [];
     if (u.file && exports.length) {
-      const here = byFile.get(u.file) ?? [];
-      const names = new Set(
-        here.map((n) => (isPlainObject(n.meta?.ts) ? n.meta.ts.exportName : undefined)),
-      );
+      const here = (byFile.get(u.file) ?? []).filter((n) => {
+        const name = exportNameOf(n);
+        return name !== undefined && exports.includes(name);
+      });
+      const names = new Set(here.map(exportNameOf));
       if (exports.every((e) => typeof e === 'string' && names.has(e)))
         for (const m of here) add(u.id, m.id);
       continue;
@@ -140,6 +181,10 @@ const goPkg = (n: Pick<NodeV2, 'meta'>): string | undefined => {
   return isPlainObject(go) && typeof go.pkg === 'string' ? go.pkg : undefined;
 };
 
+/** overrides の remove の箱 id */
+const removedIdsOf = (o: Overrides | undefined) =>
+  (o?.remove ?? []).filter((r): r is string => typeof r === 'string');
+
 /**
  * upgrade の v2 にアダプタの部分グラフを重ねる（掃除はまだしない）。引数は変更しない
  */
@@ -152,7 +197,12 @@ export function mergeV2(
   const upgradeWires = new Set(graph.wires);
   const byId = indexNodes(graph);
   const adapterIds = new Set<string>();
-  const removed = opts.removed ?? new Set<string>();
+  const removed = new Set<string>([...(opts.removed ?? []), ...removedIdsOf(opts.overrides)]);
+  // 消した箱の @runtime の複製（sharedOf）も出さない
+  for (const pn of part.nodes) {
+    const shared = pn.meta?.sharedOf;
+    if (typeof shared === 'string' && removed.has(shared)) removed.add(pn.id);
+  }
 
   for (const pn of part.nodes) {
     if (removed.has(pn.id)) continue;
@@ -169,7 +219,6 @@ export function mergeV2(
 
   const seen = new Set(graph.wires.map(wireKey));
   for (const w of part.wires) {
-    if (removed.has(boxOf(w.from)) || removed.has(boxOf(w.to))) continue;
     if (seen.has(wireKey(w))) continue;
     seen.add(wireKey(w));
     graph.wires.push(clone(w));
@@ -182,7 +231,37 @@ export function mergeV2(
     (graph.types ??= []).push(clone(t));
   }
 
-  const groups = findGroups(graph, part, adapterIds);
+  // 被覆（group）。overrides で消した v1 の箱も、消す前の file・meta で判定し、中の関数の箱を消す
+  const candidates = new Map<string, GroupCandidate>(graph.nodes.map((n) => [n.id, n]));
+  for (const n of opts.removedNodes ?? [])
+    if (removed.has(n.id) && !candidates.has(n.id)) candidates.set(n.id, n);
+  const found = findGroups(
+    candidates,
+    graph.nodes.filter((n) => adapterIds.has(n.id)),
+    part,
+    adapterIds,
+  );
+  const groups = new Map<string, string[]>();
+  for (const [g, ms] of found) {
+    if (removed.has(g)) for (const m of ms) removed.add(m);
+    else groups.set(g, ms);
+  }
+  if (removed.size) {
+    for (const id of removed) {
+      adapterIds.delete(id);
+      byId.delete(id);
+    }
+    graph.nodes = graph.nodes.filter((n) => !removed.has(n.id));
+    graph.wires = graph.wires.filter(
+      (w) => !removed.has(boxOf(w.from)) && !removed.has(boxOf(w.to)),
+    );
+    for (const [g, ms] of groups) {
+      const left = ms.filter((m) => !removed.has(m));
+      if (left.length) groups.set(g, left);
+      else groups.delete(g);
+    }
+  }
+
   // 中の関数の箱は、置き換わる v1 の箱の host・runtime を受け継ぐ。group は v1 の箱 id
   for (const [g, members] of groups) {
     const gn = byId.get(g)!;
@@ -196,11 +275,20 @@ export function mergeV2(
   for (const n of graph.nodes)
     if ((n as Partial<NodeV2>).runtime === undefined) n.runtime = 'browser';
 
-  if (opts.adapters?.length && graph.project) {
+  applyNodePatches(graph, upgraded, opts.overrides?.nodes ?? [], adapterIds);
+
+  if (graph.project && (opts.adapters?.length || opts.contracts?.length)) {
     const gen = isPlainObject(graph.project.generator) ? graph.project.generator : {};
-    graph.project.generator = { ...gen, adapters: [...opts.adapters] };
+    graph.project.generator = {
+      ...gen,
+      ...(opts.adapters?.length ? { adapters: [...opts.adapters] } : {}),
+      ...(opts.contracts?.length ? { contracts: [...opts.contracts] } : {}),
+    };
   }
-  return { graph, adapterIds, upgradeWires, groups };
+  const refs = new Map<string, Set<string>>();
+  for (const [k, list] of Object.entries(part.refs ?? {}))
+    if (!removed.has(k)) refs.set(k, new Set(list));
+  return { graph, adapterIds, upgradeWires, groups, refs, removed };
 }
 
 /** 同じ id の upgrade の箱にアダプタの箱を重ねる（u を書き換える） */
@@ -218,12 +306,88 @@ function mergeInto(u: NodeV2, pn: PartialNodeV2) {
   u.ports = withUnderscores(pn.ports, u.ports);
   const links = pn.links ? mergeLinkLists(pn.links, u.links) : u.links;
   if (links) u.links = links;
-  if (pn.variants?.length) {
-    const vs = u.variants ? clone(u.variants) : [];
-    for (const v of pn.variants) if (!vs.some((x) => x.id === v.id)) vs.push(clone(v));
-    u.variants = vs;
-  }
+  if (pn.variants?.length) u.variants = mergeVariants(u.variants, pn.variants)!;
   if (pn.meta) u.meta = deepMerge(u.meta ?? {}, pn.meta, { prefer: 'target' });
+}
+
+/** overrides の nodes で上書きできる箱のフィールド（meta は mergeInto で upgrade の値が勝つ） */
+const PATCHABLE = ['kind', 'name', 'file', 'line', 'code', 'cache', 'screen'] as const;
+
+/**
+ * overrides の nodes（上書き）をアダプタの箱に当て直す（2026-11-09 レビュー C2）。upgrade の箱は overrides を当てた v1 から
+ * 作ったので、上書きしたフィールドは upgrade の箱の値（kind は v2 の語彙に直したもの）を戻す。@runtime の複製にも当てる
+ */
+function applyNodePatches(
+  graph: GraphV2,
+  upgraded: GraphV2,
+  patches: readonly PartialNode[],
+  adapterIds: ReadonlySet<string>,
+) {
+  if (!patches.length) return;
+  const up = indexNodes(upgraded);
+  const byId = indexNodes(graph);
+  const copies = new Map<string, NodeV2[]>();
+  for (const n of graph.nodes) {
+    const s = n.meta?.sharedOf;
+    if (typeof s === 'string') copies.set(s, [...(copies.get(s) ?? []), n]);
+  }
+  for (const p of patches) {
+    const src = up.get(p.id) as unknown as Record<string, unknown> | undefined;
+    if (!src) continue;
+    const keys = PATCHABLE.filter(
+      (k) => (p as Record<string, unknown>)[k] !== undefined && src[k] !== undefined,
+    );
+    if (!keys.length) continue;
+    for (const n of [byId.get(p.id), ...(copies.get(p.id) ?? [])]) {
+      if (!n || !adapterIds.has(n.id)) continue;
+      for (const k of keys) (n as unknown as Record<string, unknown>)[k] = clone(src[k]);
+    }
+  }
+}
+
+/** v1 のエッジの kind → それを表す v2 の線の via（overrides の remove の `{from, to, kind}` を v2 の線に当てる） */
+const VIA_OF_KIND: Record<string, readonly WireVia[]> = {
+  uses: ['call', 'return', 'render', 'props', 'sql'],
+  http: ['http', 'call', 'return'],
+  schema: ['sql'],
+  deploy: ['deliver', 'http'],
+  flow: ['http', 'event', 'deliver'],
+};
+
+/**
+ * overrides の remove の `{from, to, kind}`（v1 のエッジ）に当たる v2 の線を消す（join の後、cleanupV2 の前に呼ぶ。
+ * 2026-11-09 レビュー C2）。端は @runtime の複製と group の中の関数の箱にも広げ、戻り（reply の逆向き）も消す。
+ * 消した線の数を返す
+ */
+export function removeOverrideWiresV2(state: MergedV2, overrides: Overrides | undefined): number {
+  const edges = (overrides?.remove ?? []).filter((r): r is Edge => typeof r !== 'string');
+  if (!edges.length) return 0;
+  const { graph, groups } = state;
+  const copies = new Map<string, string[]>();
+  for (const n of graph.nodes) {
+    const s = n.meta?.sharedOf;
+    if (typeof s === 'string') copies.set(s, [...(copies.get(s) ?? []), n.id]);
+  }
+  const expand = (id: string) => {
+    const out = new Set([id, ...(groups.get(id) ?? [])]);
+    for (const x of [...out]) for (const c of copies.get(x) ?? []) out.add(c);
+    return out;
+  };
+  let count = 0;
+  for (const r of edges) {
+    const from = expand(r.from);
+    const to = expand(r.to);
+    const vias = r.kind === undefined ? undefined : VIA_OF_KIND[r.kind];
+    graph.wires = graph.wires.filter((w) => {
+      if (vias && !vias.includes(w.via)) return true;
+      const a = boxOf(w.from);
+      const b = boxOf(w.to);
+      const hit = (from.has(a) && to.has(b)) || (!!w.reply && from.has(b) && to.has(a));
+      if (hit) count++;
+      return !hit;
+    });
+  }
+  return count;
 }
 
 export interface CleanupV2Result {
@@ -234,14 +398,20 @@ export interface CleanupV2Result {
   replaced: number;
   /** 付け替えた箱の単位の線（画面の in/html、group の中の関数の箱） */
   retargeted: number;
-  /** 消した線（group の相手がアダプタの箱のもの、参照が解けないもの） */
+  /**
+   * group になった v1 の箱に残った線のうち、付け替え先（実際に参照している中の関数の箱）を決められず、
+   * 中の全部へ付け替えたもの（元の線の数）
+   */
+  undetermined: number;
+  /** 消した線（参照が解けないもの） */
   dropped: number;
   issues: ValidationIssue[];
 }
 
 /** 掃除（D50・D53）。join の後に呼ぶ。state.graph を書き換えて返す */
 export function cleanupV2(state: MergedV2): CleanupV2Result {
-  const { graph, adapterIds, upgradeWires, groups } = state;
+  const { graph, upgradeWires, groups, refs } = state;
+  const adapterIds = state.adapterIds;
   const issues: ValidationIssue[] = [];
   const byId = indexNodes(graph);
   /** 関数の箱 → 置き換わる v1 の箱（対の照合で同じ箱として数える） */
@@ -254,13 +424,20 @@ export function cleanupV2(state: MergedV2): CleanupV2Result {
 
   // 1. 細かい方が勝つ: アダプタ・合流の線の箱の対（向き付き）
   const finePairs = new Set<string>();
+  /** 合流の線が出ている呼び出しの項目（`<箱>#out/call_n`） */
+  const joinedCalls = new Set<string>();
   for (const w of graph.wires) {
     if (upgradeWires.has(w)) continue;
     for (const a of reps(boxOf(w.from)))
       for (const b of reps(boxOf(w.to))) finePairs.add(`${a}\u0000${b}`);
+    if (w.via === 'http' && !w.reply && byId.get(boxOf(w.to))?.kind === 'endpoint') {
+      const m = /^[^#]*#[^/]*\/[^.]*/.exec(w.from);
+      if (m) joinedCalls.add(m[0]);
+    }
   }
   let replaced = 0;
   let retargeted = 0;
+  let undetermined = 0;
   let dropped = 0;
   const kept: WireV2[] = [];
   for (const w of graph.wires) {
@@ -270,6 +447,59 @@ export function cleanupV2(state: MergedV2): CleanupV2Result {
     }
     kept.push(w);
   }
+
+  /** 箱 id が target（箱。複製・group の中の箱・group の v1 の箱としても）を参照しているか（アダプタの refs） */
+  const references = (id: string, target: string): boolean => {
+    const r = refs.get(id);
+    if (!r) return false;
+    if (r.has(target)) return true;
+    const shared = byId.get(target)?.meta?.sharedOf;
+    if (typeof shared === 'string' && r.has(shared)) return true;
+    const g = groupOf.get(target);
+    if (g && r.has(g)) return true;
+    return (groups.get(target) ?? []).some((m) => r.has(m));
+  };
+  /** HTTP の線の呼ぶ側: 呼び出しの項目の meta.http が endpoint に合う箱。無ければ合流できなかった呼び出しを持つ箱 */
+  const httpCallers = (members: string[], endpointId: string): string[] => {
+    const ep = byId.get(endpointId);
+    const route = ep?.kind === 'endpoint' ? endpointRoute(ep) : undefined;
+    if (!route) return [];
+    const calls = (m: string) =>
+      (byId.get(m)?.ports ?? [])
+        .filter((p) => p.dir === 'out')
+        .flatMap((p) =>
+          p.items.map((it) => ({ ref: `${m}#${p.id}/${it.id}`, call: httpCallOf(it) })),
+        )
+        .filter((x) => x.call);
+    const exact = members.filter((m) =>
+      calls(m).some(
+        (x) =>
+          methodMatches(route.method, x.call!.method) && apiPathMatches(route.path, x.call!.path),
+      ),
+    );
+    if (exact.length) return exact;
+    return members.filter((m) => calls(m).some((x) => !joinedCalls.has(x.ref)));
+  };
+  /**
+   * 線の group の端（v1 の箱）を、実際に参照している中の関数の箱にする。決められなければ undefined。
+   * caller: その端が呼ぶ側（reply でない線の from、reply の線の to）か
+   */
+  const referrers = (
+    members: string[],
+    other: string,
+    caller: boolean,
+    w: WireV2,
+  ): string[] | undefined => {
+    let hit: string[];
+    if (caller) {
+      hit = members.filter((m) => references(m, other));
+      if (!hit.length && w.via === 'http') hit = httpCallers(members, other);
+    } else {
+      const callers = groups.get(other) ?? [other];
+      hit = members.filter((m) => callers.some((c) => references(c, m)));
+    }
+    return hit.length ? hit : undefined;
+  };
 
   // 2. 残った upgrade の線の付け替え
   const out: WireV2[] = [];
@@ -287,6 +517,10 @@ export function cleanupV2(state: MergedV2): CleanupV2Result {
     }
     if (!p.items.some((i) => i.id === UNDERSCORE)) p.items.push(underscoreItem());
   };
+  const portOf = (ref: string) => {
+    const hash = ref.indexOf('#');
+    return ref.slice(hash + 1, ref.indexOf('/', hash));
+  };
   for (const w of kept) {
     if (!upgradeWires.has(w)) {
       push(w);
@@ -297,31 +531,33 @@ export function cleanupV2(state: MergedV2): CleanupV2Result {
     const ga = groups.get(a);
     const gb = groups.get(b);
     if (ga || gb) {
-      // group になる v1 の箱に付いた線。相手がアダプタの箱なら、アダプタが関数の単位で引き直しているので消す
-      const other = ga ? b : a;
-      if (adapterIds.has(other) || (ga && gb)) {
-        dropped++;
-        continue;
-      }
-      for (const m of (ga ?? gb)!) {
-        const mn = byId.get(m)!;
-        const portOf = (ref: string) => {
-          const hash = ref.indexOf('#');
-          return ref.slice(hash + 1, ref.indexOf('/', hash));
-        };
-        const nw = clone(w);
-        if (ga) {
-          const port = portOf(w.from);
-          ensureUnderscore(mn, port, 'out');
-          nw.from = `${m}#${port}/${UNDERSCORE}`;
-        } else {
-          const port = portOf(w.to);
-          ensureUnderscore(mn, port, 'in');
-          nw.to = `${m}#${port}/${UNDERSCORE}`;
+      // group になる v1 の箱に付いた線。細かい線が無い（合流できなかった・overrides で足した）ので消さず、
+      // 実際に参照している中の関数の箱へ付け替える（2026-11-09 レビュー C1・C6）
+      const callerBox = w.reply ? b : a;
+      const ends = (box: string, members: string[] | undefined, other: string) => {
+        if (!members) return { list: [box], determined: true };
+        const hit = referrers(members, other, box === callerBox, w);
+        return hit ? { list: hit, determined: true } : { list: members, determined: false };
+      };
+      const fe = ends(a, ga, b);
+      const te = ends(b, gb, a);
+      if (!fe.determined || !te.determined) undetermined++;
+      for (const f of fe.list)
+        for (const t of te.list) {
+          const nw = clone(w);
+          if (ga) {
+            const port = portOf(w.from);
+            ensureUnderscore(byId.get(f)!, port, 'out');
+            nw.from = `${f}#${port}/${UNDERSCORE}`;
+          }
+          if (gb) {
+            const port = portOf(w.to);
+            ensureUnderscore(byId.get(t)!, port, 'in');
+            nw.to = `${t}#${port}/${UNDERSCORE}`;
+          }
+          push(nw);
+          retargeted++;
         }
-        push(nw);
-        retargeted++;
-      }
       continue;
     }
     // 画面の入口: 配信の線は in/html に着く（docs/17 §7 #2）
@@ -380,7 +616,7 @@ export function cleanupV2(state: MergedV2): CleanupV2Result {
     if (n.kind !== 'endpoint') n.ports = n.ports.filter((p) => p.items.length > 0);
     linkUnderscores(n);
   }
-  return { graph, groups: groups.size, replaced, retargeted, dropped, issues };
+  return { graph, groups: groups.size, replaced, retargeted, undetermined, dropped, issues };
 }
 
 const roots = (n: NodeV2, dir: 'in' | 'out', portId?: string) =>

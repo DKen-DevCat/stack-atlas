@@ -4,8 +4,9 @@
  *
  * 結果は v1（`graph`。3D の地図と既存の呼び出し元）と v2（`graphV2`。配線図。`stack-atlas build` の graph.json）の両方。
  * 抽出器は v1 の部分グラフを出し続け、v2 は v1 を upgradeGraph で変換して作る（D38）。
- * 言語アダプタ（ts-types など）と openapi は v2 の部分グラフ（PartialGraph.v2）も出す。変換した v2 に
- * mergeV2 → join（合流）→ cleanupV2（細かい方が勝つ掃除）→ detectBroken の順で重ねる（docs/17 §2・§7 #4・#5、D50・D53）。
+ * 言語アダプタ（ts-types など）と契約（openapi）は v2 の部分グラフ（PartialGraph.v2）も出す。変換した v2 に
+ * mergeV2 → join（合流）→ overrides の線の削除 → cleanupV2（細かい方が勝つ掃除）→ detectBroken の順で重ねる
+ * （docs/17 §2・§7 #4・#5、D50・D53）。overrides.yaml は 1 回だけ読み、v1 と v2 の両方に当てる
  *
  * 複数リポジトリ（config.repos、docs/12 §3.2）: 抽出器ごとに、repo を宣言順に回す
  * （`for extractor { for repo { detect; extract } }`）。そのため後続の抽出器（api-link など）は、
@@ -31,7 +32,13 @@ import { gitCommit, gitRemote } from './git.js';
 import { assignLayers } from './layers.js';
 import { silentLogger } from './logger.js';
 import { mergePartialGraphs } from './merge.js';
-import { cleanupV2, coverageV2, mergeV2, type CoverageV2 } from './merge-v2.js';
+import {
+  cleanupV2,
+  coverageV2,
+  mergeV2,
+  removeOverrideWiresV2,
+  type CoverageV2,
+} from './merge-v2.js';
 import { joinEndpoints } from './join.js';
 import { writeBroken } from './broken-v2.js';
 import { addExtractorName } from './meta.js';
@@ -113,8 +120,10 @@ export interface BuildGraphResult {
 
 /** 言語アダプタを重ねた結果の数（docs/17 §4） */
 export interface V2AdapterReport {
-  /** v2 を出した抽出器 */
+  /** v2 を出した言語アダプタ（ts-types・go-types。Extractor.v2Role が language） */
   adapters: string[];
+  /** v2 を出した契約の抽出器（openapi・sql。Extractor.v2Role が contract） */
+  contracts: string[];
   coverage: CoverageV2;
   /** endpoint と照合できた / できなかった HTTP の呼び出し */
   joined: number;
@@ -123,6 +132,8 @@ export interface V2AdapterReport {
   groups: number;
   /** アダプタの線で置き換えた箱の単位の線 */
   replaced: number;
+  /** group になった v1 の箱に残った線のうち、付け替え先を決められず中の全部へ付け替えたもの */
+  undetermined: number;
   /** broken を持つ線 */
   broken: number;
 }
@@ -233,7 +244,9 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
     repos,
     configDir,
   });
-  const overridden = applyOverrides(deployed.graph, loadOverrides(configCtx));
+  // overrides.yaml は 1 回だけ読む（v2 にも同じものを当てる。読み直すと警告が 2 回出る）
+  const overrides = loadOverrides(configCtx);
+  const overridden = applyOverrides(deployed.graph, overrides);
   issues.push(...overridden.issues);
   issues.push(...completeNodes(overridden.graph));
 
@@ -287,26 +300,34 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
     const v2path = (i: ValidationIssue): ValidationIssue => ({ ...i, path: `v2:${i.path}` });
     let graphV2 = upgradeGraph(graph, { onIssue: (i) => issues.push(v2path(i)) });
     if (merged.v2) {
-      // 言語アダプタの v2 を重ねる。overrides で消した箱はアダプタからも出さない
-      const removed = new Set(
-        (loadOverrides(configCtx).remove ?? []).filter((r): r is string => typeof r === 'string'),
+      // 言語アダプタと契約の v2 を重ねる。overrides は v2 にも当てる（remove の箱・その複製と中の関数の箱、
+      // nodes の上書き。remove の線は合流の後）
+      const removedIds = new Set(
+        (overrides.remove ?? []).filter((r): r is string => typeof r === 'string'),
       );
-      const adapters = Object.entries(partials)
+      const removedNodes = deployed.graph.nodes.filter((n) => removedIds.has(n.id));
+      const roleOf = new Map(opts.extractors.map((e) => [e.name, e.v2Role ?? 'language']));
+      const withV2 = Object.entries(partials)
         .filter(([, p]) => p.v2?.nodes.length)
         .map(([name]) => name);
-      const state = mergeV2(graphV2, merged.v2, { removed, adapters });
+      const adapters = withV2.filter((n) => roleOf.get(n) !== 'contract');
+      const contracts = withV2.filter((n) => roleOf.get(n) === 'contract');
+      const state = mergeV2(graphV2, merged.v2, { overrides, removedNodes, adapters, contracts });
       const joined = joinEndpoints(state.graph);
+      removeOverrideWiresV2(state, overrides);
       const cleaned = cleanupV2(state);
       issues.push(...joined.issues, ...cleaned.issues);
       graphV2 = cleaned.graph;
       const broken = writeBroken(graphV2);
       result.v2Adapters = {
         adapters,
+        contracts,
         coverage: coverageV2(graphV2),
         joined: joined.matched,
         unjoined: joined.unmatched,
         groups: cleaned.groups,
         replaced: cleaned.replaced,
+        undetermined: cleaned.undetermined,
         broken,
       };
     }

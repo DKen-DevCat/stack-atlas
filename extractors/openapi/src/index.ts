@@ -23,9 +23,23 @@ import type {
   RepoContext,
 } from '@stack-atlas/core';
 import type { NamedType } from '@stack-atlas/schema';
-import { endpointNodeV2, namedTypeOf, operationItems, type OperationItems } from './v2.js';
+import {
+  DEFAULT_MAX_ITEMS,
+  endpointNodeV2,
+  namedTypeOf,
+  operationItems,
+  type OperationItems,
+  type PropertiesMemo,
+} from './v2.js';
 
-export { endpointNodeV2, itemId, operationItems, type OperationItems } from './v2.js';
+export {
+  endpointNodeV2,
+  itemId,
+  operationItems,
+  DEFAULT_MAX_ITEMS,
+  type OperationItems,
+  type OperationItemsOptions,
+} from './v2.js';
 
 export const NAME = 'openapi';
 
@@ -199,7 +213,10 @@ function excerpt(src: string, lc: LineCounter, start: number, end: number) {
  * OpenAPI / Swagger の文字列を読む（YAML / JSON どちらも。行番号は yaml の LineCounter）。
  * depth は v2 の項目の展開の深さ（config の adapters.depth。既定 2）
  */
-export function parseOpenApi(src: string, opts: { depth?: number } = {}): OpenApiSpec {
+export function parseOpenApi(
+  src: string,
+  opts: { depth?: number; maxItems?: number } = {},
+): OpenApiSpec {
   const lc = new LineCounter();
   const doc = parseDocument(src, { lineCounter: lc, uniqueKeys: false });
   const json = doc.toJS({ maxAliasCount: -1 }) as unknown;
@@ -224,6 +241,8 @@ export function parseOpenApi(src: string, opts: { depth?: number } = {}): OpenAp
 
   const paths = isObj(root['paths']) ? root['paths'] : {};
   const pathsNode = doc.get('paths', true);
+  /** allOf のまとめ（操作どうしで共有する） */
+  const memo: PropertiesMemo = new Map();
   for (const p of pairsOf(pathsNode)) {
     const item = paths[p.key];
     if (!isObj(item)) continue;
@@ -249,7 +268,10 @@ export function parseOpenApi(src: string, opts: { depth?: number } = {}): OpenAp
           },
           components,
         ),
-        items: operationItems(m.key.toUpperCase(), p.key, op, shared, root, opts.depth ?? 2),
+        items: operationItems(m.key.toUpperCase(), p.key, op, shared, root, {
+          ...opts,
+          memo,
+        }),
       };
       if (typeof op['operationId'] === 'string') o.operationId = op['operationId'];
       if (typeof op['summary'] === 'string') o.summary = op['summary'];
@@ -286,6 +308,8 @@ const endpointId = (method: string, path: string) => `endpoint:${method} ${path}
 
 export const extractor: Extractor = {
   name: NAME,
+  /** v2 の endpoint は契約（合流点。言語アダプタではない。docs/17 §2） */
+  v2Role: 'contract',
   async detect(ctx) {
     return openapiFiles(ctx).length > 0;
   },
@@ -308,11 +332,12 @@ export const extractor: Extractor = {
     const nodesV2: PartialNodeV2[] = [];
     const typesV2: NamedType[] = [];
     const depth = ctx.config.adapters?.depth ?? 2;
+    const maxItems = ctx.config.adapters?.maxItems ?? DEFAULT_MAX_ITEMS;
     let dup = 0;
     for (const rel of openapiFiles(ctx)) {
       let spec: OpenApiSpec;
       try {
-        spec = parseOpenApi(readFileSync(join(ctx.root, rel), 'utf8'), { depth });
+        spec = parseOpenApi(readFileSync(join(ctx.root, rel), 'utf8'), { depth, maxItems });
       } catch (e) {
         ctx.log.warn(`openapi: ${rel} を読めません: ${String(e)}`);
         continue;
@@ -363,8 +388,13 @@ export const extractor: Extractor = {
         };
         if (o.cache) node.cache = o.cache;
         nodes.set(id, node);
-        if (!fromOpenapiV2.has(id))
+        if (!fromOpenapiV2.has(id)) {
           nodesV2.push(endpointNodeV2(id, o.method, o.path, o.items, rel, o.line, o.operationId));
+          if (o.items.truncated)
+            ctx.log.warn(
+              `openapi: ${id}（${rel}）の項目が上限（${maxItems}）を超えたので、schema の子の展開を打ち切りました（config の adapters.maxItems）`,
+            );
+        }
         for (const s of o.schemas) addEdge(id, `type:${s}`, 'uses');
       }
     }

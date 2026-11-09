@@ -1,10 +1,17 @@
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import type { PartialGraph, RepoContext, StackAtlasConfig } from '@stack-atlas/core';
-import { mergePartialGraphs } from '@stack-atlas/core';
-import { extractor, openapiFiles, parseOpenApi } from './index.js';
+import {
+  createMemoryLogger,
+  createRepoContext,
+  itemId as coreItemId,
+  mergePartialGraphs,
+} from '@stack-atlas/core';
+import type { ItemV2 } from '@stack-atlas/schema';
+import { extractor, itemId, openapiFiles, parseOpenApi } from './index.js';
 
 const fixtures = resolve(dirname(fileURLToPath(import.meta.url)), '../test/fixtures');
 const infos: string[] = [];
@@ -273,5 +280,127 @@ describe('openapi extractor: v2（endpoint の 4 つの口と項目）', async (
     expect(spec.operations[0]!.items.response).toEqual([
       { id: 'status', name: 'status', type: '200 OK', wireType: 'integer' },
     ]);
+  });
+});
+
+/** CPU 時間（並列に走る他のテストに待たされた分を含めない） */
+const cpuSince = (t0: NodeJS.CpuUsage) => {
+  const d = process.cpuUsage(t0);
+  return (d.user + d.system) / 1000;
+};
+
+/** 項目の数（入れ子を含む） */
+const countItems = (items: readonly ItemV2[]): number =>
+  items.reduce((n, it) => n + 1 + countItems(it.children ?? []), 0);
+
+describe('悪意のある・壊れた spec（2026-11-09 レビュー S1）', () => {
+  const roots: string[] = [];
+  afterAll(() => {
+    for (const r of roots) rmSync(r, { recursive: true, force: true });
+  });
+  /** 1 操作（POST /x、body と 200 の応答が schema S0）の spec を JSON で */
+  const specWith = (schemas: Record<string, unknown>) =>
+    JSON.stringify({
+      openapi: '3.0.3',
+      paths: {
+        '/x': {
+          post: {
+            requestBody: {
+              required: true,
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/S0' } } },
+            },
+            responses: {
+              '200': {
+                description: 'OK',
+                content: { 'application/json': { schema: { $ref: '#/components/schemas/S0' } } },
+              },
+            },
+          },
+        },
+      },
+      components: { schemas },
+    });
+
+  it('allOf の菱形（S0 allOf [S1, S1]、S1 allOf [S2, S2]… を 30 段）は段ごとに倍にならない（1 秒未満）', () => {
+    const schemas: Record<string, unknown> = {};
+    const L = 30;
+    for (let i = 0; i < L; i++) {
+      const next = { $ref: `#/components/schemas/S${i + 1}` };
+      schemas[`S${i}`] = { allOf: [next, next], properties: { [`p${i}`]: { type: 'string' } } };
+    }
+    schemas[`S${L}`] = { type: 'object', properties: { leaf: { type: 'integer' } } };
+    const t0 = process.cpuUsage();
+    const spec = parseOpenApi(specWith(schemas));
+    expect(cpuSince(t0)).toBeLessThan(1000);
+    // 菱形でも全段のプロパティは 1 回ずつまとまる（p0〜p29 と leaf）
+    const body = spec.operations[0]!.items.request.find((i) => i.id === 'body')!;
+    expect(body.children!.map((c) => c.id).sort()).toEqual(
+      [...Array.from({ length: L }, (_, i) => `p${i}`), 'leaf'].sort(),
+    );
+  });
+
+  it('項目の上限（adapters.maxItems。既定 200）: 2000 個のプロパティがそれぞれ 2000 個のプロパティの B を指しても、操作あたり上限で止めて警告する（1 秒未満）', async () => {
+    const N = 2000;
+    const bProps: Record<string, unknown> = {};
+    for (let i = 0; i < N; i++) bProps[`b${i}`] = { type: 'string' };
+    const aProps: Record<string, unknown> = {};
+    for (let i = 0; i < N; i++) aProps[`a${i}`] = { $ref: '#/components/schemas/B' };
+    const src = specWith({
+      S0: { type: 'object', properties: aProps },
+      B: { type: 'object', properties: bProps },
+    });
+    const t0 = process.cpuUsage();
+    const spec = parseOpenApi(src);
+    expect(cpuSince(t0)).toBeLessThan(1000);
+    const items = spec.operations[0]!.items;
+    expect(items.truncated).toBe(true);
+    // request と response の合計で上限（top-level の path と body は形として必ず置く）
+    expect(countItems([...items.request, ...items.response])).toBeLessThanOrEqual(200 + 1);
+    // 同じ schema（B）を別々のプロパティが指すのは、それぞれ展開する（上限の中で）
+    const small = parseOpenApi(
+      specWith({
+        S0: {
+          type: 'object',
+          properties: {
+            x: { $ref: '#/components/schemas/B' },
+            y: { $ref: '#/components/schemas/B' },
+          },
+        },
+        B: { type: 'object', properties: { v: { type: 'string' } } },
+      }),
+    );
+    const sb = small.operations[0]!.items.request.find((i) => i.id === 'body')!;
+    expect(sb.children!.map((c) => [c.id, c.children?.map((x) => x.id)])).toEqual([
+      ['x', ['v']],
+      ['y', ['v']],
+    ]);
+    expect(small.operations[0]!.items.truncated).toBeUndefined();
+
+    // 抽出器: 打ち切ったら警告（何を・config のキー）。上限は config の adapters.maxItems
+    const root = mkdtempSync(join(tmpdir(), 'stack-atlas-openapi-'));
+    roots.push(root);
+    mkdirSync(join(root, 'openapi'));
+    writeFileSync(join(root, 'openapi', 'openapi.json'), src);
+    const mlog = createMemoryLogger();
+    const ctx = createRepoContext(root, { adapters: { maxItems: 50 } }, mlog, { repoName: 'a' });
+    const t1 = process.cpuUsage();
+    const part = await extractor.extract(ctx, { nodes: [], edges: [] });
+    expect(cpuSince(t1)).toBeLessThan(1000);
+    const ep = part.v2!.nodes[0]!;
+    const inPort = ep.ports.find((p) => p.id === 'in')!;
+    const outPort = ep.ports.find((p) => p.id === 'out')!;
+    expect(countItems([...inPort.items, ...outPort.items])).toBeLessThanOrEqual(50 + 1);
+    expect(mlog.of('warn')).toEqual([
+      expect.stringMatching(
+        /^openapi: endpoint:POST \/x（openapi\/openapi\.json）の項目が上限（50）を超えたので、schema の子の展開を打ち切りました（config の adapters\.maxItems）$/,
+      ),
+    ]);
+  });
+});
+
+describe('道具は core の 1 つの定義（2026-11-09 レビュー C9）', () => {
+  it('itemId は core のもの（openapi は再 export するだけ）', () => {
+    expect(itemId).toBe(coreItemId);
+    expect(itemId('query.date')).toBe('query_date');
   });
 });
