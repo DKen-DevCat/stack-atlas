@@ -218,3 +218,5 @@ viewer/wiring
 | 1 レーンの鎖 1 万箱・端から端へ戻る線 1000 本 | 1509ms | 1128ms |
 
 テスト: `layout-review.test.ts`（指摘ごと。直す前に落ちることを確かめた）、`layout-perf.test.ts` の「大きな入力で二乗にならない」（host 6000・線 1.6 万が CPU 時間 1000ms 未満: 直す前 約 4000ms・後 約 340ms。1 本の通り道に重ならない縦の区間 6 万本のトラックが 600ms 未満: 直す前 約 4600ms・後 約 130ms）
+
+8-2b を取り込んだ後（2026-11-09）: 8-2b が `/today` の例を直した（InsertTransaction の host を外して `meta.hosts` に、POST /transactions に login の分岐）ので、`/today` は 2676×1526（1.75）・交差 53 になった。上限は 53 × 1.1 = 59 に置き直した（基準の graph は 8-2a の出力を固定しているので変わらない）。
