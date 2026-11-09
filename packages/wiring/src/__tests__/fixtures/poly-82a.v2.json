@@ -1,0 +1,5483 @@
+{
+  "version": 2,
+  "project": {
+    "name": "expense-tracker (fixture-poly)",
+    "description": "合成の 2 リポジトリ構成（Go + HCL + Next static export + OpenAPI + SQL）",
+    "repo": "git@github.com:DKen-DevCat/stack-atlas.git",
+    "commit": "3b3d014ae5e3fca66481c67de263e3ed94386701",
+    "generatedAt": "2026-11-09T09:40:55.723Z",
+    "sources": [
+      "web",
+      "platform"
+    ],
+    "generator": {
+      "v2": "upgrade",
+      "adapters": [
+        "ts-types",
+        "openapi"
+      ]
+    }
+  },
+  "types": [
+    {
+      "id": "type:DailyTotals",
+      "name": "DailyTotals",
+      "file": "web/src/feature/days/types.ts",
+      "line": 1,
+      "source": "typescript",
+      "meta": {
+        "extractors": [
+          "ts-imports"
+        ],
+        "ts": {
+          "exportName": "DailyTotals",
+          "symbolKind": "type"
+        },
+        "code": "export type DailyTotals = Record<string, number>;",
+        "usedBy": [
+          "lib:web/src/feature/days/request.ts",
+          "lib:web/src/feature/days/transformer.ts"
+        ]
+      }
+    },
+    {
+      "id": "type:CalendarCell",
+      "name": "CalendarCell",
+      "file": "web/src/feature/days/types.ts",
+      "line": 3,
+      "source": "typescript",
+      "meta": {
+        "extractors": [
+          "ts-imports"
+        ],
+        "ts": {
+          "exportName": "CalendarCell",
+          "symbolKind": "type"
+        },
+        "code": "export type CalendarCell = {\n  date: string;\n  total: number;\n};",
+        "usedBy": [
+          "comp:CalendarGrid",
+          "comp:CalendarIsland",
+          "lib:web/src/feature/days/transformer.ts"
+        ]
+      }
+    },
+    {
+      "id": "type:Entry",
+      "name": "Entry",
+      "source": "openapi",
+      "file": "platform/openapi/today.yaml",
+      "meta": {
+        "extractors": [
+          "ts-imports",
+          "openapi"
+        ],
+        "ts": {
+          "exportName": "Entry",
+          "symbolKind": "type"
+        },
+        "openapi": {
+          "file": "openapi/today.yaml"
+        },
+        "copies": [
+          "web/src/feature/spend/types.ts:1"
+        ],
+        "code": "export type Entry = {\n  id: string;\n  merchant: string;\n  amount: number;\n};",
+        "usedBy": [
+          "comp:EntryList",
+          "lib:web/src/feature/spend/request.ts",
+          "type:Today",
+          "type:TodayView",
+          "endpoint:GET /entries"
+        ]
+      }
+    },
+    {
+      "id": "type:Today",
+      "name": "Today",
+      "source": "openapi",
+      "file": "platform/openapi/today.yaml",
+      "meta": {
+        "extractors": [
+          "ts-imports",
+          "openapi"
+        ],
+        "ts": {
+          "exportName": "Today",
+          "symbolKind": "type"
+        },
+        "openapi": {
+          "file": "openapi/today.yaml"
+        },
+        "copies": [
+          "web/src/feature/spend/types.ts:7"
+        ],
+        "code": "export type Today = {\n  total: number;\n  entries: Entry[];\n};",
+        "usedBy": [
+          "lib:web/src/feature/spend/request.ts",
+          "lib:web/src/feature/spend/transformer.ts",
+          "endpoint:GET /today"
+        ]
+      }
+    },
+    {
+      "id": "type:TodayView",
+      "name": "TodayView",
+      "file": "web/src/feature/spend/types.ts",
+      "line": 12,
+      "source": "typescript",
+      "meta": {
+        "extractors": [
+          "ts-imports"
+        ],
+        "ts": {
+          "exportName": "TodayView",
+          "symbolKind": "type"
+        },
+        "code": "export type TodayView = {\n  totalLabel: string;\n  rows: Entry[];\n};",
+        "usedBy": [
+          "comp:TodayIsland",
+          "comp:TotalCard",
+          "lib:web/src/feature/spend/transformer.ts"
+        ]
+      }
+    },
+    {
+      "id": "type:internal/domain",
+      "name": "internal/domain",
+      "file": "platform/internal/domain/charge.go",
+      "line": 1,
+      "source": "go",
+      "meta": {
+        "extractors": [
+          "go"
+        ],
+        "go": {
+          "pkg": "internal/domain",
+          "name": "domain",
+          "imports": [
+            "time"
+          ]
+        },
+        "code": "package domain\n\n// Charge はカード明細 1 行。\ntype Charge struct {\n\tMerchant string\n\tAmount   int64\n}\n\n// ToTransaction は Charge を Transaction に変換する。\nfunc (c Charge) ToTransaction(id string) Transaction {\n\treturn Transaction{ID: id, Merchant: c.Merchant, Amount: c.Amount}\n}\n",
+        "usedBy": [
+          "handler:internal/api",
+          "lib:internal/parser",
+          "schema:internal/store"
+        ]
+      }
+    },
+    {
+      "id": "type:Transaction",
+      "name": "Transaction",
+      "source": "openapi",
+      "file": "platform/openapi/today.yaml",
+      "line": 127,
+      "meta": {
+        "extractors": [
+          "openapi"
+        ],
+        "ts": {
+          "exportName": "Transaction",
+          "symbolKind": "openapi"
+        },
+        "openapi": {
+          "file": "openapi/today.yaml"
+        },
+        "code": "    Transaction:\n      type: object\n      required: [id, merchant, amount, occurredAt]\n      properties:\n        id: { type: string }\n        merchant: { type: string }\n        amount: { type: integer, format: int64 }\n        occurredAt: { type: string, format: date-time }",
+        "usedBy": [
+          "endpoint:GET /transactions",
+          "endpoint:POST /transactions"
+        ]
+      }
+    },
+    {
+      "id": "type:PushSubscription",
+      "name": "PushSubscription",
+      "source": "openapi",
+      "file": "platform/openapi/today.yaml",
+      "line": 135,
+      "meta": {
+        "extractors": [
+          "openapi"
+        ],
+        "ts": {
+          "exportName": "PushSubscription",
+          "symbolKind": "openapi"
+        },
+        "openapi": {
+          "file": "openapi/today.yaml"
+        },
+        "code": "    PushSubscription:\n      type: object\n      required: [endpoint, p256dh, auth]\n      properties:\n        endpoint: { type: string }\n        p256dh: { type: string }\n        auth: { type: string }",
+        "usedBy": [
+          "endpoint:POST /push/subscriptions",
+          "endpoint:DELETE /push/subscriptions"
+        ]
+      }
+    },
+    {
+      "id": "table:transactions",
+      "name": "transactions",
+      "file": "platform/migrations/000001_init.up.sql",
+      "line": 1,
+      "source": "sql"
+    },
+    {
+      "id": "table:inboxes",
+      "name": "inboxes",
+      "file": "platform/migrations/000001_init.up.sql",
+      "line": 8,
+      "source": "sql"
+    },
+    {
+      "id": "table:push_subscriptions",
+      "name": "push_subscriptions",
+      "file": "platform/migrations/000002_push.up.sql",
+      "line": 1,
+      "source": "sql"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "infra:app",
+      "kind": "infra",
+      "name": "ECR expense-dev-app",
+      "runtime": "server",
+      "file": "platform/infra/envs/dev/main.tf",
+      "line": 1,
+      "code": "resource \"aws_ecr_repository\" \"app\" {\n  name = \"${var.name_prefix}-app\"\n}",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "terraform"
+        ],
+        "cdktf": {
+          "type": "aws_ecr_repository",
+          "logicalId": "app",
+          "path": "aws_ecr_repository.app",
+          "stack": "dev"
+        },
+        "infra": {
+          "type": "aws_ecr_repository",
+          "logicalId": "app",
+          "path": "aws_ecr_repository.app",
+          "stack": "dev"
+        }
+      }
+    },
+    {
+      "id": "infra:aurora/this",
+      "kind": "infra",
+      "name": "Aurora expense-dev-cluster",
+      "runtime": "data",
+      "file": "platform/infra/modules/aurora/main.tf",
+      "line": 15,
+      "code": "resource \"aws_rds_cluster\" \"this\" {\n  cluster_identifier     = \"${var.name_prefix}-cluster\"\n  engine                 = \"aurora-postgresql\"\n  engine_mode            = \"provisioned\"\n  database_name          = \"expenses\"\n  master_username        = \"app\"\n  manage_master_user_password = true\n  db_subnet_group_name   = aws_db_subnet_group.this.name\n  vpc_security_group_ids = [aws_security_group.db.id]\n  skip_final_snapshot    = true\n\n  serverlessv2_scaling_configuration {\n    min_capacity = 0.5\n    max_capacity = 2\n  }\n}",
+      "ports": [],
+      "meta": {
+        "extractors": [
+          "terraform"
+        ],
+        "cdktf": {
+          "type": "aws_rds_cluster",
+          "logicalId": "this",
+          "path": "module.aurora.aws_rds_cluster.this",
+          "stack": "dev"
+        },
+        "infra": {
+          "type": "aws_rds_cluster",
+          "logicalId": "this",
+          "path": "module.aurora.aws_rds_cluster.this",
+          "stack": "dev",
+          "module": "aurora"
+        }
+      }
+    },
+    {
+      "id": "infra:aurora/db",
+      "kind": "infra",
+      "name": "Secret expense-dev/db",
+      "runtime": "server",
+      "file": "platform/infra/modules/aurora/main.tf",
+      "line": 11,
+      "code": "resource \"aws_secretsmanager_secret\" \"db\" {\n  name = \"${var.name_prefix}/db\"\n}",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "terraform"
+        ],
+        "cdktf": {
+          "type": "aws_secretsmanager_secret",
+          "logicalId": "db",
+          "path": "module.aurora.aws_secretsmanager_secret.db",
+          "stack": "dev"
+        },
+        "infra": {
+          "type": "aws_secretsmanager_secret",
+          "logicalId": "db",
+          "path": "module.aurora.aws_secretsmanager_secret.db",
+          "stack": "dev",
+          "module": "aurora"
+        }
+      }
+    },
+    {
+      "id": "infra:cognito/this",
+      "kind": "infra",
+      "name": "Cognito expense-dev-users",
+      "runtime": "server",
+      "file": "platform/infra/modules/cognito/main.tf",
+      "line": 1,
+      "code": "resource \"aws_cognito_user_pool\" \"this\" {\n  name = \"${var.name_prefix}-users\"\n}",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "terraform"
+        ],
+        "cdktf": {
+          "type": "aws_cognito_user_pool",
+          "logicalId": "this",
+          "path": "module.cognito.aws_cognito_user_pool.this",
+          "stack": "dev"
+        },
+        "infra": {
+          "type": "aws_cognito_user_pool",
+          "logicalId": "this",
+          "path": "module.cognito.aws_cognito_user_pool.this",
+          "stack": "dev",
+          "module": "cognito"
+        }
+      }
+    },
+    {
+      "id": "infra:lambda_api/api",
+      "kind": "infra",
+      "name": "Lambda: api",
+      "runtime": "server",
+      "file": "platform/infra/modules/lambda-api/main.tf",
+      "line": 46,
+      "code": "resource \"aws_lambda_function\" \"api\" {\n  function_name = \"${var.name_prefix}-api\"\n  role          = aws_iam_role.lambda.arn\n  package_type  = \"Image\"\n  image_uri     = var.image_uri\n  timeout       = 15\n\n  environment {\n    variables = {\n      DB_SECRET_ARN  = var.db_secret_arn\n      COGNITO_ISSUER = var.cognito_issuer\n    }\n  }\n\n  depends_on = [aws_cloudwatch_log_group.api]\n}",
+      "ports": [],
+      "meta": {
+        "extractors": [
+          "terraform"
+        ],
+        "cdktf": {
+          "type": "aws_lambda_function",
+          "logicalId": "api",
+          "path": "module.lambda_api.aws_lambda_function.api",
+          "stack": "dev"
+        },
+        "infra": {
+          "type": "aws_lambda_function",
+          "logicalId": "api",
+          "path": "module.lambda_api.aws_lambda_function.api",
+          "stack": "dev",
+          "module": "lambda_api",
+          "functionUrl": true
+        }
+      }
+    },
+    {
+      "id": "infra:lambda_api/gmail_webhook",
+      "kind": "infra",
+      "name": "Lambda: gmail_webhook",
+      "runtime": "server",
+      "file": "platform/infra/modules/lambda-api/main.tf",
+      "line": 74,
+      "code": "resource \"aws_lambda_function\" \"gmail_webhook\" {\n  function_name = \"${var.name_prefix}-gmail-webhook\"\n  role          = aws_iam_role.lambda.arn\n  package_type  = \"Image\"\n  image_uri     = var.image_uri\n  timeout       = 30\n\n  environment {\n    variables = {\n      DB_SECRET_ARN = var.db_secret_arn\n    }\n  }\n\n  depends_on = [aws_cloudwatch_log_group.gmail_webhook]\n}",
+      "ports": [],
+      "meta": {
+        "extractors": [
+          "terraform"
+        ],
+        "cdktf": {
+          "type": "aws_lambda_function",
+          "logicalId": "gmail_webhook",
+          "path": "module.lambda_api.aws_lambda_function.gmail_webhook",
+          "stack": "dev"
+        },
+        "infra": {
+          "type": "aws_lambda_function",
+          "logicalId": "gmail_webhook",
+          "path": "module.lambda_api.aws_lambda_function.gmail_webhook",
+          "stack": "dev",
+          "module": "lambda_api",
+          "functionUrl": true
+        }
+      }
+    },
+    {
+      "id": "infra:lambda_api/notify",
+      "kind": "infra",
+      "name": "Lambda: notify",
+      "runtime": "server",
+      "file": "platform/infra/modules/lambda-api/main.tf",
+      "line": 95,
+      "code": "resource \"aws_lambda_function\" \"notify\" {\n  function_name = \"${var.name_prefix}-notify\"\n  role          = aws_iam_role.lambda.arn\n  package_type  = \"Image\"\n  image_uri     = var.image_uri\n  timeout       = 60\n\n  environment {\n    variables = {\n      DB_SECRET_ARN = var.db_secret_arn\n    }\n  }\n\n  depends_on = [aws_cloudwatch_log_group.notify]\n}",
+      "ports": [],
+      "meta": {
+        "extractors": [
+          "terraform"
+        ],
+        "cdktf": {
+          "type": "aws_lambda_function",
+          "logicalId": "notify",
+          "path": "module.lambda_api.aws_lambda_function.notify",
+          "stack": "dev"
+        },
+        "infra": {
+          "type": "aws_lambda_function",
+          "logicalId": "notify",
+          "path": "module.lambda_api.aws_lambda_function.notify",
+          "stack": "dev",
+          "module": "lambda_api"
+        }
+      }
+    },
+    {
+      "id": "infra:scheduler_notify/daily",
+      "kind": "trigger",
+      "name": "Scheduler expense-dev-daily-notify",
+      "runtime": "time",
+      "file": "platform/infra/modules/scheduler-notify/main.tf",
+      "line": 14,
+      "code": "resource \"aws_scheduler_schedule\" \"daily\" {\n  name                = \"${var.name_prefix}-daily-notify\"\n  schedule_expression = \"cron(0 21 * * ? *)\"\n  schedule_expression_timezone = \"Asia/Tokyo\"\n\n  flexible_time_window {\n    mode = \"OFF\"\n  }\n\n  target {\n    arn      = var.lambda_arn\n    role_arn = aws_iam_role.scheduler.arn\n  }\n}",
+      "ports": [
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "terraform"
+        ],
+        "cdktf": {
+          "type": "aws_scheduler_schedule",
+          "logicalId": "daily",
+          "path": "module.scheduler_notify.aws_scheduler_schedule.daily",
+          "stack": "dev"
+        },
+        "infra": {
+          "type": "aws_scheduler_schedule",
+          "logicalId": "daily",
+          "path": "module.scheduler_notify.aws_scheduler_schedule.daily",
+          "stack": "dev",
+          "module": "scheduler_notify"
+        }
+      }
+    },
+    {
+      "id": "infra:static_site/this",
+      "kind": "cache",
+      "name": "CloudFront",
+      "runtime": "edge",
+      "file": "platform/infra/modules/static-site/main.tf",
+      "line": 46,
+      "code": "resource \"aws_cloudfront_distribution\" \"this\" {\n  enabled             = true\n  default_root_object = \"index.html\"\n\n  origin {\n    domain_name              = aws_s3_bucket.site.bucket_regional_domain_name\n    origin_id                = \"site\"\n    origin_access_control_id = aws_cloudfront_origin_access_control.site.id\n  }\n\n  default_cache_behavior {\n    target_origin_id       = \"site\"\n    viewer_protocol_policy = \"redirect-to-https\"\n    allowed_methods        = [\"GET\", \"HEAD\"]\n    cached_methods         = [\"GET\", \"HEAD\"]\n    cache_policy_id        = \"658327ea-f89d-4fab-a63d-7e88639e58f6\"\n\n    function_association {\n      event_type   = \"viewer-request\"\n      function_arn = aws_cloudfront_function.index.arn\n    }\n  }\n\n  ordered_cache_behavior {\n    path_pattern           = \"/_next/static/*\"",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "key",
+              "name": "key",
+              "type": "unknown",
+              "wireType": "unknown"
+            },
+            {
+              "id": "value",
+              "name": "value",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "key",
+              "name": "key",
+              "type": "unknown",
+              "wireType": "unknown"
+            },
+            {
+              "id": "value",
+              "name": "value",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": "in/key",
+          "to": "out/value",
+          "when": {
+            "hit": true
+          }
+        },
+        {
+          "from": "in/key",
+          "to": "out/key",
+          "when": {
+            "hit": false
+          }
+        },
+        {
+          "from": "in/value",
+          "to": "out/value",
+          "when": {
+            "hit": false
+          }
+        }
+      ],
+      "variants": [
+        {
+          "id": "hit",
+          "name": "cache hit",
+          "default": false
+        }
+      ],
+      "cache": {
+        "tone": "ok",
+        "badge": "CDN 2 behaviors",
+        "rules": [
+          {
+            "key": "既定（*）",
+            "value": "cache policy 658327ea-f89d-4fab-a63d-7e88639e58f6 → site"
+          },
+          {
+            "key": "/_next/static/*",
+            "value": "static_long: TTL default=31536000s max=31536000s min=31536000s → site"
+          },
+          {
+            "key": "viewer-request (*)",
+            "value": "CloudFront Function expense-dev-index"
+          }
+        ],
+        "note": "CloudFront Function（expense-dev-index）がキャッシュ判定の前に毎回実行される（URL の書き換えなど）"
+      },
+      "meta": {
+        "extractors": [
+          "terraform"
+        ],
+        "cdktf": {
+          "type": "aws_cloudfront_distribution",
+          "logicalId": "this",
+          "path": "module.static_site.aws_cloudfront_distribution.this",
+          "stack": "dev"
+        },
+        "infra": {
+          "type": "aws_cloudfront_distribution",
+          "logicalId": "this",
+          "path": "module.static_site.aws_cloudfront_distribution.this",
+          "stack": "dev",
+          "module": "static_site"
+        }
+      }
+    },
+    {
+      "id": "infra:static_site/index",
+      "kind": "infra",
+      "name": "CloudFront Function expense-dev-index",
+      "runtime": "edge",
+      "file": "platform/infra/modules/static-site/main.tf",
+      "line": 12,
+      "code": "resource \"aws_cloudfront_function\" \"index\" {\n  name    = \"${var.name_prefix}-index\"\n  runtime = \"cloudfront-js-2.0\"\n  publish = true\n  code    = <<-JS\n    function handler(event) {\n      var request = event.request;\n      if (request.uri.endsWith('/')) {\n        request.uri += 'index.html';\n      }\n      return request;\n    }\n  JS\n}",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "cache": {
+        "tone": "info",
+        "badge": "キャッシュ判定の前",
+        "rules": [
+          {
+            "key": "トリガー",
+            "value": "viewer-request（HIT/MISS 判定より前に毎回実行）"
+          },
+          {
+            "key": "範囲",
+            "value": "* に関連付け"
+          }
+        ],
+        "note": "全パスに付いているので、HIT するリクエストでも毎回 CloudFront Function が起動する"
+      },
+      "meta": {
+        "extractors": [
+          "terraform"
+        ],
+        "cdktf": {
+          "type": "aws_cloudfront_function",
+          "logicalId": "index",
+          "path": "module.static_site.aws_cloudfront_function.index",
+          "stack": "dev"
+        },
+        "infra": {
+          "type": "aws_cloudfront_function",
+          "logicalId": "index",
+          "path": "module.static_site.aws_cloudfront_function.index",
+          "stack": "dev",
+          "module": "static_site"
+        }
+      }
+    },
+    {
+      "id": "infra:static_site/site",
+      "kind": "infra",
+      "name": "S3 expense-dev-site",
+      "runtime": "edge",
+      "file": "platform/infra/modules/static-site/main.tf",
+      "line": 1,
+      "code": "resource \"aws_s3_bucket\" \"site\" {\n  bucket = \"${var.name_prefix}-site\"\n}",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "terraform"
+        ],
+        "cdktf": {
+          "type": "aws_s3_bucket",
+          "logicalId": "site",
+          "path": "module.static_site.aws_s3_bucket.site",
+          "stack": "dev"
+        },
+        "infra": {
+          "type": "aws_s3_bucket",
+          "logicalId": "site",
+          "path": "module.static_site.aws_s3_bucket.site",
+          "stack": "dev",
+          "module": "static_site"
+        },
+        "deployApp": "next"
+      }
+    },
+    {
+      "id": "route:/calendar",
+      "kind": "screen",
+      "name": "/calendar",
+      "runtime": "browser",
+      "file": "web/src/app/calendar/page.tsx",
+      "line": 3,
+      "code": "import { CalendarIsland } from '@/components/calendar-island';\n\nexport default function CalendarPage() {\n  return (\n    <main>\n      <h1>カレンダー</h1>\n      <CalendarIsland month=\"2026-11\" />\n    </main>\n  );\n}\n",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "html",
+              "name": "html",
+              "type": "text/html",
+              "wireType": "string"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "render_1",
+              "name": "CalendarIsland()",
+              "type": "JSX.Element",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "month",
+                  "name": "month",
+                  "type": "string",
+                  "wireType": "string"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "cache": {
+        "tone": "ok",
+        "badge": "static export",
+        "rules": [
+          {
+            "key": "output",
+            "value": "export（ビルド時に静的生成）"
+          }
+        ]
+      },
+      "meta": {
+        "extractors": [
+          "nextjs-app",
+          "ts-types"
+        ],
+        "next": {
+          "segment": "calendar",
+          "output": "export"
+        },
+        "ts": {
+          "exportName": "default",
+          "symbolKind": "function"
+        }
+      },
+      "links": [
+        {
+          "from": "in/html",
+          "to": "out/render_1",
+          "confidence": "crude"
+        }
+      ]
+    },
+    {
+      "id": "layout:/",
+      "kind": "screen",
+      "name": "/",
+      "runtime": "browser",
+      "file": "web/src/app/layout.tsx",
+      "line": 3,
+      "code": "import type { ReactNode } from 'react';\n\nexport default function RootLayout({ children }: { children: ReactNode }) {\n  return (\n    <html lang=\"ja\">\n      <body>{children}</body>\n    </html>\n  );\n}\n",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "html",
+              "name": "html",
+              "type": "text/html",
+              "wireType": "string"
+            },
+            {
+              "id": "children",
+              "name": "children",
+              "type": "ReactNode",
+              "wireType": "unknown",
+              "nullable": true,
+              "optional": true
+            }
+          ]
+        }
+      ],
+      "cache": {
+        "tone": "ok",
+        "badge": "static export",
+        "rules": [
+          {
+            "key": "output",
+            "value": "export（ビルド時に静的生成）"
+          }
+        ]
+      },
+      "meta": {
+        "extractors": [
+          "nextjs-app",
+          "ts-types"
+        ],
+        "next": {
+          "segment": "",
+          "output": "export"
+        },
+        "ts": {
+          "exportName": "default",
+          "symbolKind": "function"
+        }
+      }
+    },
+    {
+      "id": "route:/",
+      "kind": "screen",
+      "name": "/",
+      "runtime": "browser",
+      "file": "web/src/app/page.tsx",
+      "line": 3,
+      "code": "import { TodayIsland } from '@/components/today-island';\n\nexport default function HomePage() {\n  return (\n    <main>\n      <h1>支出トラッカー</h1>\n      <TodayIsland />\n    </main>\n  );\n}\n",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "html",
+              "name": "html",
+              "type": "text/html",
+              "wireType": "string"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "render_1",
+              "name": "TodayIsland()",
+              "type": "JSX.Element",
+              "wireType": "object"
+            }
+          ]
+        }
+      ],
+      "cache": {
+        "tone": "ok",
+        "badge": "static export",
+        "rules": [
+          {
+            "key": "output",
+            "value": "export（ビルド時に静的生成）"
+          }
+        ]
+      },
+      "meta": {
+        "extractors": [
+          "nextjs-app",
+          "ts-types"
+        ],
+        "next": {
+          "segment": "",
+          "output": "export"
+        },
+        "ts": {
+          "exportName": "default",
+          "symbolKind": "function"
+        }
+      },
+      "links": [
+        {
+          "from": "in/html",
+          "to": "out/render_1",
+          "confidence": "crude"
+        }
+      ]
+    },
+    {
+      "id": "route:/push",
+      "kind": "screen",
+      "name": "/push",
+      "runtime": "browser",
+      "file": "web/src/app/push/page.tsx",
+      "line": 3,
+      "code": "import { PushToggle } from '@/components/push-toggle';\n\nexport default function PushPage() {\n  return (\n    <main>\n      <h1>通知設定</h1>\n      <PushToggle />\n    </main>\n  );\n}\n",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "html",
+              "name": "html",
+              "type": "text/html",
+              "wireType": "string"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "render_1",
+              "name": "PushToggle()",
+              "type": "JSX.Element",
+              "wireType": "object"
+            }
+          ]
+        }
+      ],
+      "cache": {
+        "tone": "ok",
+        "badge": "static export",
+        "rules": [
+          {
+            "key": "output",
+            "value": "export（ビルド時に静的生成）"
+          }
+        ]
+      },
+      "meta": {
+        "extractors": [
+          "nextjs-app",
+          "ts-types"
+        ],
+        "next": {
+          "segment": "push",
+          "output": "export"
+        },
+        "ts": {
+          "exportName": "default",
+          "symbolKind": "function"
+        }
+      },
+      "links": [
+        {
+          "from": "in/html",
+          "to": "out/render_1",
+          "confidence": "crude"
+        }
+      ]
+    },
+    {
+      "id": "comp:CalendarGrid",
+      "kind": "component",
+      "name": "CalendarGrid",
+      "runtime": "browser",
+      "file": "web/src/components/calendar-grid.tsx",
+      "line": 3,
+      "code": "export function CalendarGrid({ cells }: { cells: CalendarCell[] }) {\n  return (\n    <div data-component=\"CalendarGrid\">\n      {cells.map((c) => (\n        <span key={c.date}>\n          {c.date}: {c.total}\n        </span>\n      ))}\n    </div>\n  );\n}",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "cells",
+              "name": "cells",
+              "type": "CalendarCell[]",
+              "wireType": "array",
+              "typeRef": "type:CalendarCell",
+              "children": [
+                {
+                  "id": "date",
+                  "name": "date",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:CalendarCell"
+                },
+                {
+                  "id": "total",
+                  "name": "total",
+                  "type": "number",
+                  "wireType": "number",
+                  "typeRef": "type:CalendarCell"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "ts-imports",
+          "ts-types"
+        ],
+        "ts": {
+          "exportName": "CalendarGrid",
+          "symbolKind": "function"
+        }
+      }
+    },
+    {
+      "id": "comp:CalendarIsland",
+      "kind": "component",
+      "name": "CalendarIsland",
+      "runtime": "browser",
+      "file": "web/src/components/calendar-island.tsx",
+      "line": 9,
+      "code": "export function CalendarIsland({ month }: { month: string }) {\n  const [cells, setCells] = useState<CalendarCell[]>([]);\n\n  useEffect(() => {\n    getDays(month).then((d) => setCells(toCells(d)));\n  }, [month]);\n\n  return (\n    <div data-component=\"CalendarIsland\">\n      <CalendarGrid cells={cells} />\n    </div>\n  );\n}",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "month",
+              "name": "month",
+              "type": "string",
+              "wireType": "string"
+            },
+            {
+              "id": "ret_1",
+              "name": "getDays() の戻り",
+              "type": "DailyTotals",
+              "wireType": "object",
+              "typeRef": "type:DailyTotals"
+            },
+            {
+              "id": "ret_2",
+              "name": "toCells() の戻り",
+              "type": "CalendarCell[]",
+              "wireType": "array",
+              "typeRef": "type:CalendarCell",
+              "children": [
+                {
+                  "id": "date",
+                  "name": "date",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:CalendarCell"
+                },
+                {
+                  "id": "total",
+                  "name": "total",
+                  "type": "number",
+                  "wireType": "number",
+                  "typeRef": "type:CalendarCell"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "call_1",
+              "name": "getDays()",
+              "type": "Promise<DailyTotals>",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "month",
+                  "name": "month",
+                  "type": "string",
+                  "wireType": "string"
+                }
+              ]
+            },
+            {
+              "id": "call_2",
+              "name": "toCells()",
+              "type": "CalendarCell[]",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "days",
+                  "name": "days",
+                  "type": "DailyTotals",
+                  "wireType": "object",
+                  "typeRef": "type:DailyTotals"
+                }
+              ]
+            },
+            {
+              "id": "render_1",
+              "name": "CalendarGrid()",
+              "type": "JSX.Element",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "cells",
+                  "name": "cells",
+                  "type": "CalendarCell[]",
+                  "wireType": "array",
+                  "typeRef": "type:CalendarCell",
+                  "children": [
+                    {
+                      "id": "date",
+                      "name": "date",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:CalendarCell"
+                    },
+                    {
+                      "id": "total",
+                      "name": "total",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:CalendarCell"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "ts-imports",
+          "ts-types"
+        ],
+        "ts": {
+          "exportName": "CalendarIsland",
+          "symbolKind": "function"
+        }
+      },
+      "links": [
+        {
+          "from": "in/month",
+          "to": "out/call_1.month",
+          "confidence": "exact"
+        },
+        {
+          "from": "in/ret_1",
+          "to": "out/call_2.days",
+          "confidence": "exact"
+        },
+        {
+          "from": "in/ret_2",
+          "to": "out/render_1.cells",
+          "confidence": "crude"
+        }
+      ]
+    },
+    {
+      "id": "comp:EntryList",
+      "kind": "component",
+      "name": "EntryList",
+      "runtime": "browser",
+      "file": "web/src/components/entry-list.tsx",
+      "line": 3,
+      "code": "export function EntryList({ entries }: { entries: Entry[] }) {\n  return (\n    <ul data-component=\"EntryList\">\n      {entries.map((e) => (\n        <li key={e.id}>\n          {e.merchant} {e.amount}\n        </li>\n      ))}\n    </ul>\n  );\n}",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "entries",
+              "name": "entries",
+              "type": "Entry[]",
+              "wireType": "array",
+              "typeRef": "type:Entry",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "id",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Entry"
+                },
+                {
+                  "id": "merchant",
+                  "name": "merchant",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Entry"
+                },
+                {
+                  "id": "amount",
+                  "name": "amount",
+                  "type": "number",
+                  "wireType": "number",
+                  "typeRef": "type:Entry"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "ts-imports",
+          "ts-types"
+        ],
+        "ts": {
+          "exportName": "EntryList",
+          "symbolKind": "function"
+        }
+      }
+    },
+    {
+      "id": "comp:PushToggle",
+      "kind": "component",
+      "name": "PushToggle",
+      "runtime": "browser",
+      "file": "web/src/components/push-toggle.tsx",
+      "line": 6,
+      "code": "export function PushToggle() {\n  const subscribe = async () => {\n    await fetch(`${API_DOMAIN}/push/subscriptions`, { method: 'POST' });\n  };\n\n  return (\n    <button data-component=\"PushToggle\" onClick={subscribe}>\n      通知を有効にする\n    </button>\n  );\n}",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "props",
+              "name": "props",
+              "type": "{}",
+              "wireType": "object"
+            },
+            {
+              "id": "ret_1",
+              "name": "fetch() の戻り",
+              "type": "Response",
+              "wireType": "object"
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "call_1",
+              "name": "fetch(`${API_DOMAIN}/push/subscriptions`)",
+              "type": "Promise<Response>",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "input",
+                  "name": "input",
+                  "type": "string",
+                  "wireType": "string",
+                  "meta": {
+                    "http": "path"
+                  }
+                }
+              ],
+              "meta": {
+                "http": {
+                  "method": "POST",
+                  "path": "/push/subscriptions"
+                }
+              }
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "ts-imports",
+          "api-link",
+          "ts-types"
+        ],
+        "ts": {
+          "exportName": "PushToggle",
+          "symbolKind": "function"
+        },
+        "apiCalls": [
+          {
+            "method": "POST",
+            "path": "/push/subscriptions"
+          }
+        ]
+      },
+      "links": [
+        {
+          "from": "in/props",
+          "to": "out/call_1",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/props",
+          "to": "out/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "out/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "out/call_1",
+          "confidence": "crude"
+        }
+      ]
+    },
+    {
+      "id": "comp:TodayIsland",
+      "kind": "component",
+      "name": "TodayIsland",
+      "runtime": "browser",
+      "file": "web/src/components/today-island.tsx",
+      "line": 10,
+      "code": "export function TodayIsland() {\n  const [view, setView] = useState<TodayView | null>(null);\n\n  useEffect(() => {\n    getToday().then((t) => setView(toTodayView(t)));\n  }, []);\n\n  if (!view) return <p data-component=\"TodayIsland\">読み込み中</p>;\n  return (\n    <div data-component=\"TodayIsland\">\n      <TotalCard view={view} />\n      <EntryList entries={view.rows} />\n    </div>\n  );\n}",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "props",
+              "name": "props",
+              "type": "{}",
+              "wireType": "object"
+            },
+            {
+              "id": "ret_1",
+              "name": "getToday() の戻り",
+              "type": "Today",
+              "wireType": "object",
+              "typeRef": "type:Today",
+              "children": [
+                {
+                  "id": "total",
+                  "name": "total",
+                  "type": "number",
+                  "wireType": "number",
+                  "typeRef": "type:Today"
+                },
+                {
+                  "id": "entries",
+                  "name": "entries",
+                  "type": "Entry[]",
+                  "wireType": "array",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "ret_2",
+              "name": "toTodayView() の戻り",
+              "type": "TodayView",
+              "wireType": "object",
+              "typeRef": "type:TodayView",
+              "children": [
+                {
+                  "id": "totalLabel",
+                  "name": "totalLabel",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:TodayView"
+                },
+                {
+                  "id": "rows",
+                  "name": "rows",
+                  "type": "Entry[]",
+                  "wireType": "array",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "call_1",
+              "name": "getToday()",
+              "type": "Promise<Today>",
+              "wireType": "object"
+            },
+            {
+              "id": "call_2",
+              "name": "toTodayView()",
+              "type": "TodayView",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "today",
+                  "name": "today",
+                  "type": "Today",
+                  "wireType": "object",
+                  "typeRef": "type:Today",
+                  "children": [
+                    {
+                      "id": "total",
+                      "name": "total",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:Today"
+                    },
+                    {
+                      "id": "entries",
+                      "name": "entries",
+                      "type": "Entry[]",
+                      "wireType": "array",
+                      "typeRef": "type:Entry",
+                      "children": [
+                        {
+                          "id": "id",
+                          "name": "id",
+                          "type": "string",
+                          "wireType": "string",
+                          "typeRef": "type:Entry"
+                        },
+                        {
+                          "id": "merchant",
+                          "name": "merchant",
+                          "type": "string",
+                          "wireType": "string",
+                          "typeRef": "type:Entry"
+                        },
+                        {
+                          "id": "amount",
+                          "name": "amount",
+                          "type": "number",
+                          "wireType": "number",
+                          "typeRef": "type:Entry"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "render_1",
+              "name": "TotalCard()",
+              "type": "JSX.Element",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "view",
+                  "name": "view",
+                  "type": "TodayView",
+                  "wireType": "object",
+                  "typeRef": "type:TodayView",
+                  "children": [
+                    {
+                      "id": "totalLabel",
+                      "name": "totalLabel",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:TodayView"
+                    },
+                    {
+                      "id": "rows",
+                      "name": "rows",
+                      "type": "Entry[]",
+                      "wireType": "array",
+                      "typeRef": "type:Entry",
+                      "children": [
+                        {
+                          "id": "id",
+                          "name": "id",
+                          "type": "string",
+                          "wireType": "string",
+                          "typeRef": "type:Entry"
+                        },
+                        {
+                          "id": "merchant",
+                          "name": "merchant",
+                          "type": "string",
+                          "wireType": "string",
+                          "typeRef": "type:Entry"
+                        },
+                        {
+                          "id": "amount",
+                          "name": "amount",
+                          "type": "number",
+                          "wireType": "number",
+                          "typeRef": "type:Entry"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "render_2",
+              "name": "EntryList()",
+              "type": "JSX.Element",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "entries",
+                  "name": "entries",
+                  "type": "Entry[]",
+                  "wireType": "array",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "ts-imports",
+          "ts-types"
+        ],
+        "ts": {
+          "exportName": "TodayIsland",
+          "symbolKind": "function"
+        }
+      },
+      "links": [
+        {
+          "from": "in/ret_1",
+          "to": "out/call_2.today",
+          "confidence": "exact"
+        },
+        {
+          "from": "in/ret_2",
+          "to": "out/render_1.view",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/ret_2.rows",
+          "to": "out/render_2.entries",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/props",
+          "to": "out/call_1",
+          "confidence": "crude"
+        }
+      ]
+    },
+    {
+      "id": "comp:TotalCard",
+      "kind": "component",
+      "name": "TotalCard",
+      "runtime": "browser",
+      "file": "web/src/components/total-card.tsx",
+      "line": 3,
+      "code": "export function TotalCard({ view }: { view: TodayView }) {\n  return (\n    <section data-component=\"TotalCard\">\n      <h2>今日の合計</h2>\n      <p>{view.totalLabel}</p>\n    </section>\n  );\n}",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "view",
+              "name": "view",
+              "type": "TodayView",
+              "wireType": "object",
+              "typeRef": "type:TodayView",
+              "children": [
+                {
+                  "id": "totalLabel",
+                  "name": "totalLabel",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:TodayView"
+                },
+                {
+                  "id": "rows",
+                  "name": "rows",
+                  "type": "Entry[]",
+                  "wireType": "array",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "ts-imports",
+          "ts-types"
+        ],
+        "ts": {
+          "exportName": "TotalCard",
+          "symbolKind": "function"
+        }
+      }
+    },
+    {
+      "id": "lib:consts",
+      "kind": "helper",
+      "name": "consts",
+      "runtime": "browser",
+      "file": "web/src/lib/fetcher/consts.ts",
+      "line": 1,
+      "code": "export const API_DOMAIN = process.env.NEXT_PUBLIC_API_DOMAIN ?? '';",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "ts-imports"
+        ],
+        "ts": {
+          "exportName": "API_DOMAIN",
+          "symbolKind": "const",
+          "exports": [
+            "API_DOMAIN"
+          ]
+        }
+      }
+    },
+    {
+      "id": "lib:fetcher",
+      "kind": "helper",
+      "name": "fetcher",
+      "runtime": "browser",
+      "file": "web/src/lib/fetcher/index.ts",
+      "line": 3,
+      "code": "export async function fetcher<T>(url: string, init?: RequestInit): Promise<T> {\n  const res = await fetch(`${API_DOMAIN}${url}`, init);\n  if (!res.ok) {\n    throw new Error(`request failed: ${res.status}`);\n  }\n  return (await res.json()) as T;\n}",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "url",
+              "name": "url",
+              "type": "string",
+              "wireType": "string"
+            },
+            {
+              "id": "init",
+              "name": "init",
+              "type": "RequestInit | undefined",
+              "wireType": "object",
+              "optional": true
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            },
+            {
+              "id": "return",
+              "name": "return",
+              "type": "Promise<T>",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "ts-imports",
+          "ts-types"
+        ],
+        "ts": {
+          "exportName": "fetcher",
+          "symbolKind": "function",
+          "exports": [
+            "fetcher"
+          ]
+        }
+      },
+      "links": [
+        {
+          "from": "in/url",
+          "to": "out/return",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/init",
+          "to": "out/return",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/url",
+          "to": "out/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/init",
+          "to": "out/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "out/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "out/return",
+          "confidence": "crude"
+        }
+      ]
+    },
+    {
+      "id": "handler:cmd/api",
+      "kind": "fn",
+      "name": "cmd/api",
+      "runtime": "server",
+      "file": "platform/cmd/api/main.go",
+      "line": 1,
+      "code": "// Command api は HTTP API の Lambda（Function URL）の入口。\npackage main\n\nimport (\n\t\"log\"\n\t\"net/http\"\n\n\t\"example.com/expense-platform/internal/api\"\n\t\"example.com/expense-platform/internal/auth\"\n\t\"example.com/expense-platform/internal/store\"\n)\n\nfunc main() {\n\tst := store.New(\"postgres://localhost/expenses\")\n\tverifier := auth.NewVerifier(\"https://cognito-idp.example.com/pool\")\n\tsrv := api.NewServer(st, verifier)\n\tlog.Fatal(http.ListenAndServe(\":8080\", srv.Handler()))\n}\n",
+      "host": "infra:lambda_api/api",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "go"
+        ],
+        "go": {
+          "pkg": "cmd/api",
+          "name": "main",
+          "imports": [
+            "example.com/expense-platform/internal/api",
+            "example.com/expense-platform/internal/auth",
+            "example.com/expense-platform/internal/store",
+            "log",
+            "net/http"
+          ]
+        }
+      }
+    },
+    {
+      "id": "handler:cmd/gmail-webhook",
+      "kind": "fn",
+      "name": "cmd/gmail-webhook",
+      "runtime": "server",
+      "file": "platform/cmd/gmail-webhook/main.go",
+      "line": 1,
+      "code": "// Command gmail-webhook は Gmail の push 通知を受ける Lambda の入口。\npackage main\n\nimport (\n\t\"log\"\n\t\"net/http\"\n\n\t\"example.com/expense-platform/internal/inbound\"\n\t\"example.com/expense-platform/internal/parser\"\n\t\"example.com/expense-platform/internal/store\"\n)\n\nfunc main() {\n\tst := store.New(\"postgres://localhost/expenses\")\n\th := inbound.NewHandler(parser.New(), st)\n\tlog.Fatal(http.ListenAndServe(\":8080\", h))\n}\n",
+      "host": "infra:lambda_api/gmail_webhook",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "go"
+        ],
+        "go": {
+          "pkg": "cmd/gmail-webhook",
+          "name": "main",
+          "imports": [
+            "example.com/expense-platform/internal/inbound",
+            "example.com/expense-platform/internal/parser",
+            "example.com/expense-platform/internal/store",
+            "log",
+            "net/http"
+          ]
+        }
+      }
+    },
+    {
+      "id": "handler:cmd/notify",
+      "kind": "fn",
+      "name": "cmd/notify",
+      "runtime": "server",
+      "file": "platform/cmd/notify/main.go",
+      "line": 1,
+      "code": "// Command notify は EventBridge Scheduler から毎日起動される通知 Lambda。\npackage main\n\nimport (\n\t\"fmt\"\n)\n\nfunc main() {\n\tfmt.Println(\"notify: send daily summary\")\n}\n",
+      "host": "infra:lambda_api/notify",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "go"
+        ],
+        "go": {
+          "pkg": "cmd/notify",
+          "name": "main",
+          "imports": [
+            "fmt"
+          ]
+        }
+      }
+    },
+    {
+      "id": "handler:internal/api",
+      "kind": "fn",
+      "name": "internal/api",
+      "runtime": "server",
+      "file": "platform/internal/api/days.go",
+      "line": 1,
+      "code": "package api\n\nimport (\n\t\"encoding/json\"\n\t\"net/http\"\n)\n\nfunc (s *Server) handleDays(w http.ResponseWriter, r *http.Request) {\n\tdays, err := s.store.DailyTotals(r.Context(), r.URL.Query().Get(\"month\"))\n\tif err != nil {\n\t\thttp.Error(w, err.Error(), http.StatusInternalServerError)\n\t\treturn\n\t}\n\t_ = json.NewEncoder(w).Encode(days)\n}\n\nfunc (s *Server) handleEntries(w http.ResponseWriter, r *http.Request) {\n\ttxs, err := s.store.ListRecent(r.Context(), 50)\n\tif err != nil {\n\t\thttp.Error(w, err.Error(), http.StatusInternalServerError)\n\t\treturn\n\t}\n\t_ = json.NewEncoder(w).Encode(txs)\n}\n",
+      "host": "infra:lambda_api/api",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "go"
+        ],
+        "go": {
+          "pkg": "internal/api",
+          "name": "api",
+          "imports": [
+            "encoding/json",
+            "example.com/expense-platform/internal/auth",
+            "example.com/expense-platform/internal/domain",
+            "example.com/expense-platform/internal/push",
+            "example.com/expense-platform/internal/store",
+            "net/http",
+            "time"
+          ]
+        },
+        "apiRoutes": [
+          {
+            "method": "GET",
+            "path": "/today"
+          },
+          {
+            "method": "GET",
+            "path": "/days"
+          },
+          {
+            "method": "GET",
+            "path": "/entries"
+          },
+          {
+            "method": "POST",
+            "path": "/transactions"
+          },
+          {
+            "method": "DELETE",
+            "path": "/transactions/{id}"
+          },
+          {
+            "method": "POST",
+            "path": "/push/subscriptions"
+          },
+          {
+            "method": "DELETE",
+            "path": "/push/subscriptions"
+          }
+        ],
+        "api": {
+          "method": "GET",
+          "path": "/today"
+        },
+        "route": "GET /today"
+      }
+    },
+    {
+      "id": "lib:internal/auth",
+      "kind": "helper",
+      "name": "internal/auth",
+      "runtime": "server",
+      "file": "platform/internal/auth/verifier.go",
+      "line": 1,
+      "code": "// Package auth は Cognito の JWT を検証する。\npackage auth\n\nimport \"net/http\"\n\n// Verifier は JWT 検証器。\ntype Verifier struct {\n\tissuer string\n}\n\n// NewVerifier は Verifier を作る。\nfunc NewVerifier(issuer string) *Verifier { return &Verifier{issuer: issuer} }\n\n// Middleware は Authorization ヘッダを検証する。\nfunc (v *Verifier) Middleware(next http.Handler) http.Handler {\n\treturn http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {\n\t\tif r.Header.Get(\"Authorization\") == \"\" {\n\t\t\thttp.Error(w, \"unauthorized\", http.StatusUnauthorized)\n\t\t\treturn\n\t\t}\n\t\tnext.ServeHTTP(w, r)\n\t})\n}\n",
+      "host": "infra:lambda_api/api",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "go"
+        ],
+        "go": {
+          "pkg": "internal/auth",
+          "name": "auth",
+          "imports": [
+            "net/http"
+          ]
+        }
+      }
+    },
+    {
+      "id": "lib:internal/inbound",
+      "kind": "helper",
+      "name": "internal/inbound",
+      "runtime": "server",
+      "file": "platform/internal/inbound/gmail.go",
+      "line": 1,
+      "code": "// Package inbound は Gmail の push 通知を受けて取り込む。\npackage inbound\n\nimport (\n\t\"net/http\"\n\n\t\"example.com/expense-platform/internal/parser\"\n\t\"example.com/expense-platform/internal/store\"\n)\n\n// Handler は Gmail push の HTTP ハンドラ。\ntype Handler struct {\n\tparser *parser.Parser\n\tstore  *store.Store\n}\n\n// NewHandler は Handler を作る。\nfunc NewHandler(p *parser.Parser, s *store.Store) *Handler {\n\treturn &Handler{parser: p, store: s}\n}\n\n// ServeHTTP は通知を処理する。\nfunc (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {\n\tcharge, ok := h.parser.Parse(\"unknown\", r.FormValue(\"body\"))\n\tif !ok {",
+      "host": "infra:lambda_api/gmail_webhook",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "go"
+        ],
+        "go": {
+          "pkg": "internal/inbound",
+          "name": "inbound",
+          "imports": [
+            "example.com/expense-platform/internal/parser",
+            "example.com/expense-platform/internal/store",
+            "net/http"
+          ]
+        }
+      }
+    },
+    {
+      "id": "lib:internal/parser",
+      "kind": "helper",
+      "name": "internal/parser",
+      "runtime": "server",
+      "file": "platform/internal/parser/parser.go",
+      "line": 1,
+      "code": "// Package parser はカード利用通知メールを Charge に変換する。\npackage parser\n\nimport (\n\t\"regexp\"\n\t\"strconv\"\n\n\t\"example.com/expense-platform/internal/domain\"\n)\n\nvar amountRe = regexp.MustCompile(`([0-9,]+)円`)\n\n// Parser はメール本文のパーサ。\ntype Parser struct{}\n\n// New は Parser を作る。\nfunc New() *Parser { return &Parser{} }\n\n// Parse は本文から Charge を取り出す。\nfunc (p *Parser) Parse(merchant, body string) (domain.Charge, bool) {\n\tm := amountRe.FindStringSubmatch(body)\n\tif m == nil {\n\t\treturn domain.Charge{}, false\n\t}\n\tn, err := strconv.ParseInt(m[1], 10, 64)",
+      "host": "infra:lambda_api/gmail_webhook",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "go"
+        ],
+        "go": {
+          "pkg": "internal/parser",
+          "name": "parser",
+          "imports": [
+            "example.com/expense-platform/internal/domain",
+            "regexp",
+            "strconv"
+          ]
+        }
+      }
+    },
+    {
+      "id": "lib:internal/push",
+      "kind": "helper",
+      "name": "internal/push",
+      "runtime": "server",
+      "file": "platform/internal/push/push.go",
+      "line": 1,
+      "code": "// Package push は Web Push の購読と送信。\npackage push\n\n// Subscription はブラウザの購読情報。\ntype Subscription struct {\n\tEndpoint string `json:\"endpoint\"`\n\tP256dh   string `json:\"p256dh\"`\n\tAuth     string `json:\"auth\"`\n}\n\n// Send は購読先に通知を送る。\nfunc Send(sub Subscription, message string) error {\n\t_, _ = sub, message\n\treturn nil\n}\n",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "go"
+        ],
+        "go": {
+          "pkg": "internal/push",
+          "name": "push",
+          "imports": []
+        }
+      }
+    },
+    {
+      "id": "schema:internal/store",
+      "kind": "helper",
+      "name": "internal/store",
+      "runtime": "server",
+      "file": "platform/internal/store/store.go",
+      "line": 1,
+      "code": "// Package store は PostgreSQL（Aurora）へのアクセスを持つ。\npackage store\n\nimport (\n\t\"context\"\n\t\"time\"\n\n\t\"example.com/expense-platform/internal/domain\"\n\t\"example.com/expense-platform/internal/push\"\n)\n\n// Store は DB ハンドル。\ntype Store struct {\n\tdsn string\n}\n\n// New は Store を作る。\nfunc New(dsn string) *Store { return &Store{dsn: dsn} }\n\nconst queryByDate = `SELECT id, merchant, amount, occurred_at FROM transactions WHERE occurred_at::date = $1`\nconst queryRecent = `SELECT id, merchant, amount, occurred_at FROM transactions ORDER BY occurred_at DESC LIMIT $1`\nconst queryDaily = `SELECT occurred_at::date, SUM(amount) FROM transactions WHERE to_char(occurred_at, 'YYYY-MM') = $1 GROUP BY 1`\nconst insertTx = `INSERT INTO transactions (id, merchant, amount, occurred_at) VALUES ($1, $2, $3, $4)`\nconst deleteTx = `DELETE FROM transactions WHERE id = $1`\nconst insertSub = `INSERT INTO push_subscriptions (endpoint, p256dh, auth) VALUES ($1, $2, $3)`",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "go"
+        ],
+        "go": {
+          "pkg": "internal/store",
+          "name": "store",
+          "imports": [
+            "context",
+            "example.com/expense-platform/internal/domain",
+            "example.com/expense-platform/internal/push",
+            "time"
+          ]
+        }
+      }
+    },
+    {
+      "id": "endpoint:GET /today",
+      "kind": "endpoint",
+      "name": "GET /today",
+      "runtime": "server",
+      "file": "platform/openapi/today.yaml",
+      "line": 6,
+      "code": "  /today:\n    get:\n      operationId: getToday\n      summary: 今日の合計と明細\n      responses:\n        \"200\":\n          description: OK\n          content:\n            application/json:\n              schema:\n                $ref: \"#/components/schemas/Today\"",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "path",
+              "name": "GET /today",
+              "type": "string",
+              "wireType": "string"
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "req",
+          "dir": "out",
+          "items": [
+            {
+              "id": "path",
+              "name": "GET /today",
+              "type": "string",
+              "wireType": "string"
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "res",
+          "dir": "in",
+          "items": [
+            {
+              "id": "body",
+              "name": "body",
+              "type": "Today",
+              "wireType": "object",
+              "typeRef": "type:Today",
+              "children": [
+                {
+                  "id": "total",
+                  "name": "total",
+                  "type": "integer (int64)",
+                  "wireType": "integer",
+                  "typeRef": "type:Today"
+                },
+                {
+                  "id": "entries",
+                  "name": "entries",
+                  "type": "Entry[]",
+                  "wireType": "array",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "integer (int64)",
+                      "wireType": "integer",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "body",
+              "name": "body",
+              "type": "Today",
+              "wireType": "object",
+              "typeRef": "type:Today",
+              "children": [
+                {
+                  "id": "total",
+                  "name": "total",
+                  "type": "integer (int64)",
+                  "wireType": "integer",
+                  "typeRef": "type:Today"
+                },
+                {
+                  "id": "entries",
+                  "name": "entries",
+                  "type": "Entry[]",
+                  "wireType": "array",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "integer (int64)",
+                      "wireType": "integer",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "openapi"
+        ],
+        "api": {
+          "method": "GET",
+          "path": "/today",
+          "operationId": "getToday"
+        },
+        "apiRoutes": [
+          {
+            "method": "GET",
+            "path": "/today"
+          }
+        ],
+        "openapi": {
+          "file": "openapi/today.yaml",
+          "summary": "今日の合計と明細"
+        },
+        "operationId": "getToday",
+        "status": "200"
+      },
+      "links": [
+        {
+          "from": "in/path",
+          "to": "req/path"
+        },
+        {
+          "from": "res/body",
+          "to": "out/body"
+        },
+        {
+          "from": "in/path",
+          "to": "req/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "req/path",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "req/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "res/_",
+          "to": "out/body",
+          "confidence": "crude"
+        }
+      ]
+    },
+    {
+      "id": "endpoint:GET /days",
+      "kind": "endpoint",
+      "name": "GET /days",
+      "runtime": "server",
+      "file": "platform/openapi/today.yaml",
+      "line": 17,
+      "code": "  /days:\n    get:\n      operationId: getDays\n      summary: 月の日別合計\n      parameters:\n        - name: month\n          in: query\n          required: true\n          schema: { type: string, example: \"2026-11\" }\n      responses:\n        \"200\":\n          description: OK\n          content:\n            application/json:\n              schema:\n                type: object\n                additionalProperties: { type: integer, format: int64 }",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "path",
+              "name": "GET /days",
+              "type": "string",
+              "wireType": "string"
+            },
+            {
+              "id": "query",
+              "name": "query",
+              "type": "object",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "month",
+                  "name": "month",
+                  "type": "string",
+                  "wireType": "string"
+                }
+              ]
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "req",
+          "dir": "out",
+          "items": [
+            {
+              "id": "path",
+              "name": "GET /days",
+              "type": "string",
+              "wireType": "string"
+            },
+            {
+              "id": "query",
+              "name": "query",
+              "type": "object",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "month",
+                  "name": "month",
+                  "type": "string",
+                  "wireType": "string"
+                }
+              ]
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "res",
+          "dir": "in",
+          "items": [
+            {
+              "id": "body",
+              "name": "body",
+              "type": "object",
+              "wireType": "object"
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "body",
+              "name": "body",
+              "type": "object",
+              "wireType": "object"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "openapi"
+        ],
+        "api": {
+          "method": "GET",
+          "path": "/days",
+          "operationId": "getDays"
+        },
+        "apiRoutes": [
+          {
+            "method": "GET",
+            "path": "/days"
+          }
+        ],
+        "openapi": {
+          "file": "openapi/today.yaml",
+          "summary": "月の日別合計"
+        },
+        "operationId": "getDays",
+        "status": "200"
+      },
+      "links": [
+        {
+          "from": "in/path",
+          "to": "req/path"
+        },
+        {
+          "from": "in/query",
+          "to": "req/query"
+        },
+        {
+          "from": "res/body",
+          "to": "out/body"
+        },
+        {
+          "from": "in/path",
+          "to": "req/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/query",
+          "to": "req/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "req/path",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "req/query",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "req/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "res/_",
+          "to": "out/body",
+          "confidence": "crude"
+        }
+      ]
+    },
+    {
+      "id": "endpoint:GET /entries",
+      "kind": "endpoint",
+      "name": "GET /entries",
+      "runtime": "server",
+      "file": "platform/openapi/today.yaml",
+      "line": 34,
+      "code": "  /entries:\n    get:\n      operationId: getEntries\n      summary: 直近の明細\n      responses:\n        \"200\":\n          description: OK\n          content:\n            application/json:\n              schema:\n                type: array\n                items:\n                  $ref: \"#/components/schemas/Entry\"",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "path",
+              "name": "GET /entries",
+              "type": "string",
+              "wireType": "string"
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "req",
+          "dir": "out",
+          "items": [
+            {
+              "id": "path",
+              "name": "GET /entries",
+              "type": "string",
+              "wireType": "string"
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "res",
+          "dir": "in",
+          "items": [
+            {
+              "id": "body",
+              "name": "body",
+              "type": "Entry[]",
+              "wireType": "array",
+              "typeRef": "type:Entry",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "id",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Entry"
+                },
+                {
+                  "id": "merchant",
+                  "name": "merchant",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Entry"
+                },
+                {
+                  "id": "amount",
+                  "name": "amount",
+                  "type": "integer (int64)",
+                  "wireType": "integer",
+                  "typeRef": "type:Entry"
+                }
+              ]
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "body",
+              "name": "body",
+              "type": "Entry[]",
+              "wireType": "array",
+              "typeRef": "type:Entry",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "id",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Entry"
+                },
+                {
+                  "id": "merchant",
+                  "name": "merchant",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Entry"
+                },
+                {
+                  "id": "amount",
+                  "name": "amount",
+                  "type": "integer (int64)",
+                  "wireType": "integer",
+                  "typeRef": "type:Entry"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "openapi"
+        ],
+        "api": {
+          "method": "GET",
+          "path": "/entries",
+          "operationId": "getEntries"
+        },
+        "apiRoutes": [
+          {
+            "method": "GET",
+            "path": "/entries"
+          }
+        ],
+        "openapi": {
+          "file": "openapi/today.yaml",
+          "summary": "直近の明細"
+        },
+        "operationId": "getEntries",
+        "status": "200"
+      },
+      "links": [
+        {
+          "from": "in/path",
+          "to": "req/path"
+        },
+        {
+          "from": "res/body",
+          "to": "out/body"
+        },
+        {
+          "from": "in/path",
+          "to": "req/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "req/path",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "req/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "res/_",
+          "to": "out/body",
+          "confidence": "crude"
+        }
+      ]
+    },
+    {
+      "id": "endpoint:GET /transactions",
+      "kind": "endpoint",
+      "name": "GET /transactions",
+      "runtime": "server",
+      "file": "platform/openapi/today.yaml",
+      "line": 47,
+      "code": "  /transactions:\n    get:\n      operationId: listTransactions\n      summary: 支出の一覧\n      responses:\n        \"200\":\n          description: OK\n          content:\n            application/json:\n              schema:\n                type: array\n                items:\n                  $ref: \"#/components/schemas/Transaction\"",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "path",
+              "name": "GET /transactions",
+              "type": "string",
+              "wireType": "string"
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "req",
+          "dir": "out",
+          "items": [
+            {
+              "id": "path",
+              "name": "GET /transactions",
+              "type": "string",
+              "wireType": "string"
+            }
+          ]
+        },
+        {
+          "id": "res",
+          "dir": "in",
+          "items": [
+            {
+              "id": "body",
+              "name": "body",
+              "type": "Transaction[]",
+              "wireType": "array",
+              "typeRef": "type:Transaction",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "id",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Transaction"
+                },
+                {
+                  "id": "merchant",
+                  "name": "merchant",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Transaction"
+                },
+                {
+                  "id": "amount",
+                  "name": "amount",
+                  "type": "integer (int64)",
+                  "wireType": "integer",
+                  "typeRef": "type:Transaction"
+                },
+                {
+                  "id": "occurredAt",
+                  "name": "occurredAt",
+                  "type": "string (date-time)",
+                  "wireType": "datetime",
+                  "typeRef": "type:Transaction"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "body",
+              "name": "body",
+              "type": "Transaction[]",
+              "wireType": "array",
+              "typeRef": "type:Transaction",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "id",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Transaction"
+                },
+                {
+                  "id": "merchant",
+                  "name": "merchant",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Transaction"
+                },
+                {
+                  "id": "amount",
+                  "name": "amount",
+                  "type": "integer (int64)",
+                  "wireType": "integer",
+                  "typeRef": "type:Transaction"
+                },
+                {
+                  "id": "occurredAt",
+                  "name": "occurredAt",
+                  "type": "string (date-time)",
+                  "wireType": "datetime",
+                  "typeRef": "type:Transaction"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "openapi"
+        ],
+        "api": {
+          "method": "GET",
+          "path": "/transactions",
+          "operationId": "listTransactions"
+        },
+        "apiRoutes": [
+          {
+            "method": "GET",
+            "path": "/transactions"
+          }
+        ],
+        "openapi": {
+          "file": "openapi/today.yaml",
+          "summary": "支出の一覧"
+        },
+        "operationId": "listTransactions",
+        "status": "200"
+      },
+      "links": [
+        {
+          "from": "in/path",
+          "to": "req/path"
+        },
+        {
+          "from": "res/body",
+          "to": "out/body"
+        },
+        {
+          "from": "in/_",
+          "to": "req/path",
+          "confidence": "crude"
+        }
+      ]
+    },
+    {
+      "id": "endpoint:POST /transactions",
+      "kind": "endpoint",
+      "name": "POST /transactions",
+      "runtime": "server",
+      "file": "platform/openapi/today.yaml",
+      "line": 47,
+      "code": "  /transactions:\n    post:\n      operationId: createTransaction\n      summary: 支出を追加\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema:\n              $ref: \"#/components/schemas/Transaction\"\n      responses:\n        \"201\":\n          description: Created",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "path",
+              "name": "POST /transactions",
+              "type": "string",
+              "wireType": "string"
+            },
+            {
+              "id": "body",
+              "name": "body",
+              "type": "Transaction",
+              "wireType": "object",
+              "typeRef": "type:Transaction",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "id",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Transaction"
+                },
+                {
+                  "id": "merchant",
+                  "name": "merchant",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Transaction"
+                },
+                {
+                  "id": "amount",
+                  "name": "amount",
+                  "type": "integer (int64)",
+                  "wireType": "integer",
+                  "typeRef": "type:Transaction"
+                },
+                {
+                  "id": "occurredAt",
+                  "name": "occurredAt",
+                  "type": "string (date-time)",
+                  "wireType": "datetime",
+                  "typeRef": "type:Transaction"
+                }
+              ]
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "req",
+          "dir": "out",
+          "items": [
+            {
+              "id": "path",
+              "name": "POST /transactions",
+              "type": "string",
+              "wireType": "string"
+            },
+            {
+              "id": "body",
+              "name": "body",
+              "type": "Transaction",
+              "wireType": "object",
+              "typeRef": "type:Transaction",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "id",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Transaction"
+                },
+                {
+                  "id": "merchant",
+                  "name": "merchant",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Transaction"
+                },
+                {
+                  "id": "amount",
+                  "name": "amount",
+                  "type": "integer (int64)",
+                  "wireType": "integer",
+                  "typeRef": "type:Transaction"
+                },
+                {
+                  "id": "occurredAt",
+                  "name": "occurredAt",
+                  "type": "string (date-time)",
+                  "wireType": "datetime",
+                  "typeRef": "type:Transaction"
+                }
+              ]
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "res",
+          "dir": "in",
+          "items": [
+            {
+              "id": "status",
+              "name": "status",
+              "type": "201 Created",
+              "wireType": "integer"
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "status",
+              "name": "status",
+              "type": "201 Created",
+              "wireType": "integer"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "openapi"
+        ],
+        "api": {
+          "method": "POST",
+          "path": "/transactions",
+          "operationId": "createTransaction"
+        },
+        "apiRoutes": [
+          {
+            "method": "POST",
+            "path": "/transactions"
+          }
+        ],
+        "openapi": {
+          "file": "openapi/today.yaml",
+          "summary": "支出を追加"
+        },
+        "operationId": "createTransaction",
+        "status": "201"
+      },
+      "links": [
+        {
+          "from": "in/path",
+          "to": "req/path"
+        },
+        {
+          "from": "in/body",
+          "to": "req/body"
+        },
+        {
+          "from": "res/status",
+          "to": "out/status"
+        },
+        {
+          "from": "in/path",
+          "to": "req/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/body",
+          "to": "req/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "req/path",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "req/body",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "req/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "res/_",
+          "to": "out/status",
+          "confidence": "crude"
+        }
+      ]
+    },
+    {
+      "id": "endpoint:DELETE /transactions/{id}",
+      "kind": "endpoint",
+      "name": "DELETE /transactions/{id}",
+      "runtime": "server",
+      "file": "platform/openapi/today.yaml",
+      "line": 72,
+      "code": "  /transactions/{id}:\n    delete:\n      operationId: deleteTransaction\n      summary: 支出を削除\n      parameters:\n        - name: id\n          in: path\n          required: true\n          schema: { type: string }\n      responses:\n        \"204\":\n          description: No Content",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "path",
+              "name": "DELETE /transactions/{id}",
+              "type": "string",
+              "wireType": "string",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "id",
+                  "type": "string",
+                  "wireType": "string"
+                }
+              ]
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "req",
+          "dir": "out",
+          "items": [
+            {
+              "id": "path",
+              "name": "DELETE /transactions/{id}",
+              "type": "string",
+              "wireType": "string",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "id",
+                  "type": "string",
+                  "wireType": "string"
+                }
+              ]
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "res",
+          "dir": "in",
+          "items": [
+            {
+              "id": "status",
+              "name": "status",
+              "type": "204 No Content",
+              "wireType": "integer"
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "status",
+              "name": "status",
+              "type": "204 No Content",
+              "wireType": "integer"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "openapi"
+        ],
+        "api": {
+          "method": "DELETE",
+          "path": "/transactions/{id}",
+          "operationId": "deleteTransaction"
+        },
+        "apiRoutes": [
+          {
+            "method": "DELETE",
+            "path": "/transactions/{id}"
+          }
+        ],
+        "openapi": {
+          "file": "openapi/today.yaml",
+          "summary": "支出を削除"
+        },
+        "operationId": "deleteTransaction",
+        "status": "204"
+      },
+      "links": [
+        {
+          "from": "in/path",
+          "to": "req/path"
+        },
+        {
+          "from": "res/status",
+          "to": "out/status"
+        },
+        {
+          "from": "in/path",
+          "to": "req/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "req/path",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "req/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "res/_",
+          "to": "out/status",
+          "confidence": "crude"
+        }
+      ]
+    },
+    {
+      "id": "endpoint:POST /push/subscriptions",
+      "kind": "endpoint",
+      "name": "POST /push/subscriptions",
+      "runtime": "server",
+      "file": "platform/openapi/today.yaml",
+      "line": 84,
+      "code": "  /push/subscriptions:\n    post:\n      operationId: subscribePush\n      summary: Web Push を購読\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema:\n              $ref: \"#/components/schemas/PushSubscription\"\n      responses:\n        \"201\":\n          description: Created",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "path",
+              "name": "POST /push/subscriptions",
+              "type": "string",
+              "wireType": "string"
+            },
+            {
+              "id": "body",
+              "name": "body",
+              "type": "PushSubscription",
+              "wireType": "object",
+              "typeRef": "type:PushSubscription",
+              "children": [
+                {
+                  "id": "endpoint",
+                  "name": "endpoint",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:PushSubscription"
+                },
+                {
+                  "id": "p256dh",
+                  "name": "p256dh",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:PushSubscription"
+                },
+                {
+                  "id": "auth",
+                  "name": "auth",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:PushSubscription"
+                }
+              ]
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "req",
+          "dir": "out",
+          "items": [
+            {
+              "id": "path",
+              "name": "POST /push/subscriptions",
+              "type": "string",
+              "wireType": "string"
+            },
+            {
+              "id": "body",
+              "name": "body",
+              "type": "PushSubscription",
+              "wireType": "object",
+              "typeRef": "type:PushSubscription",
+              "children": [
+                {
+                  "id": "endpoint",
+                  "name": "endpoint",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:PushSubscription"
+                },
+                {
+                  "id": "p256dh",
+                  "name": "p256dh",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:PushSubscription"
+                },
+                {
+                  "id": "auth",
+                  "name": "auth",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:PushSubscription"
+                }
+              ]
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "res",
+          "dir": "in",
+          "items": [
+            {
+              "id": "status",
+              "name": "status",
+              "type": "201 Created",
+              "wireType": "integer"
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "status",
+              "name": "status",
+              "type": "201 Created",
+              "wireType": "integer"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "openapi"
+        ],
+        "api": {
+          "method": "POST",
+          "path": "/push/subscriptions",
+          "operationId": "subscribePush"
+        },
+        "apiRoutes": [
+          {
+            "method": "POST",
+            "path": "/push/subscriptions"
+          }
+        ],
+        "openapi": {
+          "file": "openapi/today.yaml",
+          "summary": "Web Push を購読"
+        },
+        "operationId": "subscribePush",
+        "status": "201"
+      },
+      "links": [
+        {
+          "from": "in/path",
+          "to": "req/path"
+        },
+        {
+          "from": "in/body",
+          "to": "req/body"
+        },
+        {
+          "from": "res/status",
+          "to": "out/status"
+        },
+        {
+          "from": "in/path",
+          "to": "req/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/body",
+          "to": "req/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "req/path",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "req/body",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "req/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "res/_",
+          "to": "out/status",
+          "confidence": "crude"
+        }
+      ]
+    },
+    {
+      "id": "endpoint:DELETE /push/subscriptions",
+      "kind": "endpoint",
+      "name": "DELETE /push/subscriptions",
+      "runtime": "server",
+      "file": "platform/openapi/today.yaml",
+      "line": 84,
+      "code": "  /push/subscriptions:\n    delete:\n      operationId: unsubscribePush\n      summary: Web Push の購読解除\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema:\n              $ref: \"#/components/schemas/PushSubscription\"\n      responses:\n        \"204\":\n          description: No Content",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "path",
+              "name": "DELETE /push/subscriptions",
+              "type": "string",
+              "wireType": "string"
+            },
+            {
+              "id": "body",
+              "name": "body",
+              "type": "PushSubscription",
+              "wireType": "object",
+              "typeRef": "type:PushSubscription",
+              "children": [
+                {
+                  "id": "endpoint",
+                  "name": "endpoint",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:PushSubscription"
+                },
+                {
+                  "id": "p256dh",
+                  "name": "p256dh",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:PushSubscription"
+                },
+                {
+                  "id": "auth",
+                  "name": "auth",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:PushSubscription"
+                }
+              ]
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "req",
+          "dir": "out",
+          "items": [
+            {
+              "id": "path",
+              "name": "DELETE /push/subscriptions",
+              "type": "string",
+              "wireType": "string"
+            },
+            {
+              "id": "body",
+              "name": "body",
+              "type": "PushSubscription",
+              "wireType": "object",
+              "typeRef": "type:PushSubscription",
+              "children": [
+                {
+                  "id": "endpoint",
+                  "name": "endpoint",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:PushSubscription"
+                },
+                {
+                  "id": "p256dh",
+                  "name": "p256dh",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:PushSubscription"
+                },
+                {
+                  "id": "auth",
+                  "name": "auth",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:PushSubscription"
+                }
+              ]
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "res",
+          "dir": "in",
+          "items": [
+            {
+              "id": "status",
+              "name": "status",
+              "type": "204 No Content",
+              "wireType": "integer"
+            },
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "status",
+              "name": "status",
+              "type": "204 No Content",
+              "wireType": "integer"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "openapi"
+        ],
+        "api": {
+          "method": "DELETE",
+          "path": "/push/subscriptions",
+          "operationId": "unsubscribePush"
+        },
+        "apiRoutes": [
+          {
+            "method": "DELETE",
+            "path": "/push/subscriptions"
+          }
+        ],
+        "openapi": {
+          "file": "openapi/today.yaml",
+          "summary": "Web Push の購読解除"
+        },
+        "operationId": "unsubscribePush",
+        "status": "204"
+      },
+      "links": [
+        {
+          "from": "in/path",
+          "to": "req/path"
+        },
+        {
+          "from": "in/body",
+          "to": "req/body"
+        },
+        {
+          "from": "res/status",
+          "to": "out/status"
+        },
+        {
+          "from": "in/path",
+          "to": "req/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/body",
+          "to": "req/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "req/path",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "req/body",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/_",
+          "to": "req/_",
+          "confidence": "crude"
+        },
+        {
+          "from": "res/_",
+          "to": "out/status",
+          "confidence": "crude"
+        }
+      ]
+    },
+    {
+      "id": "schema:transactions",
+      "kind": "table",
+      "name": "transactions",
+      "runtime": "data",
+      "file": "platform/migrations/000001_init.up.sql",
+      "line": 1,
+      "code": "CREATE TABLE transactions (\n  id          TEXT PRIMARY KEY,\n  merchant    TEXT NOT NULL,\n  amount      BIGINT NOT NULL,\n  occurred_at TIMESTAMPTZ NOT NULL DEFAULT now()\n);",
+      "host": "infra:aurora/this",
+      "ports": [
+        {
+          "id": "key",
+          "dir": "in",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown",
+              "typeRef": "table:transactions"
+            }
+          ]
+        },
+        {
+          "id": "read",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown",
+              "typeRef": "table:transactions"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "sql"
+        ],
+        "sql": {
+          "table": "transactions",
+          "columns": [
+            "id",
+            "merchant",
+            "amount",
+            "occurred_at"
+          ]
+        }
+      }
+    },
+    {
+      "id": "schema:inboxes",
+      "kind": "table",
+      "name": "inboxes",
+      "runtime": "data",
+      "file": "platform/migrations/000001_init.up.sql",
+      "line": 8,
+      "code": "CREATE TABLE IF NOT EXISTS inboxes (\n  id         TEXT PRIMARY KEY,\n  history_id TEXT NOT NULL,\n  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()\n);",
+      "host": "infra:aurora/this",
+      "ports": [
+        {
+          "id": "key",
+          "dir": "in",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown",
+              "typeRef": "table:inboxes"
+            }
+          ]
+        },
+        {
+          "id": "read",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown",
+              "typeRef": "table:inboxes"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "sql"
+        ],
+        "sql": {
+          "table": "inboxes",
+          "columns": [
+            "id",
+            "history_id",
+            "updated_at"
+          ]
+        }
+      }
+    },
+    {
+      "id": "schema:push_subscriptions",
+      "kind": "table",
+      "name": "push_subscriptions",
+      "runtime": "data",
+      "file": "platform/migrations/000002_push.up.sql",
+      "line": 1,
+      "code": "CREATE TABLE push_subscriptions (\n  endpoint TEXT PRIMARY KEY,\n  p256dh   TEXT NOT NULL,\n  auth     TEXT NOT NULL\n);",
+      "host": "infra:aurora/this",
+      "ports": [
+        {
+          "id": "key",
+          "dir": "in",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown",
+              "typeRef": "table:push_subscriptions"
+            }
+          ]
+        },
+        {
+          "id": "read",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown",
+              "typeRef": "table:push_subscriptions"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "sql"
+        ],
+        "sql": {
+          "table": "push_subscriptions",
+          "columns": [
+            "endpoint",
+            "p256dh",
+            "auth"
+          ]
+        }
+      }
+    },
+    {
+      "id": "actor:user",
+      "kind": "actor",
+      "name": "Browser",
+      "runtime": "user",
+      "code": "GET https://expenses.example.com/",
+      "ports": [
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "_",
+              "name": "値",
+              "type": "unknown",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "overrides"
+        ]
+      }
+    },
+    {
+      "id": "fn:getDays",
+      "kind": "fn",
+      "name": "getDays",
+      "runtime": "browser",
+      "file": "web/src/feature/days/request.ts",
+      "line": 4,
+      "code": "export function getDays(month: string): Promise<DailyTotals> {\n  return fetcher<DailyTotals>(`/days?month=${month}`);\n}",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "month",
+              "name": "month",
+              "type": "string",
+              "wireType": "string"
+            },
+            {
+              "id": "ret_1",
+              "name": "fetcher() の戻り",
+              "type": "DailyTotals",
+              "wireType": "object",
+              "typeRef": "type:DailyTotals"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "call_1",
+              "name": "fetcher(`/days?month=${month}`)",
+              "type": "Promise<DailyTotals>",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "url",
+                  "name": "url",
+                  "type": "string",
+                  "wireType": "string",
+                  "meta": {
+                    "http": "path"
+                  }
+                },
+                {
+                  "id": "query",
+                  "name": "query",
+                  "type": "object",
+                  "wireType": "object",
+                  "children": [
+                    {
+                      "id": "month",
+                      "name": "month",
+                      "type": "string",
+                      "wireType": "string"
+                    }
+                  ],
+                  "meta": {
+                    "http": "query"
+                  }
+                }
+              ],
+              "meta": {
+                "http": {
+                  "method": "GET",
+                  "path": "/days"
+                }
+              }
+            },
+            {
+              "id": "return",
+              "name": "return",
+              "type": "Promise<DailyTotals>",
+              "wireType": "object",
+              "typeRef": "type:DailyTotals"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": "in/month",
+          "to": "out/call_1.url",
+          "confidence": "exact"
+        },
+        {
+          "from": "in/month",
+          "to": "out/call_1.query.month",
+          "confidence": "exact"
+        },
+        {
+          "from": "in/ret_1",
+          "to": "out/return",
+          "confidence": "exact"
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "ts-types"
+        ],
+        "ts": {
+          "exportName": "getDays",
+          "symbolKind": "function"
+        }
+      },
+      "group": "lib:web/src/feature/days/request.ts"
+    },
+    {
+      "id": "fn:toCells",
+      "kind": "fn",
+      "name": "toCells",
+      "runtime": "browser",
+      "file": "web/src/feature/days/transformer.ts",
+      "line": 3,
+      "code": "export function toCells(days: DailyTotals): CalendarCell[] {\n  return Object.entries(days).map(([date, total]) => ({ date, total }));\n}",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "days",
+              "name": "days",
+              "type": "DailyTotals",
+              "wireType": "object",
+              "typeRef": "type:DailyTotals"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "return",
+              "name": "return",
+              "type": "CalendarCell[]",
+              "wireType": "array",
+              "typeRef": "type:CalendarCell",
+              "children": [
+                {
+                  "id": "date",
+                  "name": "date",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:CalendarCell"
+                },
+                {
+                  "id": "total",
+                  "name": "total",
+                  "type": "number",
+                  "wireType": "number",
+                  "typeRef": "type:CalendarCell"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": "in/days",
+          "to": "out/return",
+          "confidence": "exact"
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "ts-types"
+        ],
+        "ts": {
+          "exportName": "toCells",
+          "symbolKind": "function"
+        }
+      },
+      "group": "lib:web/src/feature/days/transformer.ts"
+    },
+    {
+      "id": "fn:getToday",
+      "kind": "fn",
+      "name": "getToday",
+      "runtime": "browser",
+      "file": "web/src/feature/spend/request.ts",
+      "line": 4,
+      "code": "export function getToday(): Promise<Today> {\n  return fetcher<Today>('/today');\n}",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "call",
+              "name": "()",
+              "type": "void"
+            },
+            {
+              "id": "ret_1",
+              "name": "fetcher() の戻り",
+              "type": "Today",
+              "wireType": "object",
+              "typeRef": "type:Today",
+              "children": [
+                {
+                  "id": "total",
+                  "name": "total",
+                  "type": "number",
+                  "wireType": "number",
+                  "typeRef": "type:Today"
+                },
+                {
+                  "id": "entries",
+                  "name": "entries",
+                  "type": "Entry[]",
+                  "wireType": "array",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "call_1",
+              "name": "fetcher('/today')",
+              "type": "Promise<Today>",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "url",
+                  "name": "url",
+                  "type": "string",
+                  "wireType": "string",
+                  "meta": {
+                    "http": "path"
+                  }
+                }
+              ],
+              "meta": {
+                "http": {
+                  "method": "GET",
+                  "path": "/today"
+                }
+              }
+            },
+            {
+              "id": "return",
+              "name": "return",
+              "type": "Promise<Today>",
+              "wireType": "object",
+              "typeRef": "type:Today",
+              "children": [
+                {
+                  "id": "total",
+                  "name": "total",
+                  "type": "number",
+                  "wireType": "number",
+                  "typeRef": "type:Today"
+                },
+                {
+                  "id": "entries",
+                  "name": "entries",
+                  "type": "Entry[]",
+                  "wireType": "array",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": "in/ret_1",
+          "to": "out/return",
+          "confidence": "exact"
+        },
+        {
+          "from": "in/call",
+          "to": "out/call_1",
+          "confidence": "crude"
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "ts-types"
+        ],
+        "ts": {
+          "exportName": "getToday",
+          "symbolKind": "function"
+        }
+      },
+      "group": "lib:web/src/feature/spend/request.ts"
+    },
+    {
+      "id": "fn:getEntries",
+      "kind": "fn",
+      "name": "getEntries",
+      "runtime": "browser",
+      "file": "web/src/feature/spend/request.ts",
+      "line": 8,
+      "code": "export function getEntries(): Promise<Entry[]> {\n  return fetcher<Entry[]>('/entries');\n}",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "call",
+              "name": "()",
+              "type": "void"
+            },
+            {
+              "id": "ret_1",
+              "name": "fetcher() の戻り",
+              "type": "Entry[]",
+              "wireType": "array",
+              "typeRef": "type:Entry",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "id",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Entry"
+                },
+                {
+                  "id": "merchant",
+                  "name": "merchant",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Entry"
+                },
+                {
+                  "id": "amount",
+                  "name": "amount",
+                  "type": "number",
+                  "wireType": "number",
+                  "typeRef": "type:Entry"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "call_1",
+              "name": "fetcher('/entries')",
+              "type": "Promise<Entry[]>",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "url",
+                  "name": "url",
+                  "type": "string",
+                  "wireType": "string",
+                  "meta": {
+                    "http": "path"
+                  }
+                }
+              ],
+              "meta": {
+                "http": {
+                  "method": "GET",
+                  "path": "/entries"
+                }
+              }
+            },
+            {
+              "id": "return",
+              "name": "return",
+              "type": "Promise<Entry[]>",
+              "wireType": "array",
+              "typeRef": "type:Entry",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "id",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Entry"
+                },
+                {
+                  "id": "merchant",
+                  "name": "merchant",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Entry"
+                },
+                {
+                  "id": "amount",
+                  "name": "amount",
+                  "type": "number",
+                  "wireType": "number",
+                  "typeRef": "type:Entry"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": "in/ret_1",
+          "to": "out/return",
+          "confidence": "exact"
+        },
+        {
+          "from": "in/call",
+          "to": "out/call_1",
+          "confidence": "crude"
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "ts-types"
+        ],
+        "ts": {
+          "exportName": "getEntries",
+          "symbolKind": "function"
+        }
+      },
+      "group": "lib:web/src/feature/spend/request.ts"
+    },
+    {
+      "id": "fn:createTransaction",
+      "kind": "fn",
+      "name": "createTransaction",
+      "runtime": "browser",
+      "file": "web/src/feature/spend/request.ts",
+      "line": 12,
+      "code": "export function createTransaction(body: Entry): Promise<void> {\n  return fetcher<void>('/transactions', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify(body),\n  });\n}",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "body",
+              "name": "body",
+              "type": "Entry",
+              "wireType": "object",
+              "typeRef": "type:Entry",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "id",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Entry"
+                },
+                {
+                  "id": "merchant",
+                  "name": "merchant",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Entry"
+                },
+                {
+                  "id": "amount",
+                  "name": "amount",
+                  "type": "number",
+                  "wireType": "number",
+                  "typeRef": "type:Entry"
+                }
+              ]
+            },
+            {
+              "id": "ret_1",
+              "name": "fetcher() の戻り",
+              "type": "void"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "call_1",
+              "name": "fetcher('/transactions')",
+              "type": "Promise<void>",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "url",
+                  "name": "url",
+                  "type": "string",
+                  "wireType": "string",
+                  "meta": {
+                    "http": "path"
+                  }
+                },
+                {
+                  "id": "body",
+                  "name": "body",
+                  "type": "Entry",
+                  "wireType": "object",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:Entry"
+                    }
+                  ],
+                  "meta": {
+                    "http": "body"
+                  }
+                }
+              ],
+              "meta": {
+                "http": {
+                  "method": "POST",
+                  "path": "/transactions"
+                }
+              }
+            },
+            {
+              "id": "return",
+              "name": "return",
+              "type": "Promise<void>"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": "in/body",
+          "to": "out/call_1.body",
+          "confidence": "exact"
+        },
+        {
+          "from": "in/ret_1",
+          "to": "out/return",
+          "confidence": "exact"
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "ts-types"
+        ],
+        "ts": {
+          "exportName": "createTransaction",
+          "symbolKind": "function"
+        }
+      },
+      "group": "lib:web/src/feature/spend/request.ts"
+    },
+    {
+      "id": "fn:toTodayView",
+      "kind": "fn",
+      "name": "toTodayView",
+      "runtime": "browser",
+      "file": "web/src/feature/spend/transformer.ts",
+      "line": 3,
+      "code": "export function toTodayView(today: Today): TodayView {\n  return {\n    totalLabel: `${today.total.toLocaleString()}円`,\n    rows: today.entries,\n  };\n}",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "today",
+              "name": "today",
+              "type": "Today",
+              "wireType": "object",
+              "typeRef": "type:Today",
+              "children": [
+                {
+                  "id": "total",
+                  "name": "total",
+                  "type": "number",
+                  "wireType": "number",
+                  "typeRef": "type:Today"
+                },
+                {
+                  "id": "entries",
+                  "name": "entries",
+                  "type": "Entry[]",
+                  "wireType": "array",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "return",
+              "name": "return",
+              "type": "TodayView",
+              "wireType": "object",
+              "typeRef": "type:TodayView",
+              "children": [
+                {
+                  "id": "totalLabel",
+                  "name": "totalLabel",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:TodayView"
+                },
+                {
+                  "id": "rows",
+                  "name": "rows",
+                  "type": "Entry[]",
+                  "wireType": "array",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": "in/today.total",
+          "to": "out/return.totalLabel",
+          "confidence": "exact"
+        },
+        {
+          "from": "in/today.entries",
+          "to": "out/return.rows",
+          "confidence": "exact"
+        }
+      ],
+      "meta": {
+        "extractors": [
+          "ts-types"
+        ],
+        "ts": {
+          "exportName": "toTodayView",
+          "symbolKind": "function"
+        }
+      },
+      "group": "lib:web/src/feature/spend/transformer.ts"
+    }
+  ],
+  "wires": [
+    {
+      "from": "comp:PushToggle#out/_",
+      "to": "lib:consts#in/_",
+      "via": "call"
+    },
+    {
+      "from": "lib:consts#out/_",
+      "to": "comp:PushToggle#in/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "lib:fetcher#out/_",
+      "to": "lib:consts#in/_",
+      "via": "call"
+    },
+    {
+      "from": "lib:consts#out/_",
+      "to": "lib:fetcher#in/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "handler:cmd/api#out/_",
+      "to": "handler:internal/api#in/_",
+      "via": "call"
+    },
+    {
+      "from": "handler:internal/api#out/_",
+      "to": "handler:cmd/api#in/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "handler:cmd/api#out/_",
+      "to": "lib:internal/auth#in/_",
+      "via": "call"
+    },
+    {
+      "from": "lib:internal/auth#out/_",
+      "to": "handler:cmd/api#in/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "handler:cmd/api#out/_",
+      "to": "schema:internal/store#in/_",
+      "via": "call"
+    },
+    {
+      "from": "schema:internal/store#out/_",
+      "to": "handler:cmd/api#in/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "handler:cmd/gmail-webhook#out/_",
+      "to": "lib:internal/inbound#in/_",
+      "via": "call"
+    },
+    {
+      "from": "lib:internal/inbound#out/_",
+      "to": "handler:cmd/gmail-webhook#in/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "handler:cmd/gmail-webhook#out/_",
+      "to": "lib:internal/parser#in/_",
+      "via": "call"
+    },
+    {
+      "from": "lib:internal/parser#out/_",
+      "to": "handler:cmd/gmail-webhook#in/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "handler:cmd/gmail-webhook#out/_",
+      "to": "schema:internal/store#in/_",
+      "via": "call"
+    },
+    {
+      "from": "schema:internal/store#out/_",
+      "to": "handler:cmd/gmail-webhook#in/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "handler:internal/api#out/_",
+      "to": "lib:internal/auth#in/_",
+      "via": "call"
+    },
+    {
+      "from": "lib:internal/auth#out/_",
+      "to": "handler:internal/api#in/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "handler:internal/api#out/_",
+      "to": "lib:internal/push#in/_",
+      "via": "call"
+    },
+    {
+      "from": "lib:internal/push#out/_",
+      "to": "handler:internal/api#in/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "handler:internal/api#out/_",
+      "to": "schema:internal/store#in/_",
+      "via": "call"
+    },
+    {
+      "from": "schema:internal/store#out/_",
+      "to": "handler:internal/api#in/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "lib:internal/inbound#out/_",
+      "to": "lib:internal/parser#in/_",
+      "via": "call"
+    },
+    {
+      "from": "lib:internal/parser#out/_",
+      "to": "lib:internal/inbound#in/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "lib:internal/inbound#out/_",
+      "to": "schema:internal/store#in/_",
+      "via": "call"
+    },
+    {
+      "from": "schema:internal/store#out/_",
+      "to": "lib:internal/inbound#in/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "schema:internal/store#out/_",
+      "to": "lib:internal/push#in/_",
+      "via": "call"
+    },
+    {
+      "from": "lib:internal/push#out/_",
+      "to": "schema:internal/store#in/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "schema:internal/store#out/_",
+      "to": "schema:transactions#key/_",
+      "via": "sql"
+    },
+    {
+      "from": "schema:transactions#read/_",
+      "to": "schema:internal/store#in/_",
+      "via": "sql",
+      "reply": true
+    },
+    {
+      "from": "schema:internal/store#out/_",
+      "to": "schema:push_subscriptions#key/_",
+      "via": "sql"
+    },
+    {
+      "from": "schema:push_subscriptions#read/_",
+      "to": "schema:internal/store#in/_",
+      "via": "sql",
+      "reply": true
+    },
+    {
+      "from": "endpoint:GET /today#req/_",
+      "to": "handler:internal/api#in/_",
+      "via": "call"
+    },
+    {
+      "from": "handler:internal/api#out/_",
+      "to": "endpoint:GET /today#res/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "endpoint:GET /days#req/_",
+      "to": "handler:internal/api#in/_",
+      "via": "call"
+    },
+    {
+      "from": "handler:internal/api#out/_",
+      "to": "endpoint:GET /days#res/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "endpoint:GET /entries#req/_",
+      "to": "handler:internal/api#in/_",
+      "via": "call"
+    },
+    {
+      "from": "handler:internal/api#out/_",
+      "to": "endpoint:GET /entries#res/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "endpoint:POST /transactions#req/_",
+      "to": "handler:internal/api#in/_",
+      "via": "call"
+    },
+    {
+      "from": "handler:internal/api#out/_",
+      "to": "endpoint:POST /transactions#res/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "endpoint:DELETE /transactions/{id}#req/_",
+      "to": "handler:internal/api#in/_",
+      "via": "call"
+    },
+    {
+      "from": "handler:internal/api#out/_",
+      "to": "endpoint:DELETE /transactions/{id}#res/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "endpoint:POST /push/subscriptions#req/_",
+      "to": "handler:internal/api#in/_",
+      "via": "call"
+    },
+    {
+      "from": "handler:internal/api#out/_",
+      "to": "endpoint:POST /push/subscriptions#res/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "endpoint:DELETE /push/subscriptions#req/_",
+      "to": "handler:internal/api#in/_",
+      "via": "call"
+    },
+    {
+      "from": "handler:internal/api#out/_",
+      "to": "endpoint:DELETE /push/subscriptions#res/_",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "actor:user#out/_",
+      "to": "endpoint:GET /today#in/_",
+      "via": "http"
+    },
+    {
+      "from": "actor:user#out/_",
+      "to": "endpoint:GET /days#in/_",
+      "via": "http"
+    },
+    {
+      "from": "actor:user#out/_",
+      "to": "endpoint:GET /entries#in/_",
+      "via": "http"
+    },
+    {
+      "from": "actor:user#out/_",
+      "to": "endpoint:GET /transactions#in/_",
+      "via": "http"
+    },
+    {
+      "from": "actor:user#out/_",
+      "to": "endpoint:POST /transactions#in/_",
+      "via": "http"
+    },
+    {
+      "from": "actor:user#out/_",
+      "to": "endpoint:DELETE /transactions/{id}#in/_",
+      "via": "http"
+    },
+    {
+      "from": "actor:user#out/_",
+      "to": "endpoint:POST /push/subscriptions#in/_",
+      "via": "http"
+    },
+    {
+      "from": "actor:user#out/_",
+      "to": "endpoint:DELETE /push/subscriptions#in/_",
+      "via": "http"
+    },
+    {
+      "from": "actor:user#out/_",
+      "to": "handler:cmd/gmail-webhook#in/_",
+      "via": "http"
+    },
+    {
+      "from": "handler:cmd/notify#out/_",
+      "to": "schema:push_subscriptions#key/_",
+      "via": "sql"
+    },
+    {
+      "from": "schema:push_subscriptions#read/_",
+      "to": "handler:cmd/notify#in/_",
+      "via": "sql",
+      "reply": true
+    },
+    {
+      "from": "infra:static_site/this#out/value",
+      "to": "route:/calendar#in/html",
+      "via": "deliver",
+      "reply": true
+    },
+    {
+      "from": "infra:static_site/this#out/value",
+      "to": "layout:/#in/html",
+      "via": "deliver",
+      "reply": true
+    },
+    {
+      "from": "infra:static_site/this#out/value",
+      "to": "route:/#in/html",
+      "via": "deliver",
+      "reply": true
+    },
+    {
+      "from": "infra:static_site/this#out/value",
+      "to": "route:/push#in/html",
+      "via": "deliver",
+      "reply": true
+    },
+    {
+      "from": "handler:cmd/api#out/_",
+      "to": "infra:cognito/this#in/_",
+      "via": "http",
+      "label": "environment.COGNITO_ISSUER"
+    },
+    {
+      "from": "handler:cmd/api#out/_",
+      "to": "infra:aurora/db#in/_",
+      "via": "http",
+      "label": "environment.DB_SECRET_ARN"
+    },
+    {
+      "from": "handler:cmd/api#out/_",
+      "to": "infra:app#in/_",
+      "via": "http",
+      "label": "image_uri"
+    },
+    {
+      "from": "handler:cmd/gmail-webhook#out/_",
+      "to": "infra:aurora/db#in/_",
+      "via": "http",
+      "label": "environment.DB_SECRET_ARN"
+    },
+    {
+      "from": "handler:cmd/gmail-webhook#out/_",
+      "to": "infra:app#in/_",
+      "via": "http",
+      "label": "image_uri"
+    },
+    {
+      "from": "handler:cmd/notify#out/_",
+      "to": "infra:aurora/db#in/_",
+      "via": "http",
+      "label": "environment.DB_SECRET_ARN"
+    },
+    {
+      "from": "handler:cmd/notify#out/_",
+      "to": "infra:app#in/_",
+      "via": "http",
+      "label": "image_uri"
+    },
+    {
+      "from": "infra:scheduler_notify/daily#out/_",
+      "to": "handler:cmd/notify#in/_",
+      "via": "event",
+      "label": "target.arn"
+    },
+    {
+      "from": "infra:static_site/this#out/key",
+      "to": "infra:static_site/index#in/_",
+      "via": "http",
+      "label": "default_cache_behavior.function_association.function_arn"
+    },
+    {
+      "from": "infra:static_site/this#out/key",
+      "to": "infra:static_site/site#in/_",
+      "via": "http",
+      "label": "origin.domain_name"
+    },
+    {
+      "from": "infra:static_site/site#out/_",
+      "to": "infra:static_site/this#in/value",
+      "via": "deliver",
+      "reply": true
+    },
+    {
+      "from": "actor:user#out/_",
+      "to": "infra:static_site/this#in/key",
+      "via": "http"
+    },
+    {
+      "from": "route:/calendar#out/render_1.month",
+      "to": "comp:CalendarIsland#in/month",
+      "via": "render"
+    },
+    {
+      "from": "route:/#out/render_1",
+      "to": "comp:TodayIsland#in/props",
+      "via": "render"
+    },
+    {
+      "from": "route:/push#out/render_1",
+      "to": "comp:PushToggle#in/props",
+      "via": "render"
+    },
+    {
+      "from": "comp:CalendarIsland#out/call_1.month",
+      "to": "fn:getDays#in/month",
+      "via": "call"
+    },
+    {
+      "from": "fn:getDays#out/return",
+      "to": "comp:CalendarIsland#in/ret_1",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "comp:CalendarIsland#out/call_2.days",
+      "to": "fn:toCells#in/days",
+      "via": "call"
+    },
+    {
+      "from": "fn:toCells#out/return",
+      "to": "comp:CalendarIsland#in/ret_2",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "comp:CalendarIsland#out/render_1.cells",
+      "to": "comp:CalendarGrid#in/cells",
+      "via": "render"
+    },
+    {
+      "from": "comp:TodayIsland#out/call_1",
+      "to": "fn:getToday#in/call",
+      "via": "call"
+    },
+    {
+      "from": "fn:getToday#out/return",
+      "to": "comp:TodayIsland#in/ret_1",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "comp:TodayIsland#out/call_2.today",
+      "to": "fn:toTodayView#in/today",
+      "via": "call"
+    },
+    {
+      "from": "fn:toTodayView#out/return",
+      "to": "comp:TodayIsland#in/ret_2",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "comp:TodayIsland#out/render_1.view",
+      "to": "comp:TotalCard#in/view",
+      "via": "render"
+    },
+    {
+      "from": "comp:TodayIsland#out/render_2.entries",
+      "to": "comp:EntryList#in/entries",
+      "via": "render"
+    },
+    {
+      "from": "fn:getDays#out/call_1.url",
+      "to": "lib:fetcher#in/url",
+      "via": "call"
+    },
+    {
+      "from": "fn:getDays#out/call_1.query",
+      "to": "lib:fetcher#in/url",
+      "via": "call"
+    },
+    {
+      "from": "lib:fetcher#out/return",
+      "to": "fn:getDays#in/ret_1",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "fn:getToday#out/call_1.url",
+      "to": "lib:fetcher#in/url",
+      "via": "call"
+    },
+    {
+      "from": "lib:fetcher#out/return",
+      "to": "fn:getToday#in/ret_1",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "fn:getEntries#out/call_1.url",
+      "to": "lib:fetcher#in/url",
+      "via": "call"
+    },
+    {
+      "from": "lib:fetcher#out/return",
+      "to": "fn:getEntries#in/ret_1",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "fn:createTransaction#out/call_1.url",
+      "to": "lib:fetcher#in/url",
+      "via": "call"
+    },
+    {
+      "from": "fn:createTransaction#out/call_1.body",
+      "to": "lib:fetcher#in/init",
+      "via": "call"
+    },
+    {
+      "from": "lib:fetcher#out/return",
+      "to": "fn:createTransaction#in/ret_1",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "comp:PushToggle#out/call_1.input",
+      "to": "endpoint:POST /push/subscriptions#in/path",
+      "via": "http",
+      "label": "POST /push/subscriptions"
+    },
+    {
+      "from": "endpoint:POST /push/subscriptions#out/status",
+      "to": "comp:PushToggle#in/ret_1",
+      "via": "http",
+      "reply": true,
+      "label": "201 Created"
+    },
+    {
+      "from": "fn:getDays#out/call_1.url",
+      "to": "endpoint:GET /days#in/path",
+      "via": "http",
+      "label": "GET /days"
+    },
+    {
+      "from": "fn:getDays#out/call_1.query",
+      "to": "endpoint:GET /days#in/query",
+      "via": "http"
+    },
+    {
+      "from": "endpoint:GET /days#out/body",
+      "to": "fn:getDays#in/ret_1",
+      "via": "http",
+      "reply": true,
+      "label": "200 object"
+    },
+    {
+      "from": "fn:getToday#out/call_1.url",
+      "to": "endpoint:GET /today#in/path",
+      "via": "http",
+      "label": "GET /today"
+    },
+    {
+      "from": "endpoint:GET /today#out/body",
+      "to": "fn:getToday#in/ret_1",
+      "via": "http",
+      "reply": true,
+      "label": "200 Today"
+    },
+    {
+      "from": "fn:getEntries#out/call_1.url",
+      "to": "endpoint:GET /entries#in/path",
+      "via": "http",
+      "label": "GET /entries"
+    },
+    {
+      "from": "endpoint:GET /entries#out/body",
+      "to": "fn:getEntries#in/ret_1",
+      "via": "http",
+      "reply": true,
+      "label": "200 Entry[]"
+    },
+    {
+      "from": "fn:createTransaction#out/call_1.url",
+      "to": "endpoint:POST /transactions#in/path",
+      "via": "http",
+      "label": "POST /transactions"
+    },
+    {
+      "from": "fn:createTransaction#out/call_1.body",
+      "to": "endpoint:POST /transactions#in/body",
+      "via": "http",
+      "broken": [
+        {
+          "path": "amount",
+          "level": "warn",
+          "reason": "送る側の型が広い（number → integer）"
+        },
+        {
+          "path": "occurredAt",
+          "level": "error",
+          "reason": "送る側（createTransaction）に無い。受ける側（POST /transactions）では必須"
+        }
+      ]
+    },
+    {
+      "from": "endpoint:POST /transactions#out/status",
+      "to": "fn:createTransaction#in/ret_1",
+      "via": "http",
+      "reply": true,
+      "label": "201 Created"
+    }
+  ],
+  "views": [
+    {
+      "id": "today",
+      "name": "今日の合計を見る",
+      "start": "actor:user",
+      "variants": {
+        "infra:static_site/this#hit": false
+      }
+    },
+    {
+      "id": "inbound",
+      "name": "メール取り込み",
+      "start": "handler:cmd/gmail-webhook"
+    }
+  ]
+}
