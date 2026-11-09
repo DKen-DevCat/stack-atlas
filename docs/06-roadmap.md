@@ -122,14 +122,39 @@ Lambda → Go 入口の推定 5 件、DB の推定、Function URL の呼び先�
 - [x] 8-2 抽出: TS（compiler API）・Go（go/types）の言語アダプタ、合流点の項目照合、レシピ
   - [x] 8-2a TS の言語アダプタ `ts-types`、openapi の endpoint の項目、合流（クライアント側）、mergeV2・group 化、detectBroken をパイプラインに。fixture-poly の TS の側が手で組んだ例と項目まで一致、POST の食い違い 2 件が自動で出る（docs/17 §8）
   - [x] 8-2b Go の言語アダプタ `go-types`、sql の table の口、合流（サーバー側と table）、CI で go を必須に。fixture-poly の項目の型 89%・項目の単位の線 74%、食い違い 4 本が自動で出る（docs/17 §9）
-- [ ] 8-3 表示: 配線図ビューア（層状レイアウト＋直交配線、球、分岐の表、再生バー、折りたたみ）
-- [ ] 8-4 ハーネス: skill と `init --skill`、`validate --strict`（設計は docs/19）
+- [x] 8-3 表示: 配線図ビューア（設計と実装結果は docs/18。group の自動の折りたたみは保留 → Q19）
+  - [x] 8-3a レイアウト: 層状レイアウト＋直交配線（docs/18 §8）
+  - [x] 8-3b 画面: ビルド成果物の HTML を写して消毒（screens 抽出器）と、配線図の画面の箱の iframe（docs/18 §9）
+  - [x] 8-3c views・メモ・差分・警告のリンク（docs/18 §10）
+- [x] 8-4 ハーネス: skill と `init --skill`、`validate --strict`（設計は docs/19）
   - [x] 8-4a core: 補い（overrides の `v2:`。段 A / B、意味の参照・指紋）、手書きの部分グラフ、views.yaml、数え直し、`strictIssues`
   - [x] 8-4b CLI: `build --dry-run --json` / `--strict`、`validate --strict`、`init-views`、`init --skill`、regions.yaml。fixture-poly・fixture-repo は補い無しで strict が通る（docs/19 §8）
   - [x] 8-4c 前半: `harness/skill/` の本文（SKILL.md・references 8 つ・雛形）、`examples/fixture-gaps/`（隙間 6 つと注入の文 2 つ。補い無しの strict は 3 件で落ち、参照解で通る）、正解表（docs/19 §9・§10）
-  - [ ] 8-4c 後半: ドッグフード（fixture-gaps の写しで skill を実行させ、正解表で適合率・再現率・許可リスト外の書き込み・注入への耐性を測る）
-- [ ] 8-5 実リポジトリへの適用（非公開）
-- [ ] 8-6 地図（3D）との接続
+  - [x] 8-4c 後半: ドッグフード（fixture-gaps の写しで skill を実行させた。再現率 6/6、誤った補い 0、許可リスト外の書き込み 0、注入の文 2 つに従わず。docs/19 §11）と、レビューの修正（手書きの線・ルートごとの unjoined・when・retarget・上限・設定のパスの閉じ込めと秘密らしいファイルの code・スクショのサンドボックス。docs/19 §12、D94〜D105）
+- [x] 8-5 実リポジトリへの適用（非公開。CLI だけ。下の「8-5 実リポジトリ」）。ハーネス（エージェント）を実リポジトリに当てるかは Q17 の判断待ち
+- [ ] 8-6 地図（3D）との接続（設計の下書きは docs/20。実装はユーザーの確認（Q20）の後）
+
+### 8-5 実リポジトリ（2026-11-10。CLI だけ。件数だけを記録する）
+
+ユーザーの実リポジトリ 2 つ（Next 静的エクスポートの web と、Go の Lambda ×5 ＋ Terraform ＋ OpenAPI ＋ SQL の platform）を、非公開の兄弟ディレクトリの設定で 8-3c の CLI（`STACK_ATLAS_REQUIRE_GO=1`）で build した。エージェントは実リポジトリのコードを読んでいない（Q17 は未決）。出力は非公開のディレクトリに置き、この公開リポジトリには件数だけを書く。
+
+| 項目 | 値 |
+|---|---|
+| v1（3D の地図） | ノード 148、エッジ 325、検証エラー 0・警告 0 |
+| v2 の箱 | 316（うち枠 6）。kind: fn 246・component 15・helper 14・infra 13・endpoint 10・table 7・screen 6・hook 2・trigger 2・cache 1。runtime: server 187・browser 116・data 8・edge 3・time 2 |
+| 項目 | 5551（unknown 806。型が決まった割合 **86%**） |
+| 線 | 1979（項目の単位 1081 = **55%** / 箱の単位 898、うち呼び出しでない参照 759） |
+| links | 2158（exact 468 / crude 1661）、不透明な箱 23 |
+| 合流 | クライアント側 8、サーバー側 10、table 20 |
+| 掃除 | group にした v1 の箱 36、置き換えた箱の単位の線 203、付け替え先を決められない線 52 |
+| 食い違い（broken） | 線 12 本（error 15・warn 10） |
+| v2 の検証 | エラー 0、警告 1903（口の単位の線・unknown など。D71 で strict でも警告） |
+
+読み取り:
+
+- 項目の型（86%）は fixture-poly（89%）に近い。線が項目の単位まで下がる割合（55%）は fixture（74%）より低く、残りの多くは呼び出しでない参照（759 本。型の import や定数の参照）。docs/15 §7 の見積り（線 80%）には届かない
+- 付け替え先を決められない線 52 本は、ハーネス（8-4）の `retarget` で埋める対象になる（strict ではエラー）
+- 食い違い 12 本は、契約と実装のずれの候補。中身（どの endpoint のどの項目か）はユーザーが手元のビューアで見て確かめる（`pnpm atlas serve <非公開の出力先>`）
 
 **完了条件**: 実リポジトリで、画面をクリックすると項目の単位で流れが 1 本見え、契約と実装の食い違いが赤で出る。
 

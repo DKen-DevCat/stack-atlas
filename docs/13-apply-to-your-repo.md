@@ -306,18 +306,19 @@ views は `.stack-atlas/views.yaml`（docs/16 §8 の形 `{ id, name, descriptio
 pnpm atlas init --skill <repo>                 # <repo>/.claude/skills/stack-atlas/ に skill、雛形（設定・overrides・.stack-atlas/DECISIONS.md）
 pnpm atlas init --skill <repo> --update        # 手で変えていないファイルだけ更新。変えたものは隣に .new
 pnpm atlas build <repo> --dry-run --json       # 出力先に書かず、標準出力は報告の JSON だけ（ログは標準エラー）
-pnpm atlas build <repo> --strict               # 埋められる隙間があれば終了コード 1（CI の関門）
+pnpm atlas build <repo> --strict --no-screenshots  # 埋められる隙間があれば終了コード 1（CI の関門）
 pnpm atlas validate --strict <out>/graph.json  # graph.json の報告（project.generator.report）を読む補助
 pnpm atlas --version                           # skill の VERSION と比べる
 pnpm atlas init-views <repo>                   # .stack-atlas/views.yaml の雛形（init --skill は置かない）
 ```
 
-**skill**（`harness/skill/`。2026-11-10 8-4c）: `init --skill` で対象に置くと、手元の Claude Code が `stack-atlas` の skill として読む。中身は SKILL.md（禁止事項 6 つと手順 0〜7: 版の確かめ → `build --dry-run --json` → 設定 → 補い → views → 画面 → `build --strict` が通るまで → 抜き取り 3 つと `.stack-atlas/DECISIONS.md`）と `references/`（model・report・supplements・hand-graph・variants・screens・views・checklist）。エージェントが書くのは設定と補いのファイルだけで、対象アプリのコードの変更・ビルドは提案にとどめる。**読んだコードは利用者が契約しているモデルの API に送られる**ので、業務の repo に使うかは人が決める（docs/19 の Q17）。隙間を仕込んだ確かめ用の fixture は `examples/fixture-gaps/`（補い無しの `build --strict` が 3 件で落ちる。正解表は docs/19 §9）。
+**skill**（`harness/skill/`。2026-11-10 8-4c）: `init --skill` で対象に置くと、手元の Claude Code が `stack-atlas` の skill として読む。中身は SKILL.md（禁止事項 6 つと手順 0〜7: 版の確かめ → `build --dry-run --json` → 設定 → 補い → views → 画面 → `build --strict --no-screenshots` が通るまで → 抜き取り 3 つと `.stack-atlas/DECISIONS.md`。build は必ず `--no-screenshots` か `--dry-run`。設定のパスに repo の外・秘密らしいファイルがあれば build の前に止めて人に聞く）と `references/`（model・report・supplements・hand-graph・variants・screens・views・checklist）。エージェントが書くのは設定と補いのファイルだけで、対象アプリのコードの変更・ビルドは提案にとどめる。**読んだコードは利用者が契約しているモデルの API に送られる**ので、業務の repo に使うかは人が決める（docs/19 の Q17）。隙間を仕込んだ確かめ用の fixture は `examples/fixture-gaps/`（補い無しの `build --strict` が 3 件で落ちる。正解表は docs/19 §9）。
 
-- `--dry-run`: 抽出から strict の判定まで行い、出力先には書かない（screens は一時ディレクトリで測って消す。screenshots は強制的に無効）
+- `--dry-run`: 抽出から strict の判定まで行い、出力先には書かない（screens は一時ディレクトリで測って消す。screenshots は強制的に無効）。出力先の `screens/` が印の無いディレクトリなら、本番の build と同じく画面を写さず警告する
+- `--json` で報告を作れずに止まったとき（repo が無い・設定が壊れている・出力先のリンク・例外）は、標準出力に `{ "error": { "message", "exitCode" } }`
 - `--json` の報告のキー: `checked`（動いた / 飛ばした抽出器。`go-types` の go が無ければ `skipped`）・`adapters` / `contracts`（自動率）・`unjoined`（結べない呼び出し・handler の無い endpoint・OpenAPI に無いルート・結べない SQL）・`undetermined`（`{ group, peer, via, candidates }`）・`opaque`・`estimates`・`screens`（route ごとの HTML の有無とカバー率）・`supplements`・`strict`・`issues`
-- `--strict` のエラー（埋められる隙間だけ。D69）: 結べない呼び出し・OpenAPI に無い handler のルート・結べない SQL、付け替え先を決められない線、screens を設定しているのに HTML の無い route、解けない・指紋が合わない・reason の無い補い、解けない views、v1 にも v2 にも無い `remove` の id、見つけたのに飛ばした言語アダプタ。**警告**: handler の無い endpoint（D86）・口の単位の線・不透明な箱・wireType unknown・typeRef の欠け・カバー率 0・broken・overrides で足した線の無い箱
-- `init --skill` は home と `/` を断り、`.claude`・`.claude/skills`・`stack-atlas/` の各段とファイルのどれかがシンボリックリンクなら何も書かない。既存のファイルは上書きしない
+- `--strict` のエラー（埋められる隙間だけ。D69）: 結べない呼び出し・OpenAPI に無い handler のルート・結べない SQL、付け替え先を決められない線、screens を設定しているのに HTML の無い route、解けない・指紋が合わない・reason の無い補い、解けない views、v1 にも v2 にも無い `remove` の id、見つけたのに飛ばした言語アダプタ、失敗した抽出器、端の解けない手書きの線・宣言の無い分岐を指す when（その補いが解けない）。**警告**: handler の無い endpoint（D86）・口の単位の線・不透明な箱・wireType unknown・typeRef の欠け・カバー率 0・broken・overrides で足した線の無い箱
+- `init --skill` は home と `/` を断り（dev と ino で比べる）、`.claude`・`.claude/skills`・`stack-atlas/` の各段とファイルのどれかがシンボリックリンクなら何も書かない。既存のファイルは上書きしない（公式と違う skill のファイルを残したときは警告して終了コード 1。`--update` で置き換える）
 - 部品の領域を HTML の `data-component` で測れないときは `.stack-atlas/screens/<slug>.regions.yaml`（`[{ ref: "comp:TotalCard", x, y, w, h }]`。`<slug>` は graph.json の `screen.html` の `screens/<slug>/index.html`）で補える。計測で取れる ref は使わず（計測が勝つ）、graph.json の regions に `source: "yaml"` で入る。カバー率は計測の分と別に数える
 
 ### 3.7 スクショ・メモ・CI
@@ -326,6 +327,8 @@ pnpm atlas init-views <repo>                   # .stack-atlas/views.yaml の雛�
 - メモ: `<設定のあるディレクトリ>/.stack-atlas/memos.json`（Git 管理）。`serve --repo <dir>` で書き戻す。共有・差分は `docs/11-sharing.md`
 - CI と配信: `docs/ci-example.yml`（`build --strict` を関門に → `build --with-viewer` → 静的ホスティング。screens を使うなら対象アプリの静的エクスポートを先に作る。3D の地図の差分は `?graph=graph.v1.json&prev=prev/graph.v1.json`、
   配線図（v2）の差分は `stack-atlas diff`。diff は v1 と v2 を混ぜても v1 の側を v2 に変換して比べる）
+
+**設定のパスは repo の中だけ**（2026-11-10 8-4 のレビュー。docs/19 §12）: 抽出器が読むパス・glob（`files[].glob`・`openapi.files`・`sql.migrations`・`ts.tsconfig`・`next.{appDir,pagesDir,tsconfig}`・`cdktf.{out,sourceDir}`・`terraform.root`・`cloudformation.templates`・`api.{client,clients}`・`deploy.*.handlers`・`screenshots.storageState`・`screens.{dir,publicDir}`）に絶対パス・`..`・repo の外へ出るシンボリックリンクを書くと、警告して読まない（`repos` は config の外の repo を並べるので対象外）。秘密らしいファイル（dotfile・`*.pem`・`*.key`・`id_*`・`*secret*`・`*credential*` など）と repo の外のファイルは、箱にはなるが `code`（中身の抜粋）を graph に入れない。
 
 ## 4. 詳細
 
