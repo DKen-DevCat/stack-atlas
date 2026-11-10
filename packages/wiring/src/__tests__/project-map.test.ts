@@ -1,5 +1,7 @@
-// 地図の射影（docs/20 §2.1・§5.1。8-6 の Q20 のモックで作った projectMap / litOnMap）。
-// 基準の graph は 8-4 の先端の fixture-poly の build（examples/map-mock/graph.json。モックの画面も同じものを開く）
+// 地図の射影（docs/20 §2.1・§5.1・§7。8-6 の Q20 のモックで作り、本実装で groups を足した projectMap / litOnMap）。
+// 基準の graph は 8-6 の fixture-poly の build を固定したもの（fixtures/poly-86.v2.json。`--no-screenshots`。
+// 2026-11-10 変更（8-6）: モックの examples/map-mock/graph.json から移し、トップの groups が入った build に取り直した。
+// 箱・線・型・views はモックの graph と同じ（groups と project.commit・generatedAt だけが違う））
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -12,13 +14,10 @@ import { I, N, P, W } from './fixture.js';
 
 const read = () =>
   JSON.parse(
-    readFileSync(
-      fileURLToPath(new URL('../../../../examples/map-mock/graph.json', import.meta.url)),
-      'utf8',
-    ),
+    readFileSync(fileURLToPath(new URL('./fixtures/poly-86.v2.json', import.meta.url)), 'utf8'),
   ) as GraphV2;
 
-describe('projectMap: fixture-poly（8-4 の build）', () => {
+describe('projectMap: fixture-poly（8-6 の build）', () => {
   const g = read();
   const p = projectMap(g, { laneColors: { user: '#cbd5e1', browser: '#4f8cff' } });
 
@@ -45,7 +44,7 @@ describe('projectMap: fixture-poly（8-4 の build）', () => {
     expect(p.graph.flows).toBeUndefined();
   });
 
-  it('group は v1 の箱の id のまま（メモと差分のキー）。kind は接頭辞から、名前は最後の 2 段', () => {
+  it('group は v1 の箱の id のまま（メモと差分のキー）。名前・kind・file は v2 の groups（元の v1 の箱）、名前が重なれば最後の 2 段', () => {
     const byId = new Map(p.graph.nodes.map((n) => [n.id, n]));
     expect(p.members.get('handler:internal/api')).toHaveLength(9);
     expect(p.members.get('schema:internal/store')).toHaveLength(9);
@@ -54,17 +53,30 @@ describe('projectMap: fixture-poly（8-4 の build）', () => {
       'fn:getEntries',
       'fn:createTransaction',
     ]);
+    // 2026-11-10 変更（8-6）: file は groups の元の v1 の箱の file（以前は中の箱の file の共通のディレクトリ platform/internal/api）
     expect(byId.get('handler:internal/api')).toMatchObject({
       kind: 'handler',
       layer: 'server',
       name: 'internal/api',
-      file: 'platform/internal/api',
+      file: 'platform/internal/api/days.go',
     });
+    // 元の名前は days/request.ts と同じ request なので、重ならない最後の 2 段
     expect(byId.get('lib:web/src/feature/spend/request.ts')).toMatchObject({
       kind: 'lib',
       layer: 'browser',
       name: 'spend/request',
+      file: 'web/src/feature/spend/request.ts',
     });
+    expect(byId.get('lib:web/src/feature/days/request.ts')!.name).toBe('days/request');
+    expect(byId.get('schema:internal/store')).toMatchObject({
+      kind: 'schema',
+      name: 'internal/store',
+    });
+    // group の名前は重ならない（groups が無いときの規則でも同じ）
+    const groupNames = p.graph.nodes
+      .filter((n) => p.unitKind.get(n.id) === 'group')
+      .map((n) => n.name);
+    expect(new Set(groupNames).size).toBe(groupNames.length);
     expect(byId.get('route:/')).toMatchObject({ kind: 'page', layer: 'browser', name: '/' });
     expect(byId.get('layout:/')!.kind).toBe('layout');
     expect(byId.get('schema:transactions')).toMatchObject({ kind: 'schema', layer: 'data' });
@@ -167,6 +179,12 @@ describe('litOnMap: 配線図の選択を地図に写す', () => {
     );
     const m = litOnMap(p, g, lit);
     expect(m.starts).toEqual(new Set([id]));
+    // 2026-11-10 追加（8-6）: id はメモのキー（@runtime を外した id）なので、始点は中の箱の単位から引く
+    const other = litOnMap(p, g, {
+      ...lit,
+      selection: { kind: 'group', id: 'x', members: ['fn:getToday'] },
+    });
+    expect(other.starts).toEqual(new Set([id]));
     for (const e of ['endpoint:GET /today', 'endpoint:GET /entries', 'endpoint:POST /transactions'])
       expect(m.nodes.has(e)).toBe(true);
   });
@@ -218,6 +236,54 @@ describe('projectMap: 単位の規則（合成）', () => {
     ]);
     // 戻りの http は向きを戻して 1 本
     expect(p.graph.edges).toEqual([{ from: 'lib:shared@browser', to: 'lib:shared', kind: 'http' }]);
+    expect(validateGraph(p.graph).errors).toEqual([]);
+  });
+
+  // 2026-11-10 追加（8-6）: v2 のトップの groups（docs/20 §5.1 #3）
+  it('groups があれば group のノードの名前・kind・file はその値。無ければ id の接頭辞と最後の段（モックの規則）', () => {
+    const nodes = [
+      box('fn:a', 'server', { group: 'handler:cmd/api', file: 'platform/cmd/api/main.go' }),
+      box('fn:b', 'server', { group: 'handler:cmd/api', file: 'platform/cmd/api/serve.go' }),
+      box('fn:c', 'browser', { group: 'lib:src/x/request.ts', file: 'src/x/request.ts' }),
+      box('fn:d', 'browser', { group: 'lib:src/y/request.ts', file: 'src/y/request.ts' }),
+      box('fn:e', 'browser', { group: 'lib:src/z/util.ts', file: 'src/z/util.ts' }),
+    ];
+    const without = projectMap({ version: 2, nodes, wires: [] }).graph.nodes;
+    expect(without.map((n) => [n.id, n.kind, n.name, n.file])).toEqual([
+      ['handler:cmd/api', 'handler', 'cmd/api', 'platform/cmd/api'],
+      ['lib:src/x/request.ts', 'lib', 'x/request', 'src/x/request.ts'],
+      ['lib:src/y/request.ts', 'lib', 'y/request', 'src/y/request.ts'],
+      ['lib:src/z/util.ts', 'lib', 'z/util', 'src/z/util.ts'],
+    ]);
+    const g: GraphV2 = {
+      version: 2,
+      nodes,
+      wires: [],
+      groups: [
+        { id: 'handler:cmd/api', name: 'api の入口', kind: 'service', file: 'platform/cmd/api' },
+        { id: 'lib:src/x/request.ts', name: 'request', kind: 'lib' },
+        { id: 'lib:src/y/request.ts', name: 'request', kind: 'lib' },
+        { id: 'lib:src/z/util.ts', name: 'util', kind: 'hook', file: 'src/z/util.ts' },
+      ],
+    };
+    const p = projectMap(g);
+    expect(p.graph.nodes.map((n) => [n.id, n.kind, n.name, n.file])).toEqual([
+      ['handler:cmd/api', 'service', 'api の入口', 'platform/cmd/api'],
+      // 元の名前が重なる 2 つは、重ならない最後の 2 段
+      ['lib:src/x/request.ts', 'lib', 'x/request', 'src/x/request.ts'],
+      ['lib:src/y/request.ts', 'lib', 'y/request', 'src/y/request.ts'],
+      ['lib:src/z/util.ts', 'hook', 'util', 'src/z/util.ts'],
+    ]);
+    // 1 箱の group でも、groups の元の値があれば行・コードは出さない（関数の行は group の行ではない）
+    const one = projectMap({
+      version: 2,
+      nodes: [box('fn:m', 'server', { group: 'handler:cmd/x', line: 3, code: 'func main()' })],
+      wires: [],
+      groups: [{ id: 'handler:cmd/x', name: 'cmd/x', kind: 'handler' }],
+    }).graph.nodes[0]!;
+    expect(one).toMatchObject({ id: 'handler:cmd/x', kind: 'handler', name: 'cmd/x' });
+    expect(one.line).toBeUndefined();
+    expect(one.code).toBeUndefined();
     expect(validateGraph(p.graph).errors).toEqual([]);
   });
 

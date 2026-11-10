@@ -49,6 +49,16 @@ export {
   type MapLit,
   type ProjectMapOptions,
 } from './project-map.js';
+export {
+  mapFlow,
+  mapFlowAt,
+  PULSE_MIN,
+  type MapFlow,
+  type MapBall,
+  type MapPulse,
+  type MapBallAt,
+  type MapPulseAt,
+} from './map-flow.js';
 export { viewSelection, applyView, findView } from './views.js';
 export {
   diffGraphsV2,

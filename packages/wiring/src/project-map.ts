@@ -1,7 +1,8 @@
-// 地図の射影（docs/20 §2.1・§5.1。Phase 8-6 の案）: graph.json v2 → 3D の地図の形（v1 の Graph）と、選択を写す対応表。
+// 地図の射影（docs/20 §2.1・§5.1・§7。Phase 8-6）: graph.json v2 → 3D の地図の形（v1 の Graph）と、選択・球を写す対応表。
 // 地図の 1 ノード = `group ?? 箱の id`（× runtime。少ない側の runtime は `<id>@<runtime>`）。host の箱はそのまま 1 ノードで、
 // 中の箱の単位へ deploy の線。線は (from の単位, to の単位) ごとに束 1 本（kind は deploy ＞ http ＞ schema ＞ uses ＞ flow）。
 // 往復の戻り（return・sql・http の reply）は向きを戻して行きの束に入れる（deliver はデータの向きのまま）。層は LANES の順。
+// group のノードの名前・kind・file は v2 のトップの `groups`（group になった v1 の箱の元の値）。無ければ id から決める。
 // 型の層とフローは出さない（型は配線図の型クリック、始点は views）。純関数・決定的（同じ v2 から同じ結果）
 import {
   parseItemRef,
@@ -168,7 +169,8 @@ function kindOf(unitId: string, boxes: NodeV2[]): string {
 
 /**
  * group の値の表示名の候補（短い順）: 接頭辞とファイルの拡張子を外し、最後の 2 段、3 段、…、全部（1 段しか無ければその 1 段）。
- * v1 の箱の名前（`cmd/api`・`internal/store`）に近い形。本来の名前は v2 に残す（docs/20 §5.1 #3 の `groups`。モックでは未対応）
+ * v1 の箱の名前（`cmd/api`・`internal/store`）に近い形。v2 の `groups` に元の名前があればそれを使い、この候補は
+ * `groups` が無いときと、元の名前がほかの group と重なるとき（`days/request.ts` と `spend/request.ts` がどちらも `request`）だけ使う
  */
 function nameCandidates(base: string): string[] {
   const label = base.slice(base.indexOf(':') + 1).replace(/\.[A-Za-z0-9]+$/, '');
@@ -212,17 +214,30 @@ export function projectMap(g: GraphV2, opts: ProjectMapOptions = {}): MapProject
     else units.set(id, { base, runtime: n.runtime, boxes: [n] });
   }
 
-  // 2. 表示名: 箱そのもの（単位の id が箱の id）は箱の名前、group は最後の段（ほかの group と重なれば段を増やす）
+  // 2. 表示名: 箱そのもの（単位の id が箱の id）は箱の名前、group は v2 の groups の元の名前（無ければ最後の段）。
+  // 元の名前がほかの group と重なるとき・groups が無いときは、ほかの group と重ならない最も短い段
+  const groupInfo = new Map((g.groups ?? []).map((x) => [x.id, x]));
   const groupUnits = [...units.entries()].filter(
     ([id, u]) => !(u.boxes.length === 1 && u.boxes[0]!.id === id),
   );
   const taken = new Map<string, number>();
   const cands = new Map(groupUnits.map(([id, u]) => [id, nameCandidates(u.base)]));
-  for (const c of cands.values()) for (const s of c) taken.set(s, (taken.get(s) ?? 0) + 1);
+  for (const [id, c] of cands)
+    if (id === units.get(id)!.base) for (const s of c) taken.set(s, (taken.get(s) ?? 0) + 1);
+  /** 元の名前ごとの group の数（@runtime の写しは数えない） */
+  const infoNames = new Map<string, number>();
+  for (const [id, u] of groupUnits) {
+    const n = id === u.base ? groupInfo.get(u.base)?.name : undefined;
+    if (n !== undefined) infoNames.set(n, (infoNames.get(n) ?? 0) + 1);
+  }
   const nameOf = (id: string, u: { base: string; runtime: Runtime; boxes: NodeV2[] }) => {
     if (u.boxes.length === 1 && u.boxes[0]!.id === id) return u.boxes[0]!.name;
+    const info = groupInfo.get(u.base)?.name;
     const c = cands.get(id)!;
-    const name = c.find((s) => taken.get(s) === 1) ?? c[c.length - 1]!;
+    const name =
+      info !== undefined && infoNames.get(info) === 1
+        ? info
+        : (c.find((s) => (taken.get(s) ?? 0) <= 1) ?? c[c.length - 1]!);
     return id === u.base ? name : `${name}@${u.runtime}`;
   };
 
@@ -245,17 +260,21 @@ export function projectMap(g: GraphV2, opts: ProjectMapOptions = {}): MapProject
       u.boxes.map((b) => b.id),
     );
     unitKind.set(id, own ? (hostIds.has(own.id) ? 'host' : 'box') : 'group');
-    const file = one?.file ?? commonDir(u.boxes.flatMap((b) => (b.file ? [b.file] : [])));
+    const info = own ? undefined : groupInfo.get(u.base);
+    // 行とコードは箱そのもの（と、元の値の無い 1 箱の group）だけ。group の元の値があれば file はそれ
+    const lineOf = info ? undefined : one;
+    const file =
+      info?.file ?? one?.file ?? commonDir(u.boxes.flatMap((b) => (b.file ? [b.file] : [])));
     const cache = u.boxes.find((b) => b.cache)?.cache;
     const scr = u.boxes.find((b) => b.screen)?.screen;
     const node: GraphNode = {
       id,
       layer: laneOf(u.runtime),
-      kind: kindOf(id, u.boxes),
+      kind: info?.kind ?? kindOf(id, u.boxes),
       name: nameOf(id, u),
       ...(file ? { file } : {}),
-      ...(one?.line !== undefined ? { line: one.line } : {}),
-      ...(one?.code !== undefined ? { code: one.code } : {}),
+      ...(lineOf?.line !== undefined ? { line: lineOf.line } : {}),
+      ...(lineOf?.code !== undefined ? { code: lineOf.code } : {}),
       ...(cache ? { cache } : {}),
       meta: { members: u.boxes.map((b) => b.id), runtime: u.runtime },
     };
@@ -343,7 +362,7 @@ export interface MapLit {
 
 /**
  * 配線図の選択（LitSelection）を地図に写す。光る箱の単位と host、光る線を含む束、host から光る箱への deploy の束。
- * 始点は始点の箱・項目の箱の単位（型の横断面は始点なし、線の選択は送る側、host の枠はその host）
+ * 始点は始点の箱・項目の箱の単位（型の横断面は始点なし、線の選択は送る側、host の枠はその host、地図の group は中の箱の単位）
  */
 export function litOnMap(
   p: MapProjection,
@@ -378,7 +397,11 @@ export function litOnMap(
       nodes.add(u);
     }
   } else if (sel.kind === 'group') {
-    if (p.members.has(sel.id)) starts.add(sel.id);
+    // 始点は中の箱の単位（id はメモのキーで @runtime を外してあるので、写しを選んだときも中の箱から引く）
+    for (const m of sel.members) {
+      const u = unit(m);
+      if (u !== undefined) starts.add(u);
+    }
   } else if (sel.kind === 'wire') {
     const a = parseItemRef(sel.from)?.nodeId;
     const u = a === undefined ? undefined : unit(a);

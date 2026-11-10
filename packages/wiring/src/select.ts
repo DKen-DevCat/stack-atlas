@@ -9,10 +9,11 @@ export type Selection =
   | { kind: 'wire'; from: string; to: string }
   | { kind: 'host'; id: string }
   /**
-   * 地図のノード（group）のクリック（docs/20 §5.1 #7。8-6 のモックで足した）: 中の箱ごとに独立にたどって合併し、
-   * 始点の輪は中の箱それぞれ（host と同じ）。id は地図のノードの id（メモの札のキー）、members は中の箱の id
+   * 地図のノード（group）のクリック（docs/20 §5.1 #7。Phase 8-6）: 中の箱ごとに独立にたどって合併し、
+   * 始点の輪は中の箱それぞれ（host と同じ）。id は地図のノードの id（メモの札のキー）、members は中の箱の id、
+   * label は札の見出し（地図のノードの名前。省略時は id）
    */
-  | { kind: 'group'; id: string; members: readonly string[] }
+  | { kind: 'group'; id: string; members: readonly string[]; label?: string }
   | { kind: 'type'; typeRef: string };
 
 export interface LitSelection extends Lit {
