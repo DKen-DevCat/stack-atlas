@@ -59,6 +59,47 @@ export {
   type MapBallAt,
   type MapPulseAt,
 } from './map-flow.js';
+export {
+  containmentOf,
+  cleanContainment,
+  DIR_MAX_SEGMENTS,
+  type Container,
+  type Containment,
+} from './containment.js';
+export {
+  slicesOf,
+  initialCut,
+  normalizeCut,
+  openContainer,
+  closeContainer,
+  openTo,
+  innermostOpen,
+  hostSlice,
+  laneSlice,
+  type Cut,
+  type InitialCutOptions,
+} from './cut.js';
+export {
+  foldView,
+  litOn,
+  segmentOn,
+  lineActive,
+  type FoldView,
+  type FoldUnit,
+  type HiddenBroken,
+} from './fold.js';
+export {
+  foldLengths,
+  flowOn,
+  foldWidthOf,
+  foldLayoutOptions,
+  FOLD_WIDTH,
+  FOLD_HIDDEN,
+  type FoldBall,
+  type FoldPulse,
+  type FoldFlow,
+  type FoldLengthOptions,
+} from './fold-flow.js';
 export { viewSelection, applyView, findView } from './views.js';
 export {
   diffGraphsV2,

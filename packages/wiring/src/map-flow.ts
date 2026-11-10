@@ -45,7 +45,7 @@ const EPS = 1e-9;
  * 時間の重なるものを 1 つにまとめる（t0 の順。触れるだけ（前の t1 = 次の t0）はまとめない）。
  * まとめた線は Set で重複を見る（配列の includes だと 1 つの束に M 本の線が重なると O(M²)。docs/20 §7.7）
  */
-function mergeOverlaps<T extends { t0: number; t1: number; wires: string[] }>(xs: T[]): T[] {
+export function mergeOverlaps<T extends { t0: number; t1: number; wires: string[] }>(xs: T[]): T[] {
   const sorted = [...xs].sort((a, b) => a.t0 - b.t0 || a.t1 - b.t1);
   const out: T[] = [];
   let seen = new Set<string>();
