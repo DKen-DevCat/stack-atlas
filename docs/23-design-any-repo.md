@@ -1,6 +1,6 @@
 # 23. 設計: どのリポジトリ・どの構成にもはめる（Phase 9-L）
 
-作成: 2026-11-10。**状態: 設計レビュー（1 回）を反映した版。ユーザーの確認（§7）の前。** 決定の番号は **D170 から**（docs/22 は D140〜D159）、質問の番号は **Q27 から**。レビューの記録は §10。
+作成: 2026-11-10。**状態: 設計レビュー（1 回）を反映した版。ユーザーの確認（§7）の前。9-L0（依存なし）は 2026-11-11 に実装した（§11）。** 決定の番号は **D170 から**（docs/22 は D140〜D159）、質問の番号は **Q27 から**。レビューの記録は §10。
 
 ## 0. なぜ書くか
 
@@ -310,3 +310,48 @@ docs/22 との関係: docs/22 が外す「1 つだけ」の当て方（Lambda �
 | 中-8 | 段の重なりの範囲が食い違う。専用版が飛んだとき | §3.6、D178 |
 | 中-9 | 全ファイルを読む処理の安全 | §3.1 の安全、§5 |
 | 低-1〜7 | 小さな食い違い、未確定が数千件、Mac の常駐のレーン、起動の via、diiv-farm の当て直しの確認、9-L0 の見積り、例の数 | §3.2 の未確定の一覧、Q30・Q33、D182、§4 の見積り（9-L0 を 2 つに）、§3.1 の例 |
+
+## 11. 9-L0 の実装結果（9-L0a・9-L0b。2026-11-11）
+
+### 11.1 できたもの
+
+| ファイル | 中身 |
+|---|---|
+| `packages/core/src/languages.ts` | 言語の判定の表（データ。拡張子・ファイル名・ファイル名の先頭・shebang → 言語と種類 `source`・`config`・`doc`・`asset`）。source 61・config 30・doc 2・asset 8、計 101 の言語・形式。表に無いものは `other`。今の抽出器が設定で読める言語（typescript・javascript・go・sql・terraform）は `hint`（読めないときの設定のヒント） |
+| `packages/core/src/coverage.ts` | 数える範囲（`scanRepoScope`）、「読んだ」と言語ごとの行数（`computeCoverage`）、警告（`coverageIssues`）、箱 0 の文（`emptyGraphText`）、要約（`formatCoverage`） |
+| `packages/core/src/types.ts` ほか | 抽出器の契約 `PartialGraph.read?: string[]`。`prefixRepoFiles` が `<repo>/` を付け、`mergePartialGraphs` が和集合にする |
+| 抽出器 11 個 | `read` の申告: ts-types・ts-imports（program のソース全部）、go-types（helper が出す module のパッケージのファイル ＋ go.mod。helper の `Output.files` を足した）・go（パッケージの .go ＋ go.mod）、terraform（module の .tf ＋ .tfvars）、cdktf（cdk.tf.json ＋ sourceDir の .ts）、cloudformation（テンプレート）、openapi（契約）、sql（マイグレーション）、nextjs-app・cache（next.config） |
+| `packages/core/src/strict.ts`・`pipeline.ts` | 報告の `coverage`、strict の `empty`（エラー）・`unread`（警告）、issues の警告（path `coverage`）、graph.json の報告に `coverage`（数だけ）と `counts.unreadLanguages` |
+| `packages/schema`（`graph-v2.schema.json`・`v2.ts`） | `$defs/report.coverage` → `$defs/coverageSummary`、型 `CoverageSummaryV2` |
+| `packages/cli/src/commands/harness.ts` | `build --dry-run --json` の `coverage`、要約の「数える範囲」と言語ごとの 1 行 |
+
+### 11.2 数字
+
+3 つの fixture（`build --dry-run --json --no-screenshots`。go あり）:
+
+| fixture | 一覧 → 数える範囲（除いた理由） | 言語ごと（ファイル / 行、読めた段） | 読めていない | strict（エラー / 警告） |
+|---|---|---|---|---|
+| fixture-repo | 57 → 51（書き出し先 6: screens.dir の `site/`） | typescript 32 / 811（adapter 443・extractor 368 = cdktf が読む infra の .ts）、javascript 1 / 9（next.config.mjs。nextjs-app と cache） | なし | 0 / 3 → 0 / 3 |
+| fixture-poly | 88 → 73（既知のディレクトリ 9 = `web/export/_next/` の chunks の js 7・css・font、書き出し先 6） | terraform 29 / 507（extractor）、go 15 / 395（adapter）、typescript 19 / 213（adapter 204・extractor 9）、sql 4 / 20（extractor 17） | sql 2 ファイル（3 行。down のマイグレーション） | 0 / 5 → 0 / 6 |
+| fixture-gaps | 95 → 79（既知のディレクトリ 9、書き出し先 6、秘密らしいファイル 1 = `.env.local`） | terraform 29 / 507、go 16 / 446、typescript 23 / 281、sql 4 / 20、php 1 / 18 | php 1（`platform/legacy/api/stats.php`）、sql 2 | 3 / 5 → 3 / 7 |
+
+issues の警告は fixture-repo 0 → 0、fixture-poly 2 → 3、fixture-gaps 4 → 6（読めていないソースの言語ごとに 1 件）。
+
+diiv-farm（Q17 の非公開の repo。件数だけ。設定は `~/diiv-farm-atlas`、`build --dry-run --json`、2.5 秒）: git の一覧 822 → 数える範囲 812（縮めたファイル 1、秘密らしいファイル 9）。source 622 ファイル・105,396 行のうち読めたのは typescript 50 ファイル・5,026 行（ts-types。4.8%）。読めていない: swift 465・77,668 行、python 48・16,530 行、shell 31・2,930 行、svelte 19・2,231 行、javascript 6・676 行、objective-c 1・222 行、metal 1・66 行、c 1・47 行。config の形式（json 21・swiftpm 10・plist 7・xml 4・pbxproj 3・xcconfig 3 ほか）はどの抽出器も読んでいない。今の設定には Q17 の後に書いた TS の設定があるので箱は 0 でなく、strict はエラー 0・警告 3 → 11（読めていない 8 言語）。設定を空にして（scratchpad の設定から repo を指す。repo には何も書かない）当てると、strict は `empty` のエラー 1・警告 9（typescript も読めていない）で落ちる。
+
+テスト: 1,357 → 1,386（skip 2）。core の `coverage.test.ts` 22（言語の表、walk と git の数える範囲を理由ごと、リンクを辿らない・repo の外を読まない、秘密らしいファイルを読まない、上限、読んだの段・申告・複数 repo・決定性、strict の空の graph）、cli の `coverage-fixtures.test.ts` 6（3 つの fixture の事実）、schema の 1。既存のテスト 3 つ（files の issues、fixture-poly の issues の警告、dry-run の JSON のキー）を、増えた警告・キーに合わせて直した（理由はテストのコメント）。
+
+### 11.3 設計（§3.1・§3.8）との違い
+
+1. **`read` は `PartialGraph` にだけ足した**（§3.1 は `PartialGraph`・`PartialGraphV2` の両方）。抽出器はいつも `PartialGraph` を返し（v2 は `.v2` に入る）、手書きの部分グラフの箱は `file` を持つので、2 か所に置くと意味が重なるだけだった
+2. **読めた段は `adapter`・`extractor`・`hand`・`none`**（§3.1 の例は `adapter`・`type`・`syntax`・`none`）。`type`（9-L3）と `syntax`（9-L1）はまだ無いので出さない。今ある、言語アダプタでない抽出器（画面・IaC・契約・パッケージの箱）と補いのために `extractor`・`hand` を足した。graph.json の `read` は整数の `additionalProperties` なので、段を足しても形は変わらない。例にあった `errorLines`・`boxes`・`wires`・`unresolved`・`server` は 9-L1 以降
+3. **fixture-repo の `next.config.mjs` は警告にならない**（§3.1・§5 の見込み）。nextjs-app（`output` を読む）と cache（キャッシュの設定を読む）が実際に読むので、`read` で申告した
+4. **fixture-poly・fixture-gaps の down のマイグレーション（`*.down.sql`）が sql の読めていないソースになる**（見込みに無かった）。設定の `sql.migrations` が `*.up.sql` なので、事実どおり。strict の警告が 1 件ずつ増えた（エラーは変わらない）
+5. **縮めたファイルは「先頭 64KB に 1,000 字を超える行が 1 つでもある source」**（§3.1 は「多い」）。生成物の印は source と config の先頭 5 行。Markdown は 1 段落が 1 行の文書が多いので見ない
+6. **HTML と CSS は `asset`**（関数の箱を持たないので、読めた割合の分母に入れない）。fixture の静的エクスポートの HTML は書き出し先として除くが、ほかの repo の HTML も source の警告にはならない
+7. **walk（git が使えない）は `.gitignore` を当てない**（依存を足さないため）。報告の `scope.repos[].note` にそう書く。walk は既知のディレクトリと書き出し先に降りず、その数は `prunedDirs`（ファイルの数ではない）。git の repo の中でも、追跡しているファイルが 0 のディレクトリ（上の repo の中の追跡していないディレクトリなど）は walk にする
+8. **秘密らしいファイルは `isSecretFile`（dotfile を含む）**。`.gitignore`・`.gitattributes`・`.eslintrc` なども「秘密らしいファイル」に数え、言語の表には入れない。`.gitattributes` は属性を読むためだけに読む
+9. **言語アダプタでない ts-imports・go（v1）も `read` を申告する**。go が無くて go-types を飛ばしたとき（strict ではエラー）も、Go のファイルが読めていないことにならない
+10. **読めていないソースは issues の警告（path `coverage`）と strict の警告（rule `unread`）の両方**に出す。要約の言語ごとの 1 行は「読めた行」を、警告の文は「読めていないソース: swift 465 ファイル（77,668 行）— 構文の段（9-L1）で読めるようになる予定」を出す。設定で読める言語は `why` が設定のヒントになる（「一部が読めていない（sql.migrations の glob に合わない）」など）
+11. **graph.json の報告の `coverage` は数だけ**（ファイルのパスは `build --dry-run --json` にだけ）。`counts.unreadLanguages` を足した。`validate --strict` は `counts.strictErrors` で `empty` も拾う
+12. **上限**: 1 repo 20 万ファイル・1 ファイル 1MB（越えたら `overLimit`・`tooLarge`）。git は 30 秒。plist・YAML の中身は 9-L0 では読まない（行を数えるのは source だけ）ので、DTD・別名の手当ては 9-L2 のレシピで

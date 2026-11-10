@@ -164,8 +164,8 @@ Lambda → Go 入口の推定 5 件、DB の推定、Function URL の呼び先�
 
 推奨の順: 8-7 → 8-8b → 9-L0 → 9-L1〜9-L5 → 9-1a 以降。
 
-- [ ] 9-L0a 数える範囲・言語の判定・報告の `coverage`、抽出器の契約の `read`（依存なし）
-- [ ] 9-L0b strict: 箱 0 でエラー、読めないソースは警告（今の 3 fixture の strict の数は変えない）
+- [x] 9-L0a 数える範囲・言語の判定・報告の `coverage`、抽出器の契約の `read`（依存なし）。2026-11-11: `core/coverage.ts`・`core/languages.ts`（言語の表はデータ）、11 の抽出器が `read` を申告、go-types の helper が読んだファイルを出す（docs/23 §11）
+- [x] 9-L0b strict: 箱 0 でエラー（`empty`）、読めないソースは言語ごとに警告（`unread`）。3 つの fixture の strict のエラーは 0・0・3 のまま（警告は 3→3・5→6・5→7。docs/23 §11）
 - [ ] 9-L1 段 1（tree-sitter。Q27 の後）: エンジン・言語のデータ（Swift・Python・shell・Svelte・Kotlin・Java）・線の `confidence` と破線・fixture-many と合成の大きな fixture
 - [ ] 9-L2 レシピ（受け口・起動・launchd・コンテナ・ターゲット・SwiftUI / Svelte / Compose）・runtime の `client`・`unknown`・`placeV2` の前倒し
 - [ ] 9-L3 段 2（LSP のクライアント。手元のサーバーだけ。実行しうるサーバーは `--allow-exec` のときだけ）

@@ -94,6 +94,7 @@ v2:
 | `estimates` | `推定` の警告（明示できるキー付き） |
 | `screens` | route（layout を除く screen の箱）ごとの HTML の有無、カバー率（`data-component` で測れた分と regions.yaml の分を別に）、落としたもの |
 | `supplements` | 補いごとの結果（効いた / 解けない / 指紋が合わない） |
+| `coverage` | 段 0 の報告（2026-11-11 Phase 9-L0。docs/23 §3.1・§11）: 数える範囲と除いた理由ごとの数、source の言語ごとの行数と読めた行（段ごと・抽出器ごと）、config の形式、読めていないソース（例のパス付き） |
 | `strict` | §3.3 の違反の一覧 |
 | `issues` | build の issues |
 
@@ -110,8 +111,9 @@ strict で**エラー**にするもの（埋められる隙間だけ。D69）:
 3. 画面: `screens` を設定しているのに HTML の無い route
 4. 解けない補い・指紋が合わない補い、`views[].start` が解けない
 5. overrides の `remove` が v1 にも v2 にも無い id を指す。overrides の `nodes` で足した線の無い箱は警告
+6. 箱が 0 の graph（rule `empty`。2026-11-11 Phase 9-L0、docs/23 D171: 以前は空の graph が「エラー 0・警告 0」で通った）
 
-警告のままにするもの（D71）: 口の単位の線、不透明な箱、`wireType: unknown`、`typeRef` の欠け、カバー率 0、broken。docs/16 §9 の「（--strict でエラー）」は取り消す。infra の箱は契約で `_` の 1 項目なので、口の単位の線は必ず残る。
+警告のままにするもの（D71）: 口の単位の線、不透明な箱、`wireType: unknown`、`typeRef` の欠け、カバー率 0、broken。読めていないソース（rule `unread`、path `coverage`。言語ごとに 1 件。issues にも同じ警告。9-L1 から言語ごとの条件でエラーにする。docs/23 §3.1）。docs/16 §9 の「（--strict でエラー）」は取り消す。infra の箱は契約で `_` の 1 項目なので、口の単位の線は必ず残る。
 
 ### 3.4 views
 

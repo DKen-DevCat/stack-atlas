@@ -878,8 +878,13 @@ export function emptyGraphText(c: CoverageReport | undefined): string {
     .slice(0, 5)
     .map((l) => `${l.language} ${fmt(l.files)} ファイル（${fmt(l.lines)} 行）`)
     .join('・');
-  const more = langs.length > 5 ? ` ほか ${langs.length - 5} 言語` : '';
-  return `箱が 0 の graph です。数える範囲のソースは ${top}${more}で、どの抽出器も読めませんでした（構文の段（9-L1）で読めるようになる予定。今は設定か手書きの部分グラフで補う）`;
+  const more = langs.length > 5 ? `ほか ${langs.length - 5} 言語` : '';
+  // 今の抽出器が設定で読める言語（typescript・go など）は、その設定を先に書く（報告の coverage.unread の why）
+  const byConfig = langs.filter((l) => languageHint(l.language)).map((l) => l.language);
+  const hint = byConfig.length
+    ? `${byConfig.join('・')} は設定で読める（coverage.unread の why）。ほかの言語は`
+    : '';
+  return `箱が 0 の graph です。数える範囲のソースは ${top}${more}で、どの抽出器も読めませんでした（${hint}構文の段（9-L1）で読めるようになる予定。今は手書きの部分グラフで補う）`;
 }
 
 /** 要約（標準出力）の行: 数える範囲と、言語ごとの読めた割合 */

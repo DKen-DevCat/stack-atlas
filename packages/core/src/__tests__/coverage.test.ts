@@ -10,6 +10,7 @@ import {
   computeCoverage,
   countLines,
   coverageIssues,
+  emptyGraphText,
   formatCoverage,
   hasGeneratedHeader,
   isMinified,
@@ -542,7 +543,7 @@ describe('strict（9-L0b）: 箱 0 はエラー、読めていないソースは
     const s = strictIssues(res);
     expect(s.errors.map((e) => [e.rule, e.path])).toEqual([['empty', 'coverage']]);
     expect(s.errors[0]!.message).toBe(
-      '箱が 0 の graph です。数える範囲のソースは swift 2 ファイル（3 行）で、どの抽出器も読めませんでした（構文の段（9-L1）で読めるようになる予定。今は設定か手書きの部分グラフで補う）',
+      '箱が 0 の graph です。数える範囲のソースは swift 2 ファイル（3 行）で、どの抽出器も読めませんでした（構文の段（9-L1）で読めるようになる予定。今は手書きの部分グラフで補う）',
     );
     expect(s.warnings.map((w) => [w.rule, w.path, w.message])).toEqual([
       [
@@ -570,6 +571,40 @@ describe('strict（9-L0b）: 箱 0 はエラー、読めていないソースは
     expect(report.coverage!.scope).toMatchObject({ files: 3, methods: ['walk'] });
     // graph.json に書く報告（project.generator.report）も同じ
     expect(res.graphV2!.project?.generator?.report?.counts.strictErrors).toBe(1);
+  });
+
+  it('箱 0 の文: 上位 5 言語と残りの数。設定で読める言語（typescript など）はそう書く', () => {
+    const row = (language: string, lines: number) => ({
+      language,
+      files: 1,
+      lines,
+      read: { adapter: 0, extractor: 0, hand: 0, none: lines },
+      readBy: {},
+      unread: { files: 1, lines },
+    });
+    const c = computeCoverage({
+      repos: { r: '/nonexistent/r' },
+      configDir: '/nonexistent/r',
+      config: {},
+      partials: {},
+      roles: new Map(),
+      graphFiles: [],
+      scopes: [scope('r', [])],
+    });
+    c.languages = [
+      row('swift', 7000),
+      row('python', 6000),
+      row('typescript', 5000),
+      row('shell', 4000),
+      row('svelte', 3000),
+      row('c', 10),
+    ];
+    expect(emptyGraphText(c)).toBe(
+      '箱が 0 の graph です。数える範囲のソースは swift 1 ファイル（7,000 行）・python 1 ファイル（6,000 行）・' +
+        'typescript 1 ファイル（5,000 行）・shell 1 ファイル（4,000 行）・svelte 1 ファイル（3,000 行）ほか 1 言語で、' +
+        'どの抽出器も読めませんでした（typescript は設定で読める（coverage.unread の why）。ほかの言語は構文の段（9-L1）で' +
+        '読めるようになる予定。今は手書きの部分グラフで補う）',
+    );
   });
 
   it('ソースの無い repo: 箱 0 のエラーは「ソースが見つからない」', async () => {

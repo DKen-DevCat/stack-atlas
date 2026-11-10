@@ -185,11 +185,18 @@ body の無い応答（`out/status`）から呼び出し元の `ret_n` への線
     "checked": { "go-types": { "status": "ok", "role": "language" }, "screens": { "status": "ok" } },   // ok | disabled | not-detected | failed | skipped（見つけたのに動かせなかった。reason 付き）
     "counts": { "unjoined": 0, "endpointsWithoutHandler": 1, "undetermined": 0, "opaque": 6, "crude": 30, "estimates": 0,
                 "screensWithoutHtml": 0, "supplementsApplied": 0, "supplementsUnresolved": 0, "supplementsMismatch": 0,
-                "removeMissing": 0, "strictErrors": 0, "strictWarnings": 5 },
-    "lists": { "unjoined": [], "undetermined": [], "strictErrors": [] } } }        // 1 つの一覧につき 100 件まで
+                "removeMissing": 0, "unreadLanguages": 1, "strictErrors": 0, "strictWarnings": 6 },
+    "lists": { "unjoined": [], "undetermined": [], "strictErrors": [] },          // 1 つの一覧につき 100 件まで
+    "coverage": {                                                                  // 段 0 の報告の数（Phase 9-L0。docs/23 §3.1）
+      "scope": { "files": 73, "tracked": 88, "secret": 0, "methods": ["git"],
+                 "excluded": { "dir": 9, "output": 6, "generated": 0, "vendored": 0, "header": 0, "minified": 0, "tooLarge": 0 } },
+      "languages": [ { "language": "sql", "files": 4, "lines": 20,
+                       "read": { "adapter": 0, "extractor": 17, "hand": 0, "none": 3 }, "unread": { "files": 2, "lines": 3 } } ] } } }
 ```
 
-`validate --strict` のエラー: report が無い graph、`checked` に `skipped` の言語アダプタがある graph、`counts.strictErrors` が 0 でない graph（`lists.strictErrors` を出す）。
+`validate --strict` のエラー: report が無い graph、`checked` に `skipped` の言語アダプタがある graph、`counts.strictErrors` が 0 でない graph（`lists.strictErrors` を出す。箱が 0 の graph の `empty` もここに入る）。
+
+`coverage`（任意。2026-11-11 Phase 9-L0。schema は `$defs/coverageSummary`、型は `CoverageSummaryV2`）は数だけで、ファイルのパス（読めていないファイルの例・言語ごとの `readBy`・config の形式）は `build --dry-run --json` の `coverage` にだけ出す。`read` の段は `adapter`（言語アダプタ）・`extractor`（ほかの抽出器）・`hand`（手書きの部分グラフ・overrides）・`none`。9-L1 で `syntax`、9-L3 で `type` を足す（`read` は `additionalProperties` の整数なので形は変えない）。
 
 ### 8.2 group になった v1 の箱（`groups`。2026-11-10 Phase 8-6）
 
