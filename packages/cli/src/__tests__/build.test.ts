@@ -340,14 +340,18 @@ describe('loadExtractors', () => {
       },
     });
     expect(list.map((e) => e.name)).toEqual(['cdktf', 'nextjs-app']);
-    expect(log.of('info')).toEqual(
-      expect.arrayContaining([
-        '- 抽出器 api-link は見つかりません（スキップ）',
-        '- 抽出器 cache は見つかりません（スキップ）',
-        '- screenshots: オプションで無効（スキップ）',
-      ]),
+    // 2026-11-10 変更: 見つからないパッケージは info ではなく warn（何が無いか + pnpm install のやり直し）。
+    // 古い node_modules でリンクの無い抽出器が黙って抜け、箱と線の少ない graph が「エラー 0」で出来ていたため。
+    // オプションで外したもの（screenshots）は今までどおり info。warn は 1 件（export 無しの ts-imports）→ 12 件
+    //（15 個 − 読めた 2 − オプションで外した 1。見つからない 11 ＋ export 無し 1）
+    expect(log.of('info')).toEqual(['- screenshots: オプションで無効（スキップ）']);
+    const warns = log.of('warn');
+    expect(warns).toHaveLength(12);
+    expect(warns).toContain(
+      '抽出器 api-link のパッケージ（@stack-atlas/extractor-api-link）が見つかりません（スキップ。この抽出器の出す箱・線が抜けます）。pnpm install をやり直してください',
     );
-    expect(log.of('warn')).toHaveLength(1);
+    expect(warns.filter((w) => w.includes('pnpm install をやり直してください'))).toHaveLength(11);
+    expect(warns).toContain('抽出器 ts-imports は Extractor を export していません（スキップ）');
     // Phase 8-2a で変更: 言語アダプタ ts-types を ts-imports の直後に足したので 12 → 13
     // 2026-11-09 変更（8-2b）: 言語アダプタ go-types を go の直後に足したので 13 → 14
     // 2026-11-09 変更（8-3b）: ビルド成果物の画面の screens を screenshots の後に足したので 14 → 15
@@ -363,6 +367,93 @@ describe('loadExtractors', () => {
     expect(EXTRACTOR_PACKAGES.indexOf('@stack-atlas/extractor-go-types')).toBe(
       EXTRACTOR_PACKAGES.indexOf('@stack-atlas/extractor-go') + 1,
     );
+  });
+});
+
+describe('読めない抽出器は警告の一覧に入る（2026-11-10）', () => {
+  const notFound = (spec: string) =>
+    Object.assign(new Error(`Cannot find package '${spec}'`), { code: 'ERR_MODULE_NOT_FOUND' });
+  // go-types だけ見つからない。残りは stub（名前だけ本物）
+  const importer = async (spec: string) => {
+    const short = spec.replace('@stack-atlas/extractor-', '');
+    if (short === 'go-types') throw notFound(spec);
+    return { extractor: { ...stub, name: short } };
+  };
+  const text =
+    '抽出器 go-types のパッケージ（@stack-atlas/extractor-go-types）が見つかりません（スキップ。この抽出器の出す箱・線が抜けます）。pnpm install をやり直してください';
+
+  it('onMissing に名前と警告の文が渡る。オプションで外したものは渡らない', async () => {
+    const log = createMemoryLogger();
+    const seen: [string, string][] = [];
+    const list = await loadExtractors(log, {
+      skip: ['screenshots'],
+      importer,
+      onMissing: (name, message) => seen.push([name, message]),
+    });
+    expect(seen).toEqual([['go-types', text]]);
+    expect(log.of('warn')).toEqual([text]);
+    expect(list.map((e) => e.name)).not.toContain('go-types');
+    expect(list.map((e) => e.name)).not.toContain('screenshots');
+    expect(list).toHaveLength(13);
+  });
+
+  it('build: issues.json と要約に出る。--strict でも止めない（警告のまま）', async () => {
+    const root = repo();
+    const out = join(root, 'out');
+    const mlog = createMemoryLogger();
+    const code = await quiet(() =>
+      runBuild({ repo: root, outDir: out, importer, strict: true, screenshots: false, log: mlog }),
+    );
+    expect(code).toBe(0);
+    expect(mlog.of('warn')).toContain(text);
+    expect(JSON.parse(readFileSync(join(out, 'issues.json'), 'utf8'))).toEqual([
+      { level: 'warning', path: 'build', message: text },
+    ]);
+  });
+
+  it('build --dry-run --json: issues に抜けた抽出器の名前が出る（標準出力は JSON だけ）', async () => {
+    const root = repo();
+    const writes: string[] = [];
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    let code: number;
+    try {
+      code = await runBuild({
+        repo: root,
+        outDir: join(root, 'out'),
+        importer,
+        dryRun: true,
+        json: true,
+        screenshots: false,
+        log: createMemoryLogger(),
+      });
+    } finally {
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+    expect(code).toBe(0);
+    const json = JSON.parse(writes.join(''));
+    expect(json.issues).toEqual([{ level: 'warning', path: 'build', message: text }]);
+    expect(json.strict.errors).toEqual([]);
+  });
+
+  it('抽出器を渡した build（テストの差し替え）は読み込みをしないので、警告は増えない', async () => {
+    const root = repo();
+    const out = join(root, 'out');
+    const code = await quiet(() =>
+      runBuild({
+        repo: root,
+        outDir: out,
+        extractors: [stub],
+        importer,
+        log: createMemoryLogger(),
+      }),
+    );
+    expect(code).toBe(0);
+    expect(JSON.parse(readFileSync(join(out, 'issues.json'), 'utf8'))).toEqual([]);
   });
 });
 

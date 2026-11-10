@@ -7,7 +7,9 @@
  * screens（ビルド成果物の HTML を写して消毒する。docs/18 §3.3）は screenshots の後（同じ route の screen に html を足す）。
  * パイプラインは抽出器ごとに全 repo を回すので、後続は先行の全 repo 分の結果を upstream で読める。
  * 各パッケージは `export const extractor: Extractor`（と default export）を出す。
- * まだ無いパッケージもあるので、1 つずつ動的 import して、見つからなければスキップする。
+ * 1 つずつ動的 import する。15 個は全部ある前提なので、見つからない・読み込めないものは警告を出してスキップし、
+ * onMissing で呼ぶ側へ知らせる（build は警告の一覧に入れる。node_modules が古くてリンクが無いと、その抽出器の箱と線が
+ * 黙って graph から抜ける。2026-11-10）。オプションで外したもの（--no-screenshots）は警告にしない。
  */
 import type { Extractor, Logger } from '@stack-atlas/core';
 
@@ -43,6 +45,11 @@ export interface LoadExtractorsOptions {
   skip?: string[];
   /** import 関数の差し替え（テスト用） */
   importer?: (spec: string) => Promise<unknown>;
+  /**
+   * 読めずに外した抽出器（見つからない・読み込めない・Extractor を export していない）ごとに呼ぶ。message は警告の文。
+   * build はこれを警告の一覧（issues.json と `--dry-run --json` の issues）に入れる
+   */
+  onMissing?: (name: string, message: string) => void;
 }
 
 export async function loadExtractors(
@@ -57,6 +64,11 @@ export async function loadExtractors(
       log.info(`- ${short}: オプションで無効（スキップ）`);
       continue;
     }
+    // 外した抽出器は警告にして呼ぶ側へ知らせる（その抽出器の出す箱・線が graph から抜ける）
+    const drop = (message: string) => {
+      log.warn(message);
+      opts.onMissing?.(short, message);
+    };
     let mod: ExtractorModule;
     try {
       mod = (await importer(spec)) as ExtractorModule;
@@ -64,9 +76,11 @@ export async function loadExtractors(
       const code = (e as { code?: string }).code;
       const missing = code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND';
       if (missing && (e as Error).message.includes(spec)) {
-        log.info(`- 抽出器 ${short} は見つかりません（スキップ）`);
+        drop(
+          `抽出器 ${short} のパッケージ（${spec}）が見つかりません（スキップ。この抽出器の出す箱・線が抜けます）。pnpm install をやり直してください`,
+        );
       } else {
-        log.warn(`抽出器 ${short} を読み込めません（スキップ）: ${(e as Error).message}`);
+        drop(`抽出器 ${short} を読み込めません（スキップ）: ${(e as Error).message}`);
       }
       continue;
     }
@@ -76,7 +90,7 @@ export async function loadExtractors(
         ? mod.default
         : undefined;
     if (!ex) {
-      log.warn(`抽出器 ${short} は Extractor を export していません（スキップ）`);
+      drop(`抽出器 ${short} は Extractor を export していません（スキップ）`);
       continue;
     }
     out.push(ex);

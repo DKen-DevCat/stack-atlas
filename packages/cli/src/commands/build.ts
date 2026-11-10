@@ -78,6 +78,8 @@ export interface BuildOptions {
   log?: Logger;
   /** 抽出器の差し替え（テスト用）。省略時は抽出器パッケージを動的 import */
   extractors?: Extractor[];
+  /** 抽出器パッケージの import 関数の差し替え（テスト用。extractors を渡さないときだけ使う） */
+  importer?: (spec: string) => Promise<unknown>;
   viewerDist?: string;
   /** graph.json に v1 だけを書く（Phase 8-1 より前の出力。graph.v1.json は書かない） */
   v1Only?: boolean;
@@ -430,6 +432,8 @@ async function buildInto(
     );
 
   let res: BuildGraphResult;
+  // 読めずに外した抽出器（パッケージが見つからない など）。警告の一覧に入れる（--dry-run --json でも見える）
+  const missing: string[] = [];
   // screens 抽出器の書き出し先（書く先の中の一時ディレクトリ。成功したら swapScreens で screens/ に入れ替える）
   let stage: string | undefined;
   try {
@@ -449,7 +453,11 @@ async function buildInto(
     }
     const extractors =
       opts.extractors ??
-      (await loadExtractors(log, { skip: opts.screenshots === false ? ['screenshots'] : [] }));
+      (await loadExtractors(log, {
+        skip: opts.screenshots === false ? ['screenshots'] : [],
+        onMissing: (_name, message) => missing.push(message),
+        ...(opts.importer ? { importer: opts.importer } : {}),
+      }));
     res = await buildGraph({
       root: repo,
       extractors,
@@ -463,6 +471,8 @@ async function buildInto(
     throw e;
   }
 
+  // strict では止めない（警告の一覧に入るだけ。strict が止めるのは今までどおり res.strict.errors）
+  for (const message of missing) res.issues.push({ level: 'warning', path: 'build', message });
   if (screensSkip)
     res.issues.push({
       level: 'warning',
