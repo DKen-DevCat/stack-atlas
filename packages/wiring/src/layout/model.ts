@@ -295,23 +295,25 @@ export interface Model {
   wires: IndexedWire[];
 }
 
+/** runtime のレーン（LANES の番号。知らない runtime は先頭）。畳むときの区切り（cut.ts の slicesOf）も同じ関数を使う */
+export function laneIndexOf(r: Runtime): number {
+  return Math.max(
+    0,
+    LANES.findIndex((l) => l.runtimes.includes(r)),
+  );
+}
+
 export function buildModel(index: GraphIndex, cfg: Cfg): Model {
   const hostSet = new Set<string>();
   for (const n of index.nodes.values()) if (n.host) hostSet.add(n.host.id);
   const all = [...index.nodes.values()].filter((n) => !hostSet.has(n.id));
-  const laneDefOf = (r: Runtime) =>
-    Math.max(
-      0,
-      LANES.findIndex((l) => l.runtimes.includes(r)),
-    );
-
   const boxes: LBox[] = all.map((n, decl) => {
     const b: LBox = {
       kind: 'box',
       id: n.id,
       n,
       decl,
-      lane: laneDefOf(n.node.runtime),
+      lane: laneIndexOf(n.node.runtime),
       host: n.host ? n.host.id : null,
       group: n.node.group ?? dirOf(n.node.file) ?? `#${n.id}`,
       w: cfg.widthOf(n, cfg.boxW),

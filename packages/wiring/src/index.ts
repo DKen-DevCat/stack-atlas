@@ -59,6 +59,13 @@ export {
   type MapBallAt,
   type MapPulseAt,
 } from './map-flow.js';
+export {
+  containmentOf,
+  cleanContainment,
+  DIR_MAX_SEGMENTS,
+  type Container,
+  type Containment,
+} from './containment.js';
 export { viewSelection, applyView, findView } from './views.js';
 export {
   diffGraphsV2,
