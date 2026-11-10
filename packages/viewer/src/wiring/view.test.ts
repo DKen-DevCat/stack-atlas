@@ -6,7 +6,7 @@ import type { GraphV2 } from '@stack-atlas/schema';
 import { indexGraph, layoutWiring } from '@stack-atlas/wiring';
 import { todayGraph } from '../../../wiring/src/__tests__/fixture';
 import { SAMPLE_V2_PATH } from '../graph/testSample';
-import { isFitKey } from './interaction';
+import { escapeAction, isFitKey } from './interaction';
 import {
   fitView,
   ITEM_FONT_PX,
@@ -124,7 +124,37 @@ describe('F キー', () => {
     expect(isFitKey(ev('f', {}, { tagName: 'INPUT', type: 'text' }))).toBe(false);
     expect(isFitKey(ev('f', {}, { tagName: 'TEXTAREA' }))).toBe(false);
     expect(isFitKey(ev('f', {}, { tagName: 'DIV', isContentEditable: true }))).toBe(false);
+    expect(isFitKey(ev('f', {}, { tagName: 'SELECT' }))).toBe(false);
     expect(isFitKey(ev('f', {}, { tagName: 'INPUT', type: 'checkbox' }))).toBe(true);
     expect(isFitKey(ev('f', {}, { tagName: 'INPUT', type: 'range' }))).toBe(true);
+  });
+  it('IME の変換中は効かない', () => {
+    expect(isFitKey({ ...ev('f'), isComposing: true })).toBe(false);
+  });
+});
+
+describe('Esc', () => {
+  const esc = (target: unknown = null, isComposing = false) => ({
+    key: 'Escape',
+    isComposing,
+    target: target as EventTarget | null,
+  });
+  it('図の上・ボタン・チェックボックスでは選択を解く。Esc でなければ何もしない', () => {
+    expect(escapeAction(esc())).toBe('clear');
+    expect(escapeAction(esc({ tagName: 'BUTTON' }))).toBe('clear');
+    expect(escapeAction(esc({ tagName: 'INPUT', type: 'checkbox' }))).toBe('clear');
+    // views のメニュー（閉じた select）で選んだ直後の Esc も選択を解く（F キーは select では効かない）
+    expect(escapeAction(esc({ tagName: 'SELECT' }))).toBe('clear');
+    expect(escapeAction({ ...esc(), key: 'Enter' })).toBeNull();
+  });
+  it('メモの札（textarea）・孤立メモの移し先（文字の input）・contenteditable の中は欄から焦点を外すだけ（選択は解かない）', () => {
+    expect(escapeAction(esc({ tagName: 'TEXTAREA' }))).toBe('blur');
+    expect(escapeAction(esc({ tagName: 'INPUT', type: 'text' }))).toBe('blur');
+    expect(escapeAction(esc({ tagName: 'INPUT' }))).toBe('blur');
+    expect(escapeAction(esc({ tagName: 'DIV', isContentEditable: true }))).toBe('blur');
+  });
+  it('IME の変換中は何もしない（Esc は変換の取り消し）', () => {
+    expect(escapeAction(esc({ tagName: 'TEXTAREA' }, true))).toBeNull();
+    expect(escapeAction(esc(null, true))).toBeNull();
   });
 });

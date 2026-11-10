@@ -302,3 +302,71 @@ viewer/wiring
 11. **SVG の data: URL の膨張**: 1 つの文書（画面の HTML・写す CSS ファイル）に埋め込む data: URL は合計 2 MB まで（`InlineBudget`。`AssetStore.verdict` の引数で省けない）。超えた参照は入れずに数え、info で報告する。消毒した HTML・CSS が 10 MB を超えたら書かない（警告）。以前は 256 KB の SVG を参照ごとに埋め込み、100 回で 34 MB、2000 回で文字列の長さの上限（RangeError）を超えて抽出器が落ちた。直した後は 100 回・2000 回とも 1.96 MB（埋め込み 6 回）
 12. **制御文字**: screens が `issues.json` と要約に出す文字列（タグ名・rel・data-component の値・ルートのパターン）の C0・DEL・C1・双方向の上書きは `\u{1b}` の形にする（端末を操作させない）
 13. **e2e の fixture-repo**（`fixture-repo: 画面の箱に iframe が出て…`）: d3b49e7（8-2b・8-3a を取り込んだ後）の配置では、開いた直後の表示（1440×900、倍率 0.6）で `/` の画面の箱が下端に掛かるだけで、画面の領域が表示の枠の外にある。読み込みの規則（枠に掛かる箱だけ読む）どおり読まれず、`measured['route:/']` が 0 のまま。配置は wiring（DOM に依らない）で決まり、ビューポートは CI と同じなので、手元だけの事情ではない。テストは箱を表示の上の方まで動かして（wheel）から測る
+
+## 10. 実装結果（Phase 8-3c: views・memos・diff・警告のリンク。2026-11-09）
+
+### 10.1 作ったもの
+
+| 所 | 内容 |
+|---|---|
+| `packages/wiring/src/diff.ts` | `diffGraphsV2`・`isEmptyDiffV2` と型（`GraphDiffV2`・`NodeChange`・`WireRef`・`WireChange`）を core から移した。core の `diff.ts` は wiring から再 export する（core の公開 API・`stack-atlas diff` の結果は同じ。同じ関数であることをテストで固定）。新しく `diffOverlayV2(prev, next)`: 今の graph に前にしか無い箱・項目・線（幽霊）を足した graph と、印（幽霊・今だけ・型の変わった項目）を返す |
+| `packages/wiring/src/views.ts` | `viewSelection`（start → 選択。host の枠の id は枠、箱、項目、`{from,to}` は線。解けなければ null）、`applyView`（既定の状態 ＋ view の variants と選択）、`findView` |
+| `packages/viewer/src/wiring/viewsMenu.ts` | 題名の横の `select`（views が無ければ隠す。先頭は空の選択肢「ビューを選ぶ…」）、選んでいる view の状態 `ViewChoice`（DOM に触らない）、`selectionFocus`（`?view=` で開いた直後に映す所） |
+| `packages/viewer/src/wiring/memoRules.ts` | DOM に触らない規則: 角を折る箱（`memoBoxIds`）、孤立メモ（`memoOrphans`）、札に並べるメモ（`memoTargets`）、折った角の形（`memoFold`） |
+| `packages/viewer/src/wiring/memoCard.ts` | 左下の札（その場で書く。`SharedMemoStore`）、「サーバーに保存」/「memos.json を書き出す」、題名の横の `孤立メモ N 件`（`ui/orphans.ts` の一覧を使い回す） |
+| `packages/viewer/src/wiring/issuesLink.ts` | 題名の横の `警告 N 件`（エラーがあれば `エラー N 件・警告 N 件`）と一覧。Esc・外のクリックで閉じる |
+| `render.ts`・`app.ts`・`style.css`・`main.ts` | `SceneInput` に `memos`（角を折る箱）と `diff`（印）。`mountWiring` に `issues`・`memos`・`prev`・`view`・`onViewChange`。`main.ts` は v2 でも memos.json（と `GET /api/memos`）を読み、`?prev=` の v2 / v1 を振り分け、`?view=` を渡し、配線図では検証の一覧の枠を出さない |
+
+### 10.2 §3.4 から決めた・変えた所（D77〜D81）
+
+| # | 決定 | 理由 |
+|---|---|---|
+| D77 | 差分は「今の graph ＋ 前にしか無いもの」を 1 回だけ配置して描き、**選ぶ・たどる・分岐は今の graph の索引**で行う。今の graph の線は同じ順で先頭に置くので、線のキー（`w<i>`）は今の索引と足した graph の索引で同じ。幽霊は `data-box`・`data-item`・`data-wire`・`data-type` を持たない（`data-ghost`・`data-ghost-item`・`data-ghost-wire`・`data-ghost-host`）。幽霊の箱は `screen.html` を外す（画面の HTML は読まない・画面の領域を取らない）、`host` は今の host の枠か幽霊の箱を指すときだけ残す（今は枠でない箱が幽霊の中身で枠に変わらないように）。前にしか無い線は両端が解けるものだけ足し、`broken` は外す（切れた線は今の graph の事実だけ描く）。今もある箱の消えた項目は口ごと足す | たどる規則（wiring）を幽霊のために変えない。幽霊はクリックしても今の索引に無いので選べず、選択が解ける |
+| D78 | 「`type` / `wireType` が変わった項目」は `diffOverlayV2` で数え、`diffGraphsV2` には足さない | `diffGraphsV2` の結果（`stack-atlas diff` の出力・空の判定）を移す前と同じにする |
+| D79 | 角を折る箱は**箱 id か、その箱の group（v1 の箱の id。D56）にメモがある箱**（host の枠は箱として描かないので入れない）。札は箱・項目（その箱）・host の枠・型の選択で出し、メモが無くても空の欄を出す（書けるように）。group のメモはあるときだけ並べる。線の選択と選択なしは札を出さない。保存は 3D の地図と同じ `SharedMemoStore`（localStorage のキーも同じで、scope は `project.name`。build の graph.json と graph.v1.json は同じ project 名なのでメモを共有する）と、API があれば札の「サーバーに保存」（3D の地図と同じく押したときだけ POST。無ければ「memos.json を書き出す」）。孤立メモは箱（host の枠を含む）・型・group のどれの id でもないメモで、題名の横のリンクから一覧（移す・消す） | group のメモは v1 のメモ（3D の地図で書いたもの）の行き先。印が無いと見つけられない |
+| D80 | views: 選ぶと分岐を既定に戻して variants を当て、start から選ぶ。**ほかを選ぶ・分岐を変える・空の選択肢を選ぶ**と外れる（メニューは空、URL の `?view=` も消える）。選んだら URL の `?view=<id>` に書く（そのまま共有できる）。`?view=` で開くと、開いた直後は始点のあたりを映す（最初の画面の箱より優先）。graph に無い id は普通に開いて警告の一覧に出す。`?view=` は配線図だけ（3D の地図は無視）、`?prev=` と一緒に使える | 分岐を変えたら view の状態ではなくなる。共有用の URL は選んだときに作る |
+| D81 | 警告のリンクは `button.wv-link`（`.alt-link` と同じ見た目。`a.alt-link` を数える e2e と被らない）。Esc は捕捉の段階で一覧だけを閉じる（選択は解かない）。外を押したら閉じ、押したものの操作はそのまま通す。図の上の枠は**配線図を描けなかったときだけ**（スキーマ違反・索引が作れない）。前回の graph を読めない・比べられないときの警告もリンクの一覧に入る。3D の地図で前回が v2 なら「前回の graph.json は version 2 のため差分は表示しません」（以前は「読めないため」） | 一覧が開いた直後の図を隠さない（D64）。Esc で一覧を閉じたら選択が消えるのは意外 |
+
+折った角: 右辺と下辺の 10px の所を結ぶ線で角を切り（`clipPath`。光る箱の `drop-shadow` を切らないよう箱の外へ 20px 広げる）、切った線を斜辺にした三角形（箱の色の半透明）を内側に描く。箱の形（`rect.shape`）・二重の枠・画面の箱の穴の空いた塗りを同じ角で切る。項目の文字とピンは切らない（最後の行のピンは下端から 18px）。文字の印は付けない。
+
+差分の色: 幽霊は灰（`#6b7280`）の点線（箱・行・線・host の枠）、今だけの箱は外側 3px に緑（`#4ade80`）の縁（種類の色は残す）、今だけの線は緑の細い線、今だけの項目と型の変わった項目は行の枠（`hit`）に緑の縁。選択中は幽霊も沈む（光る層に入らない）。今もある箱が光ると、その中の消えた項目は灰の行のまま光る層に入る。
+
+### 10.3 数字
+
+| | 8-3b の後 | 8-3c |
+|---|---|---|
+| 単体テスト（`STACK_ATLAS_REQUIRE_GO=1 pnpm test`） | 1126 | **1154**（wiring +11、viewer +16、core +1）→ レビューの修正（§10.6）で **1170**（wiring +1、viewer +15） |
+| ビューアの e2e | 41 | **47**（`wiring-views.spec.ts` の 6 本）→ レビューの修正で **48** |
+
+### 10.4 テスト
+
+- 単体（wiring）: `diff.test.ts`（移した `diffGraphsV2` を例の v2 で、口の無い箱で落ちない・箱・線・型・項目の増減と変更。`diffOverlayV2`: 今の graph を変えない、今の線のキーが同じ、幽霊の箱・消えた項目（口ごと）・解ける線だけ・`broken` を外す、`screen.html` を外す、host の残し方、今だけ・型の変わった項目、1 回で配置できる、今の索引で選ぶと幽霊が光らない、同じ graph なら空）、`views.test.ts`（start の 5 通り、既定に戻してから variants）。前の graph は `__tests__/diff-fixture.ts` の `prevOfToday`（e2e も使う）
+- 単体（core）: core の `diffGraphsV2`・`isEmptyDiffV2` が wiring と同じ関数（既存の v1 → v2 のテストはそのまま通る）
+- 単体（viewer）: `memoRules.test.ts`（角を折る箱、group が箱 id と同じとき、孤立メモ、札の中身、折った角の形）、`render-marks.test.ts`（clipPath と折り返し、文字の数は同じ、箱の座標は同じ、幽霊の属性、消えた項目・今だけ・型の変わった項目、幽霊の線、選択中の幽霊）、`viewsMenu.test.ts`（選択肢、`ViewChoice` の外れ方、`selectionFocus`）、`ui/issues.test.ts`（文言。§10.6 の 8 で `issuesLink.test.ts` から移した）
+- e2e（`wiring-views.spec.ts`）: views のメニュー（始点と分岐、ほかのクリックで空に戻る・URL の `?view=`、`?view=` で開く、無い id は警告）、メモ（角・札の位置と不透明・光る層の上・再生バーに重ならない、その場で書くと localStorage、group と型のメモ、書くと角が折れる・消すと戻る、孤立メモの一覧、再読み込みで残る）、`/api/memos` への保存、v2 の差分（幽霊の灰の点線・緑の縁・幽霊は光らず選べない）、v1 の前（文言だけ）、警告のリンク（枠が無い、開く、外のクリック・Esc で閉じる、Esc で選択は解けない）。前の graph はテストのたびに例を写して作る
+- 既存の e2e: `wiring.spec.ts` の `openV2` は枠を閉じていた所を「枠が無い・リンクの文言」に変えた（2026-11-09 変更（8-3c）のコメント）。`screens.spec.ts` の `openBuilt` は枠が出たときのために閉じる処理を残し、コメントだけ足した
+
+手元（macOS の Google Chrome、ヘッドレス）では `wiring.spec.ts`・`wiring-views.spec.ts`・`screens.spec.ts`・`built.spec.ts` の 2 本目を走らせた。`screens.spec.ts` の「fixture-repo: 画面の箱に iframe が出て…」は手元で落ちる（`measured['route:/']` が 0 のまま）が、8-3c の変更を外した 8-3b の先端（d3b49e7）でも同じく落ちるので、この変更とは関係ない。3D の地図の e2e は手元では進まない（§9.5）ので CI で確かめる。
+
+### 10.5 気づいたこと（直していない）
+
+- 幽霊の画面の箱は HTML を外すので、前の graph での大きさ（画面の領域の高さ）ではなく項目の行の高さで描く
+- 画面の箱の角を折ると、画面の領域が箱の下端まで届くときは切った角の三角形に iframe の端が少し見える（折り返しは半透明）
+- 札で group のメモを空にしても、選び直すまで欄は残る（書いている途中で欄が消えないように、選択が変わったときだけ並べ直す）
+- 幽霊の箱にあるメモ（前の graph の箱 id）は孤立メモとして数える（幽霊は選べないので札は出ない）
+- ~~今の線の `broken` の path が、前にしか無い子の項目を指すと、切れた線の端がその幽霊の行まで降りる~~ → §10.6 の 4 で直した
+- メモの id が `__proto__` のメモは保存できない（memos.json の読み込み・ローカルの保存で捨てる。通常のオブジェクトの自分のキーにできない）。読むときは §10.6 の 9 で落ちないようにした
+
+### 10.6 レビューの修正（2026-11-09。コードレビューとセキュリティレビューの指摘）
+
+決定の番号は振らない（D77〜D81 を補う）。どれも直す前に落ちるテストを足した（7・8 は片付けなので既存のテストで確かめる）。
+
+1. **Esc と文字を打つ欄**: Esc は window で受けて選択を解いていたので、札の textarea・孤立メモの移し先の入力欄で押しても（IME の変換を取り消す Esc も）選択が解けて札が閉じた。`F` キーと同じ文字を打つ欄の規則（`isTextEntry`: textarea・contenteditable・文字の input）にし、欄の中の Esc は**欄から焦点を外すだけ**、変換中（`isComposing`）は何もしない（`escapeAction`）。もう一度押すと選択を解く。閉じた select（views のメニュー）は Esc に意味が無いので今までどおり選択を解く（`F` キーは select では効かないまま。文字で選択肢へ飛ぶため）。`F` キーも変換中は効かない。テスト: `view.test.ts`「Esc」、e2e のメモ（札の中の Esc で選択が残り、2 回目で閉じる。以前の 1 回で閉じる手順を変えた）
+2. **空の選択肢と分岐**: views のメニューで空の選択肢を選ぶと選択は解けるが、前の view の分岐（CloudFront の HIT など）が残った。ほかの view を選んだときと同じく分岐を既定に戻す（`viewPick`）。テスト: `viewsMenu.test.ts`「viewPick」、e2e の views
+3. **差分を足した graph の配置の失敗**: 例外を受けていたのは `diffOverlayV2` と索引だけで、配置（`layoutWiring`）が投げると配線図ごと描けなかった。描く graph と配置を `drawPlan.ts` の `planDraw` に分け、配置まで含めて失敗したら差分を外して今の graph で描き、警告の一覧に「前回の graph.json と比べられないため差分は表示しません: …」を足す（今の graph の配置が投げる例外はそのまま）。テスト: `drawPlan.test.ts`
+4. **切れた線の端と幽霊の項目**: 足した graph では消えた子の項目（幽霊の行）が今の項目の下にあるので、`broken` の path がそれを指すと端が幽霊の行まで降りた（§10.5 に書いていたもの）。`brokenEnds` と `layoutWiring` に `ghostItems`（`diffOverlayV2` の `ghost.items`）を渡すと、その項目には降りず、`?prev=` が無いときと同じ祖先で止まる。テスト: wiring の `diff.test.ts`「切れた線の端は差分の幽霊の項目に降りない」、`drawPlan.test.ts`
+5. **`?view=` と URL**: ファイル（ドロップ・選択）で開いた graph でも、views のメニューで選ぶと URL に `?view=` を書いていた（`?graph=` が無いので共有できず、再読み込みで別の graph に当たる）。`?view=` の読み書きは URL（`?graph=`）から開いたときだけにした。graph に無い id は警告を出したあと URL から外す（`onViewChange(null)`）。テスト: e2e「ファイルで開いた graph の view は URL に書かない」、views の `?view=nope`
+6. **`?view=` で開いたときの描画**: 描いてから view を当てて描き直していた（開いた直後に 2 回）。view の分岐と選択を当ててから 1 回だけ描く。デバッグの口に `renders`（描いた回数）を足した。テスト: e2e の views（`renders` が 1）
+7. 片付け: `diffOverlayV2` は項目の木を 3 回歩いていた（`diffGraphsV2`、足した graph の参照、型の変わった項目）。`diffGraphsV2` と同じ走査で、型の変わった項目と足した graph の参照（今もある箱は今 ∪ 前の項目、幽霊の箱は前の項目）も集める。`diffGraphsV2` の結果は同じ
+8. 片付け: 警告のリンク（`issuesLink.ts`）が 3D の地図の枠（`ui/issues.ts`）の件数の文言と一覧の行を写していた。`ui/issues.ts` の `issuesLabel`・`issuesList` を両方で使う
+9. **セキュリティ（低）: 継承したプロパティの名前のメモの id**: 角を折る箱の判定 `memos[id]?.trim()` が、箱の `group` が `constructor`・`__proto__`・`toString` のとき `Object.prototype` の関数・オブジェクトを拾って TypeError になり、配線図ごと落ちた（graph.json の `group` は抽出器が書くが、細工した graph.json でも同じ）。メモを id で読む所は自分のプロパティで文字列のときだけ読む（`ui/memos.ts` の `memoOf`: `Object.hasOwn` ＋ `typeof === 'string'`）。`memoRules.ts` の判定、札の孤立メモの文、`SharedMemoStore`（`get`・`status`・未保存の判定・共有との比較）・`LocalMemoStore.get` に当てた。テスト: `memoRules.test.ts`（group が 3 つの名前でも落ちない・書けば角が折れる）、`memos.test.ts`

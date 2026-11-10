@@ -96,7 +96,7 @@ export function arrange(index: GraphIndex, options: LayoutOptions = {}) {
   const m = buildModel(index, cfg);
   const { boxes, boxOf } = m;
 
-  const ends = brokenEnds(index).filter(
+  const ends = brokenEnds(index, options.ghostItems).filter(
     (e) => boxOf.has(e.from.node.id) && boxOf.has(e.to.node.id),
   );
   const routed: Routed[] = [

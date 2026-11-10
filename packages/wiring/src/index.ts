@@ -33,6 +33,17 @@ export {
   type TraverseOptions,
 } from './traverse.js';
 export { select, type Selection, type LitSelection } from './select.js';
+export { viewSelection, applyView, findView } from './views.js';
+export {
+  diffGraphsV2,
+  isEmptyDiffV2,
+  diffOverlayV2,
+  type GraphDiffV2,
+  type NodeChange,
+  type WireRef,
+  type WireChange,
+  type DiffOverlayV2,
+} from './diff.js';
 export {
   schedule,
   drawnBalls,
