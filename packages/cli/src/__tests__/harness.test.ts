@@ -72,8 +72,9 @@ describe('build --strict（CI の関門。docs/19 §3.3）: fixture は補い無
       unjoined: 0,
       undetermined: 0,
       screensWithoutHtml: 0,
-      // Phase 9-L0（docs/23 §3.1）: 読めていないソースの言語は無い（next.config.mjs は nextjs-app と cache が読む）
-      unreadLanguages: 0,
+      // Phase 9-L0（docs/23 §3.1）: typescript（infra/main.ts。tsconfig の外で、cdktf も construct を見つけない）が
+      // 読めていない。next.config.mjs は nextjs-app と cache が読む。strict では警告のまま
+      unreadLanguages: 1,
     });
     const msgs: string[] = [];
     expect(runValidate([join(out, 'graph.json')], lines(msgs), { strict: true })).toBe(0);

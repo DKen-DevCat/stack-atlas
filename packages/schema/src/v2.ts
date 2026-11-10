@@ -145,7 +145,7 @@ export interface CoverageSummaryV2 {
     tracked: number;
     /** 秘密らしいファイル（数えるが中を読まない） */
     secret: number;
-    /** 除いた理由ごとの数（dir・output・generated・vendored・header・minified・tooLarge） */
+    /** 除いた理由ごとの数（unreadable・dir・output・generated・vendored・header・minified・tooLarge） */
     excluded: Record<string, number>;
     /** 数え方（git・walk）。walk は .gitignore を当てていない */
     methods: Array<'git' | 'walk'>;

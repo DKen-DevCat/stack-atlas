@@ -33,7 +33,7 @@
 
 ## 現在の状態と次のタスク
 
-テストは `pnpm test` で 1386 件（skip 2。`STACK_ATLAS_REQUIRE_GO=1` で go の側も）、viewer の e2e は 58 件（3D の地図の spec は手元のヘッドレスで止まる・遅いことがある。CI で実行。配線図だけを確かめる spec は `&pane=wiring`）。`examples/fixture-poly/`（2 repo の合成）は 56 ノード / 95 エッジ / 2 フロー / エラー 0。
+テストは `pnpm test` で 1399 件（skip 2。`STACK_ATLAS_REQUIRE_GO=1` で go の側も）、viewer の e2e は 58 件（3D の地図の spec は手元のヘッドレスで止まる・遅いことがある。CI で実行。配線図だけを確かめる spec は `&pane=wiring`）。`examples/fixture-poly/`（2 repo の合成）は 56 ノード / 95 エッジ / 2 フロー / エラー 0。
 実リポジトリでは設定を**この公開リポジトリの外**（兄弟ディレクトリ。`repos: { web: ../damage-web, platform: ../damage-platform }`）に置いて build し、149 / 330 / エラー 0 / 警告 0 を確認した（内訳は `HANDOFF.md` §0）。
 
 次にやること: ユーザーの判断待ち（Q17 エージェントを実リポジトリに当てるか、Q19 配線図の折りたたみ）。8-6 の残り（合成 300 箱でクリックから光るまで 50ms。配線図の描き直しを差分に）は docs/20 §7.6。Phase 6 の残り:

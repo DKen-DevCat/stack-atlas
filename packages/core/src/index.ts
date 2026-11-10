@@ -69,7 +69,7 @@ export {
   type WireRef,
   type WireChange,
 } from './diff.js';
-export { gitCommit, gitRemote } from './git.js';
+export { checkGitRepo, gitCommit, gitEnv, gitRemote, runGit, GIT_SAFE_CONFIG } from './git.js';
 // data-component の名前 → 箱 id（screenshots・screens 抽出器とビューアが同じ規則を使う。正本は wiring。docs/18 §3.3）
 export { resolveRegionRef } from '@stack-atlas/wiring';
 export {
@@ -89,6 +89,7 @@ export {
   globToRegExp,
   globBase,
   pathWithin,
+  stripJsComments,
   toArray,
   toPosix,
   type DeepMergeOptions,
@@ -196,6 +197,7 @@ export {
 } from './hand-graph.js';
 export {
   isSecretFile,
+  isSecretContentFile,
   stripSecretCode,
   repoPathProblem,
   confineRepoPath,
@@ -206,8 +208,9 @@ export {
 export { applyViewsYaml, VIEWS_FILES, VIEWS_LIMITS, type ViewsYamlResult } from './views-yaml.js';
 export {
   computeCoverage,
-  coverageIssues,
   countLines,
+  emptyCoverage,
+  safeComputeCoverage,
   emptyGraphText,
   formatCoverage,
   gitTrackedFiles,
@@ -230,12 +233,15 @@ export {
   type CoverageUnread,
   type ExcludeReason,
   type RepoScope,
+  type ScopeCategory,
   type ScopeFile,
 } from './coverage.js';
 export {
   detectLanguage,
   extOf,
+  isTestFile,
   knownLanguages,
+  TEST_DIRS,
   languageHint,
   shebangInterpreter,
   LANGUAGE_TABLE,

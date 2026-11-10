@@ -113,7 +113,7 @@ strict で**エラー**にするもの（埋められる隙間だけ。D69）:
 5. overrides の `remove` が v1 にも v2 にも無い id を指す。overrides の `nodes` で足した線の無い箱は警告
 6. 箱が 0 の graph（rule `empty`。2026-11-11 Phase 9-L0、docs/23 D171: 以前は空の graph が「エラー 0・警告 0」で通った）
 
-警告のままにするもの（D71）: 口の単位の線、不透明な箱、`wireType: unknown`、`typeRef` の欠け、カバー率 0、broken。読めていないソース（rule `unread`、path `coverage`。言語ごとに 1 件。issues にも同じ警告。9-L1 から言語ごとの条件でエラーにする。docs/23 §3.1）。docs/16 §9 の「（--strict でエラー）」は取り消す。infra の箱は契約で `_` の 1 項目なので、口の単位の線は必ず残る。
+警告のままにするもの（D71）: 口の単位の線、不透明な箱、`wireType: unknown`、`typeRef` の欠け、カバー率 0、broken。読めていないソース（rule `unread`、path `coverage`。言語ごとに 1 件。issues には出さない。テストのファイルは数えるが警告しない。9-L1 から言語ごとの条件でエラーにする。docs/23 §3.1・§11）。docs/16 §9 の「（--strict でエラー）」は取り消す。infra の箱は契約で `_` の 1 項目なので、口の単位の線は必ず残る。
 
 ### 3.4 views
 

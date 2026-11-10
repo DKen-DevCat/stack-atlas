@@ -123,13 +123,42 @@ describe('readNextConfig（8-3b: screens が trailingSlash・basePath・assetPre
   it(`${MAX_NEXT_CONFIG_BYTES / 1024 / 1024} MB を超える next.config は値を読まずに警告`, () => {
     const dir = app(`export default { output: 'export' }\n${' '.repeat(MAX_NEXT_CONFIG_BYTES)}`);
     const warns: string[] = [];
+    // 2026-11-11（Phase 9-L0 のレビュー）: tooLarge を足した（読まなかったので read で申告しない）
     expect(readNextConfig(dir, { appDir: 'web/src/app' }, (m) => warns.push(m))).toEqual({
       dir: 'web',
       file: 'web/next.config.mjs',
+      tooLarge: true,
     });
     expect(warns).toEqual([
       'web/next.config.mjs が 1 MB を超える（1025 KB）ので、output などの値を読みません',
     ]);
+  });
+});
+
+describe('read の申告（docs/23 §3.1。2026-11-11 Phase 9-L0 のレビュー）', () => {
+  const run = async (config: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'stack-atlas-nextread-'));
+    mkdirSync(join(dir, 'web', 'src', 'app'), { recursive: true });
+    writeFileSync(join(dir, 'web', 'src', 'app', 'page.tsx'), 'export default function P() {}\n');
+    writeFileSync(join(dir, 'web', 'next.config.mjs'), config);
+    const ctx: RepoContext = {
+      root: dir,
+      config: { next: { appDir: 'web/src/app' } },
+      repoName: 'r',
+      repos: { r: dir },
+      configDir: dir,
+      log: { debug() {}, info() {}, warn() {}, error() {} },
+      resolve: (...s) => resolve(dir, ...s),
+    };
+    return extractor.extract(ctx, { nodes: [], edges: [] });
+  };
+  it('読んだ next.config を申告し、大きすぎて読まなかったものは申告しない', async () => {
+    expect((await run("export default { output: 'export' }\n")).read).toEqual([
+      'web/next.config.mjs',
+    ]);
+    expect(
+      (await run(`export default {}\n${' '.repeat(MAX_NEXT_CONFIG_BYTES)}`)).read,
+    ).toBeUndefined();
   });
 });
 

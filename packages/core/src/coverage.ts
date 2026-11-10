@@ -1,30 +1,36 @@
 /**
  * 段 0（Phase 9-L0。docs/23 §3.1、D171・D179）: 数える範囲・言語の判定・「読んだ」・報告の `coverage`。
  *
- * 数える範囲: git の repo なら追跡しているファイル（`git -c core.fsmonitor=false ls-files -z`。シェルを通さず、
- * cwd は repo、GIT_* の環境変数は外す）。git が無い・repo でない・追跡が 0 なら walk（内蔵の除外表だけ。.gitignore は
- * 当てない。報告の note に書く）。そこから生成物と依存の置き場を除き、理由ごとに数える（scope.excluded）。
+ * 数える範囲: git の repo なら追跡しているファイル（`git ls-files -z`。git.ts の守り: fsmonitor を切る・埋めた bare repo を
+ * 見つけない・遅延の取得をしない・GIT_* を外す。`.git` の場所を checkGitRepo で確かめ、合わなければ使わない）。git が
+ * 使えない・追跡が 0 なら walk（内蔵の除外表だけ。.gitignore は当てない。報告の note に書く）。そこから生成物と依存の
+ * 置き場を除き、理由ごとに数える（scope.excluded）。テストのファイル（言語の表の規約）は category `test` で別に数え、
+ * 読めていなくても警告しない。
  *
  * 安全（全ファイルに触る処理）: walk はリンクを辿らない。git の一覧のパスも、途中の段とファイルを lstat で確かめ
- * （リンクなら読まない）、O_NOFOLLOW で開く。repo の外（`..`・絶対パス）は読まない。秘密らしいファイル（isSecretFile）は
- * 数えるが中を読まない。1 ファイルの大きさ（1MB）と件数（20 万）の上限。中身は数えるのに使うだけで、報告に出さない。
+ * （リンクなら読まない）、O_NOFOLLOW で開く。repo の外（`..`・絶対パス）は読まない。秘密らしいファイル
+ * （isSecretContentFile: .env・鍵・認証情報など）は数えるが中を読まない。source は行を数えるので全部（1MB まで）、
+ * config・other は先頭（64KB）だけ読む。中身は数えるのに使うだけで、報告に出さない。読めないファイル（EACCES など）は
+ * excluded.unreadable に数え、build を止めない。
+ * 例外として、除く規則を決めるために `.gitattributes`（linguist の属性）と `next.config.*`（静的エクスポートの書き出し先）を
+ * 1 ファイルずつの処理の前に読む（どちらも秘密のファイルではない。同じくリンクを辿らず 1MB まで）。
  *
  * 「読んだ」: 最後の graph の箱・型・手書きの箱・補いの箱の `file` にあるか、抽出器が `read` で申告したファイル。
  * 割合は言語ごとに行数で数える（source の種類だけ）。
  */
-import { execFileSync } from 'node:child_process';
 import { lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { CONFIG_FILES } from './config.js';
 import { FLOWS_FILES } from './flows.js';
-import { readNoFollowResult } from './fsafe.js';
+import { readHeadNoFollow, readNoFollowResult } from './fsafe.js';
+import { checkGitRepo, runGit } from './git.js';
 import { HAND_ADAPTER } from './hand-graph.js';
-import { detectLanguage, extOf, languageHint, type FileCategory } from './languages.js';
+import { detectLanguage, extOf, isTestFile, languageHint, type FileCategory } from './languages.js';
 import { HARNESS_DIR } from './local-files.js';
 import { OVERRIDES_FILE } from './overrides.js';
-import { isSecretFile, repoPathProblem } from './secrets.js';
-import type { BuildIssue, PartialGraph, StackAtlasConfig } from './types.js';
-import { globToRegExp, pathWithin, toPosix } from './util.js';
+import { isSecretContentFile, repoPathProblem } from './secrets.js';
+import type { PartialGraph, StackAtlasConfig } from './types.js';
+import { globToRegExp, pathWithin, stripJsComments, toPosix } from './util.js';
 
 /** 依存・生成物の既知のディレクトリ（どの深さでも。段の名前と完全一致） */
 export const GENERATED_DIRS: readonly string[] = [
@@ -41,6 +47,9 @@ export const GENERATED_DIRS: readonly string[] = [
   '.svelte-kit',
   'target',
   '_next',
+  // 2026-11-11（Phase 9-L0 のレビュー）: 依存の写し（Go・PHP・Ruby の vendor）とテストの入力（Go の testdata）
+  'vendor',
+  'testdata',
 ];
 /** walk のときに降りないディレクトリ（版の管理の置き場） */
 const VCS_DIRS = new Set(['.git', '.hg', '.svn']);
@@ -73,9 +82,10 @@ export const COVERAGE_LIMITS: CoverageLimits = {
 
 /** 除いた理由（docs/23 §3.1 の 2） */
 export type ExcludeReason =
-  'dir' | 'output' | 'generated' | 'vendored' | 'header' | 'minified' | 'tooLarge';
+  'unreadable' | 'dir' | 'output' | 'generated' | 'vendored' | 'header' | 'minified' | 'tooLarge';
 
 const EXCLUDE_REASONS: readonly ExcludeReason[] = [
+  'unreadable',
   'dir',
   'output',
   'generated',
@@ -85,13 +95,16 @@ const EXCLUDE_REASONS: readonly ExcludeReason[] = [
   'tooLarge',
 ];
 
+/** 数える範囲のファイルの種類（言語の表の 4 つ、表に無い other、source のうちテストの規約に合う test） */
+export type ScopeCategory = FileCategory | 'other' | 'test';
+
 /** 数える範囲の 1 ファイル */
 export interface ScopeFile {
   /** repo 相対（`/` 区切り） */
   path: string;
   language: string;
-  category: FileCategory | 'other';
-  /** 行数（source のときだけ） */
+  category: ScopeCategory;
+  /** 行数（source と test のときだけ） */
   lines?: number;
 }
 
@@ -109,7 +122,7 @@ export interface RepoScope {
   secret: number;
   /** シンボリックリンク（辿らない） */
   symlinks: number;
-  /** 普通のファイルでない・無い・読めない（submodule・消えたファイルなど） */
+  /** 普通のファイルでない・無い（submodule・消えたファイルなど） */
   notFiles: number;
   /** walk のときに降りなかったディレクトリ（既知のディレクトリ・出力先・.git） */
   prunedDirs: number;
@@ -120,63 +133,67 @@ export interface RepoScope {
 const zeroExcluded = (): Record<ExcludeReason, number> =>
   Object.fromEntries(EXCLUDE_REASONS.map((r) => [r, 0])) as Record<ExcludeReason, number>;
 
-/** git に渡す環境変数（呼んだ側の GIT_* は外す。認証の入力を求めない・ロックを取らない） */
-function gitEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
-  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('GIT_')) env[k] = v;
-  env.GIT_OPTIONAL_LOCKS = '0';
-  env.GIT_TERMINAL_PROMPT = '0';
-  return env;
-}
-
 /**
- * git が追跡しているファイル（root 相対）。git が無い・repo でない・失敗したら undefined。
- * root が上の repo の中のディレクトリなら、その下だけが返る（ls-files は cwd の下を cwd 相対で出す）
+ * git が追跡しているファイル（root 相対）。repo の場所を checkGitRepo で確かめてから `ls-files -z`（git.ts の守り付き）。
+ * root が上の repo の中のディレクトリなら、その下だけが返る（ls-files は cwd の下を cwd 相対で出す）。使えなければ理由
  */
 export function gitTrackedFiles(
   root: string,
   timeoutMs = COVERAGE_LIMITS.gitTimeoutMs,
-): string[] | undefined {
-  try {
-    const out = execFileSync('git', ['-c', 'core.fsmonitor=false', 'ls-files', '-z'], {
-      cwd: root,
-      env: gitEnv(),
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: timeoutMs,
-      maxBuffer: 512 * 1024 * 1024,
-    });
-    return out.toString('utf8').split('\0').filter(Boolean);
-  } catch {
-    return undefined;
-  }
+): { files: string[] } | { why: string } {
+  const repo = checkGitRepo(root, timeoutMs);
+  if ('why' in repo) return repo;
+  const out = runGit(root, ['ls-files', '-z'], { timeoutMs, maxBuffer: 512 * 1024 * 1024 });
+  if (!out) return { why: 'git ls-files が失敗した' };
+  return { files: out.toString('utf8').split('\0').filter(Boolean) };
 }
 
-/** 途中の段がリンクでないディレクトリか（root 相対の dir。'' は root）。結果は cache に覚える */
-function dirOk(root: string, dir: string, cache: Map<string, boolean>): boolean {
-  if (dir === '') return true;
+type DirState = 'ok' | 'bad' | 'unreadable';
+
+/** 途中の段がリンクでないディレクトリか（root 相対の dir。'' は root）。lstat の失敗は unreadable。cache に覚える */
+function dirState(root: string, dir: string, cache: Map<string, DirState>): DirState {
+  if (dir === '') return 'ok';
   const hit = cache.get(dir);
   if (hit !== undefined) return hit;
   const i = dir.lastIndexOf('/');
-  const parent = i < 0 ? '' : dir.slice(0, i);
-  let ok = dirOk(root, parent, cache);
-  if (ok) {
-    const st = lstatSync(join(root, dir), { throwIfNoEntry: false });
-    ok = !!st && st.isDirectory() && !st.isSymbolicLink();
+  let state = dirState(root, i < 0 ? '' : dir.slice(0, i), cache);
+  if (state === 'ok') {
+    try {
+      const st = lstatSync(join(root, dir), { throwIfNoEntry: false });
+      state = st && st.isDirectory() && !st.isSymbolicLink() ? 'ok' : 'bad';
+    } catch {
+      state = 'unreadable'; // EACCES・ELOOP・ENAMETOOLONG など（build を止めない）
+    }
   }
-  cache.set(dir, ok);
-  return ok;
+  cache.set(dir, state);
+  return state;
 }
 
-type Stat = { size: number } | 'symlink' | 'not-file';
+type Stat = { size: number } | 'symlink' | 'not-file' | 'unreadable';
 
-/** root/rel を、途中の段もファイルもリンクを辿らずに確かめる */
-function safeStat(root: string, rel: string, cache: Map<string, boolean>): Stat {
+/** root/rel を、途中の段もファイルもリンクを辿らずに確かめる（例外を投げない） */
+function safeStat(root: string, rel: string, cache: Map<string, DirState>): Stat {
   const i = rel.lastIndexOf('/');
-  if (!dirOk(root, i < 0 ? '' : rel.slice(0, i), cache)) return 'not-file';
-  const st = lstatSync(join(root, rel), { throwIfNoEntry: false });
-  if (!st) return 'not-file';
-  if (st.isSymbolicLink()) return 'symlink';
-  return st.isFile() ? { size: st.size } : 'not-file';
+  const dir = dirState(root, i < 0 ? '' : rel.slice(0, i), cache);
+  if (dir !== 'ok') return dir === 'bad' ? 'not-file' : 'unreadable';
+  try {
+    const st = lstatSync(join(root, rel), { throwIfNoEntry: false });
+    if (!st) return 'not-file';
+    if (st.isSymbolicLink()) return 'symlink';
+    return st.isFile() ? { size: st.size } : 'not-file';
+  } catch {
+    return 'unreadable';
+  }
+}
+
+/** O_NOFOLLOW で全部（maxBytes まで）読む。読めなければ undefined（例外を投げない） */
+function readAll(abs: string, maxBytes: number): Buffer | undefined {
+  try {
+    const r = readNoFollowResult(abs, maxBytes);
+    return 'data' in r ? r.data : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** root/rel を読む（途中の段もファイルもリンクを辿らない。maxBytes まで）。読めなければ undefined */
@@ -184,13 +201,12 @@ function safeRead(
   root: string,
   rel: string,
   maxBytes: number,
-  cache: Map<string, boolean>,
+  cache: Map<string, DirState>,
 ): Buffer | undefined {
   if (repoPathProblem(rel)) return undefined;
   const st = safeStat(root, rel, cache);
   if (typeof st !== 'object' || st.size > maxBytes) return undefined;
-  const r = readNoFollowResult(join(root, rel), maxBytes);
-  return 'data' in r ? r.data : undefined;
+  return readAll(join(root, rel), maxBytes);
 }
 
 /** 行数（最後の改行の後に文字があれば 1 行に数える） */
@@ -310,7 +326,9 @@ function outputDirs(
   for (const rel of listed) {
     const base = rel.slice(rel.lastIndexOf('/') + 1);
     if (!NEXT_CONFIG_RE.test(base) || inGeneratedDir(rel)) continue;
-    const text = read(rel)?.toString('utf8');
+    // コメントを外してから見る（コメントにした `output: 'export'` で out/ を除かない。nextjs-app と同じ stripJsComments）
+    const raw = read(rel)?.toString('utf8');
+    const text = raw === undefined ? undefined : stripJsComments(raw);
     if (!text || !/\boutput\s*:\s*["'`]export["'`]/.test(text)) continue;
     const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '';
     const join2 = (x: string) => (dir ? `${dir}/${x}` : x);
@@ -330,11 +348,13 @@ const inGeneratedDir = (rel: string) =>
     .some((s) => GENERATED_DIR_SET.has(s));
 const under = (rel: string, dir: string) => rel === dir || rel.startsWith(`${dir}/`);
 
-/** walk（git が使えないとき）。リンクを辿らず、版の管理の置き場・既知のディレクトリ・出力先には降りない */
+/**
+ * walk（git が使えないとき。1 回だけ歩く）。リンクを辿らず、版の管理の置き場と既知のディレクトリには降りない。
+ * 書き出し先は next.config を見てから決めるので、ここでは降りて、後で excluded.output に数える（git のときと同じ）
+ */
 function walkRepo(
   root: string,
   limits: CoverageLimits,
-  pruneDir: (rel: string, name: string) => boolean,
 ): { files: string[]; symlinks: number; prunedDirs: number; overLimit: number } {
   const files: string[] = [];
   let symlinks = 0;
@@ -352,7 +372,7 @@ function walkRepo(
       const rel = dir ? `${dir}/${d.name}` : d.name;
       if (d.isSymbolicLink()) symlinks++;
       else if (d.isDirectory()) {
-        if (VCS_DIRS.has(d.name) || pruneDir(rel, d.name)) prunedDirs++;
+        if (VCS_DIRS.has(d.name) || GENERATED_DIR_SET.has(d.name)) prunedDirs++;
         else walk(rel);
       } else if (d.isFile()) {
         if (files.length >= limits.maxFiles) overLimit++;
@@ -393,36 +413,28 @@ export function scanRepoScope(
     scope.note = 'repo のディレクトリを開けません';
     return scope;
   }
-  const dirCache = new Map<string, boolean>();
+  const dirCache = new Map<string, DirState>();
   const read = (rel: string) => safeRead(realRoot, rel, limits.maxFileBytes, dirCache);
 
-  let listed = gitTrackedFiles(realRoot, limits.gitTimeoutMs);
-  let outs: string[];
-  if (listed?.length) {
-    listed = [...new Set(listed.map((p) => toPosix(p)))].sort();
-    outs = outputDirs(repoName, config, listed, read);
+  const git = gitTrackedFiles(realRoot, limits.gitTimeoutMs);
+  let listed: string[];
+  if ('files' in git && git.files.length) {
+    listed = [...new Set(git.files.map((p) => toPosix(p)))].sort();
     if (listed.length > limits.maxFiles) {
       scope.overLimit = listed.length - limits.maxFiles;
       listed = listed.slice(0, limits.maxFiles);
     }
   } else {
     scope.method = 'walk';
-    scope.note = listed
-      ? 'git が追跡しているファイルが無いので、.gitignore を当てずに内蔵の除外表だけで数えました'
-      : 'git の repo ではない（か git が無い）ので、.gitignore を当てずに内蔵の除外表だけで数えました';
-    // 出力先は next.config を見てから決めるので、まず既知のディレクトリだけで歩いて next.config を探す
-    const first = walkRepo(realRoot, limits, (_rel, name) => GENERATED_DIR_SET.has(name));
-    outs = outputDirs(repoName, config, first.files, read);
-    const w = walkRepo(
-      realRoot,
-      limits,
-      (rel, name) => GENERATED_DIR_SET.has(name) || outs.some((o) => under(rel, o)),
-    );
+    const why = 'files' in git ? 'git が追跡しているファイルが無い' : git.why;
+    scope.note = `${why}ので、.gitignore を当てずに内蔵の除外表だけで数えました`;
+    const w = walkRepo(realRoot, limits);
     listed = w.files;
     scope.symlinks += w.symlinks;
     scope.prunedDirs = w.prunedDirs;
     scope.overLimit = w.overLimit;
   }
+  const outs = outputDirs(repoName, config, listed, read);
   scope.tracked = listed.length;
 
   // .gitattributes（浅いものから。同じ深さはパスの順）
@@ -463,7 +475,12 @@ export function scanRepoScope(
       scope.notFiles++;
       continue;
     }
-    if (isSecretFile(rel)) {
+    if (st === 'unreadable') {
+      scope.excluded.unreadable++;
+      continue;
+    }
+    const guess = detectLanguage(rel);
+    if (isSecretContentFile(rel, { sourceCode: guess.category === 'source' })) {
       scope.secret++;
       continue;
     }
@@ -471,37 +488,52 @@ export function scanRepoScope(
       scope.excluded.tooLarge++;
       continue;
     }
-    const guess = detectLanguage(rel);
-    const text =
-      guess.category === 'source' || guess.category === 'config' || guess.category === 'other';
-    if (!text) {
+    if (guess.category === 'doc' || guess.category === 'asset') {
       scope.files.push({ path: rel, ...guess });
       continue;
     }
-    const r = readNoFollowResult(join(realRoot, rel), limits.maxFileBytes);
-    if (!('data' in r)) {
-      if (r.why === 'too-large') scope.excluded.tooLarge++;
-      else scope.notFiles++;
+    const abs = join(realRoot, rel);
+    // source は行を数えるので全部、config・other は先頭だけ（生成物の印と shebang）
+    let full = guess.category === 'source' ? readAll(abs, limits.maxFileBytes) : undefined;
+    let head: Buffer | undefined;
+    try {
+      head = full ? full.subarray(0, limits.headBytes) : readHeadNoFollow(abs, limits.headBytes);
+    } catch {
+      head = undefined;
+    }
+    if (!head) {
+      scope.excluded.unreadable++;
       continue;
     }
-    const head = r.data.subarray(0, limits.headBytes).toString('utf8');
+    const headText = head.toString('utf8');
+    const nl = headText.indexOf('\n');
     const det =
       guess.category === 'other'
-        ? detectLanguage(rel, head.slice(0, head.indexOf('\n') >>> 0))
+        ? detectLanguage(rel, nl < 0 ? headText : headText.slice(0, nl))
         : guess;
+    if (det.category === 'source' && !full) {
+      full = readAll(abs, limits.maxFileBytes); // shebang で source と分かった
+      if (!full) {
+        scope.excluded.unreadable++;
+        continue;
+      }
+    }
     if (
       (det.category === 'source' || det.category === 'config') &&
-      hasGeneratedHeader(head, limits.headerLines)
+      hasGeneratedHeader(headText, limits.headerLines)
     ) {
       scope.excluded.header++;
       continue;
     }
-    if (det.category === 'source' && isMinified(head, limits.minifiedLine)) {
+    if (det.category === 'source' && isMinified(headText, limits.minifiedLine)) {
       scope.excluded.minified++;
       continue;
     }
     const f: ScopeFile = { path: rel, ...det };
-    if (det.category === 'source') f.lines = countLines(r.data);
+    if (det.category === 'source') {
+      f.lines = countLines(full!);
+      if (isTestFile(rel, det.language)) f.category = 'test';
+    }
     scope.files.push(f);
   }
   return scope;
@@ -568,10 +600,17 @@ export interface CoverageReport {
       note?: string;
     }>;
   };
-  /** 種類ごとのファイルの数（source は行数も） */
-  categories: Record<FileCategory | 'other', { files: number; lines?: number }>;
-  /** source の言語ごと（行数の多い順） */
+  /** 種類ごとのファイルの数（source と test は行数も） */
+  categories: Record<ScopeCategory, { files: number; lines?: number }>;
+  /** source の言語ごと（行数の多い順。テストのファイルは入れない） */
   languages: CoverageLanguage[];
+  /**
+   * テストのファイル（言語の表の規約に合う source。言語ごと、行数の多い順）。read は読めた行。読めていなくても警告しない
+   * （テストは抽出の対象でないことが多い。2026-11-11 Phase 9-L0 のレビュー）
+   */
+  tests: Array<{ language: string; files: number; lines: number; read: number }>;
+  /** 数える範囲を作れなかった理由（このとき数は全部 0。build は止めない） */
+  unavailable?: string;
   /** config の形式ごと（ファイルの多い順） */
   formats: CoverageFormat[];
   /** 表に無い拡張子（ファイルの多い順に 20 まで。拡張子の無いものは `(なし)`） */
@@ -708,6 +747,7 @@ export function computeCoverage(input: CoverageInput): CoverageReport {
 
   const categories: CoverageReport['categories'] = {
     source: { files: 0, lines: 0 },
+    test: { files: 0, lines: 0 },
     config: { files: 0 },
     doc: { files: 0 },
     asset: { files: 0 },
@@ -718,6 +758,7 @@ export function computeCoverage(input: CoverageInput): CoverageReport {
     { row: CoverageLanguage; by: Map<string, number>; unread: string[] }
   >();
   const formats = new Map<string, { files: number; by: Set<string> }>();
+  const tests = new Map<string, { language: string; files: number; lines: number; read: number }>();
   const otherExt = new Map<string, number>();
   const scope: CoverageReport['scope'] = {
     files: 0,
@@ -781,6 +822,14 @@ export function computeCoverage(input: CoverageInput): CoverageReport {
           l.row.unread.lines += lines;
           l.unread.push(k);
         }
+      } else if (f.category === 'test') {
+        const lines = f.lines ?? 0;
+        c.lines = (c.lines ?? 0) + lines;
+        let t = tests.get(f.language);
+        if (!t) tests.set(f.language, (t = { language: f.language, files: 0, lines: 0, read: 0 }));
+        t.files++;
+        t.lines += lines;
+        if (readers(k).some((r) => r !== READER_CORE)) t.read += lines;
       } else if (f.category === 'config') {
         let fm = formats.get(f.language);
         if (!fm) formats.set(f.language, (fm = { files: 0, by: new Set() }));
@@ -829,6 +878,12 @@ export function computeCoverage(input: CoverageInput): CoverageReport {
           (x) => x.format,
         ),
       ),
+    tests: [...tests.values()].sort(
+      byCount(
+        (x) => x.lines,
+        (x) => x.language,
+      ),
+    ),
     other: [...otherExt.entries()]
       .map(([ext, files]) => ({ ext, files }))
       .sort(
@@ -859,18 +914,61 @@ export function unreadText(
   return `読めていないソース: ${u.language} ${fmt(u.files)} ファイル（${fmt(u.lines)} 行）— ${u.why}`;
 }
 
-/** 読めていないソースの警告（言語ごとに 1 件。path は coverage。docs/23 §3.1 の strict の 9-L0） */
-export function coverageIssues(c: CoverageReport): Array<BuildIssue & { level: 'warning' }> {
-  return c.unread.map((u) => ({
-    level: 'warning',
-    path: 'coverage',
-    message: unreadText(u),
-    data: { language: u.language, files: u.files, lines: u.lines },
-  }));
+/** 数える範囲を作れなかったときの空の報告（数は全部 0。unavailable に理由） */
+export function emptyCoverage(why: string): CoverageReport {
+  const zero = { files: 0 };
+  return {
+    scope: {
+      files: 0,
+      tracked: 0,
+      excluded: zeroExcluded(),
+      secret: 0,
+      symlinks: 0,
+      notFiles: 0,
+      prunedDirs: 0,
+      overLimit: 0,
+      repos: [],
+    },
+    categories: {
+      source: { files: 0, lines: 0 },
+      test: { files: 0, lines: 0 },
+      config: { ...zero },
+      doc: { ...zero },
+      asset: { ...zero },
+      other: { ...zero },
+    },
+    languages: [],
+    tests: [],
+    formats: [],
+    other: [],
+    unread: [],
+    unavailable: why,
+  };
+}
+
+/**
+ * computeCoverage を build を止めずに呼ぶ（段 0 の報告は補助なので、思わぬ例外でも build は続ける。2026-11-11
+ * Phase 9-L0 のレビュー）。失敗したら unavailable の空の報告と、issues に出す 1 行の警告の文
+ */
+export function safeComputeCoverage(input: CoverageInput): {
+  coverage: CoverageReport;
+  warning?: string;
+} {
+  try {
+    return { coverage: computeCoverage(input) };
+  } catch (e) {
+    const why = (e as Error).message || String(e);
+    return {
+      coverage: emptyCoverage(why),
+      warning: `段 0 の報告（数える範囲・言語ごとの読めた行）を作れませんでした（${why}）。読めていないソースは報告されません`,
+    };
+  }
 }
 
 /** 箱が 0 の graph の strict のエラーの文（見つけた言語を添える） */
 export function emptyGraphText(c: CoverageReport | undefined): string {
+  if (c?.unavailable)
+    return `箱が 0 の graph です（数える範囲を作れなかったので、どの言語のソースがあるかは分かりません: ${c.unavailable}）`;
   const langs = (c?.languages ?? []).filter((l) => l.files > 0);
   if (!langs.length)
     return '箱が 0 の graph です。数える範囲にソースが見つかりません（repo のパス・repos の設定を確かめる）';
@@ -887,11 +985,16 @@ export function emptyGraphText(c: CoverageReport | undefined): string {
   return `箱が 0 の graph です。数える範囲のソースは ${top}${more}で、どの抽出器も読めませんでした（${hint}構文の段（9-L1）で読めるようになる予定。今は手書きの部分グラフで補う）`;
 }
 
-/** 要約（標準出力）の行: 数える範囲と、言語ごとの読めた割合 */
-export function formatCoverage(c: CoverageReport): string[] {
+/**
+ * 要約（標準出力）の行: 数える範囲と、言語ごとの読めた割合、テストのファイル。unreadLines なら読めていないソースの行も
+ * （strict の一覧を出さないとき。strict の一覧を出すときはそこに警告として出るので、2 回出さない）
+ */
+export function formatCoverage(c: CoverageReport, opts: { unreadLines?: boolean } = {}): string[] {
+  if (c.unavailable) return [`数える範囲: 作れませんでした（${c.unavailable}）`];
   const s = c.scope;
   const ex = s.excluded;
   const excludedParts: Array<[string, number]> = [
+    ['読めない', ex.unreadable],
     ['既知のディレクトリ', ex.dir],
     ['書き出し先', ex.output],
     ['linguist-generated', ex.generated],
@@ -919,6 +1022,11 @@ export function formatCoverage(c: CoverageReport): string[] {
       `  ${l.language}: ${fmt(l.files)} ファイル・${fmt(l.lines)} 行、読めた ${fmt(read)} 行（${pct}%${by ? `。${by}` : ''}）`,
     );
   }
+  if (c.tests.length)
+    lines.push(
+      `  テスト（読めていなくても警告しない）: ${c.tests.map((t) => `${t.language} ${fmt(t.files)} ファイル・${fmt(t.lines)} 行`).join('、')}`,
+    );
+  if (opts.unreadLines) for (const u of c.unread) lines.push(unreadText(u));
   return lines;
 }
 

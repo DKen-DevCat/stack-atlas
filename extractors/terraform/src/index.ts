@@ -173,9 +173,9 @@ export const extractor: Extractor = {
     ctx.log.info(
       `terraform: ${modules.size} module(s), ${g.resources.length} resources, ${g.nodes.length} nodes, ${g.edges.length} edges`,
     );
-    // 読んだファイル（module の .tf と root の .tfvars。docs/23 §3.1）
+    // 読んだファイル（解析できた module の .tf と root の .tfvars。docs/23 §3.1）
     const read = [
-      ...[...modules.values()].flatMap((m) => m.files.map((f) => f.abs)),
+      ...[...modules.values()].flatMap((m) => m.files.filter((f) => f.parsed).map((f) => f.abs)),
       ...tfvarsFiles,
     ]
       .map((abs) => relative(ctx.root, abs).split('\\').join('/'))

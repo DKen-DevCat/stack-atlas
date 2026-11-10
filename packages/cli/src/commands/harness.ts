@@ -70,8 +70,12 @@ export function formatHarnessSummary(
   opts: { strict?: boolean; dryRun?: boolean } = {},
 ): string {
   const lines: string[] = [];
-  // 数える範囲と言語ごとの読めた行（読めていないソースは問題の一覧に警告で出る。docs/23 §3.1）
-  if (res.harness?.coverage) lines.push(...formatCoverage(res.harness.coverage));
+  // 数える範囲と言語ごとの読めた行（docs/23 §3.1）。読めていないソースの行は、strict の一覧を出すときはそこ（警告）に
+  // 出るので、ここでは strict の一覧を出さないときだけ出す（1 回だけ）
+  if (res.harness?.coverage)
+    lines.push(
+      ...formatCoverage(res.harness.coverage, { unreadLines: !(opts.strict || opts.dryRun) }),
+    );
   const sup = res.harness?.supplements ?? [];
   if (sup.length) {
     const c = countSupplements(sup);

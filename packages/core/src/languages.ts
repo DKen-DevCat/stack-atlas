@@ -9,6 +9,8 @@
  * - asset: コードでない資産（画像・フォント・音声・スタイル・マークアップ・データ）。HTML と CSS もここ（関数の箱を持たない）
  */
 
+import { globToRegExp } from './util.js';
+
 export type FileCategory = 'source' | 'config' | 'doc' | 'asset';
 
 export interface LanguageEntry {
@@ -25,7 +27,24 @@ export interface LanguageEntry {
   interpreters?: readonly string[];
   /** 今の抽出器が設定で読める言語なら、読めていないときのヒント（報告の unread の why） */
   hint?: string;
+  /** テストのファイルの名前の規約（ファイル名の glob。合えば報告の test に数え、読めていなくても警告しない） */
+  tests?: readonly string[];
 }
+
+/**
+ * どの言語でもテストの置き場とみなすディレクトリ（段の名前と完全一致。2026-11-11 Phase 9-L0 のレビュー）。
+ * Go の testdata と依存の vendor は数える範囲から除く（coverage.ts の GENERATED_DIRS）
+ */
+export const TEST_DIRS: readonly string[] = [
+  '__tests__',
+  '__mocks__',
+  'test',
+  'tests',
+  'Tests',
+  'spec',
+  'specs',
+  'e2e',
+];
 
 /** 判定の表（データ）。上の行が先に当たる（ファイル名 → 先頭 → 拡張子 → shebang の順に引く） */
 export const LANGUAGE_TABLE: readonly LanguageEntry[] = [
@@ -36,6 +55,7 @@ export const LANGUAGE_TABLE: readonly LanguageEntry[] = [
     ext: ['.ts', '.tsx', '.mts', '.cts'],
     interpreters: ['ts-node', 'tsx', 'deno', 'bun'],
     hint: 'ts.tsconfig の tsconfig の include・files に入っていない',
+    tests: ['*.{test,spec}.{ts,tsx,mts,cts}'],
   },
   {
     language: 'javascript',
@@ -43,6 +63,7 @@ export const LANGUAGE_TABLE: readonly LanguageEntry[] = [
     ext: ['.js', '.jsx', '.mjs', '.cjs'],
     interpreters: ['node', 'nodejs'],
     hint: 'allowJs の tsconfig（ts.tsconfig）に入っていない',
+    tests: ['*.{test,spec}.{js,jsx,mjs,cjs}'],
   },
   { language: 'svelte', category: 'source', ext: ['.svelte'] },
   { language: 'vue', category: 'source', ext: ['.vue'] },
@@ -51,12 +72,33 @@ export const LANGUAGE_TABLE: readonly LanguageEntry[] = [
   { language: 'elm', category: 'source', ext: ['.elm'] },
   { language: 'purescript', category: 'source', ext: ['.purs'] },
   // --- source: Apple・JVM・.NET
-  { language: 'swift', category: 'source', ext: ['.swift'], interpreters: ['swift'] },
+  {
+    language: 'swift',
+    category: 'source',
+    ext: ['.swift'],
+    interpreters: ['swift'],
+    tests: ['*Tests.swift', '*Test.swift'],
+  },
   { language: 'objective-c', category: 'source', ext: ['.m'] },
   { language: 'objective-cpp', category: 'source', ext: ['.mm'] },
-  { language: 'kotlin', category: 'source', ext: ['.kt', '.kts'] },
-  { language: 'java', category: 'source', ext: ['.java'] },
-  { language: 'scala', category: 'source', ext: ['.scala', '.sc'] },
+  {
+    language: 'kotlin',
+    category: 'source',
+    ext: ['.kt', '.kts'],
+    tests: ['*Test.kt', '*Tests.kt'],
+  },
+  {
+    language: 'java',
+    category: 'source',
+    ext: ['.java'],
+    tests: ['*Test.java', '*Tests.java', '*IT.java'],
+  },
+  {
+    language: 'scala',
+    category: 'source',
+    ext: ['.scala', '.sc'],
+    tests: ['*Spec.scala', '*Test.scala', '*Suite.scala'],
+  },
   {
     language: 'groovy',
     category: 'source',
@@ -65,7 +107,12 @@ export const LANGUAGE_TABLE: readonly LanguageEntry[] = [
     interpreters: ['groovy'],
   },
   { language: 'clojure', category: 'source', ext: ['.clj', '.cljs', '.cljc'] },
-  { language: 'csharp', category: 'source', ext: ['.cs', '.csx'] },
+  {
+    language: 'csharp',
+    category: 'source',
+    ext: ['.cs', '.csx'],
+    tests: ['*Tests.cs', '*Test.cs'],
+  },
   { language: 'fsharp', category: 'source', ext: ['.fs', '.fsx', '.fsi'] },
   { language: 'visual-basic', category: 'source', ext: ['.vb'] },
   // --- source: システム
@@ -74,13 +121,15 @@ export const LANGUAGE_TABLE: readonly LanguageEntry[] = [
     category: 'source',
     ext: ['.go'],
     hint: 'go 抽出器の対象外（go.mod のあるディレクトリを repo にする。_test.go と _・. で始まるディレクトリは読まない）',
+    tests: ['*_test.go'],
   },
   { language: 'rust', category: 'source', ext: ['.rs'] },
-  { language: 'c', category: 'source', ext: ['.c', '.h'] },
+  { language: 'c', category: 'source', ext: ['.c', '.h'], tests: ['*_test.c'] },
   {
     language: 'cpp',
     category: 'source',
     ext: ['.cc', '.cpp', '.cxx', '.c++', '.hh', '.hpp', '.hxx', '.ino'],
+    tests: ['*_test.{cc,cpp}', '*_unittest.{cc,cpp}'],
   },
   { language: 'zig', category: 'source', ext: ['.zig'] },
   { language: 'nim', category: 'source', ext: ['.nim'] },
@@ -99,6 +148,7 @@ export const LANGUAGE_TABLE: readonly LanguageEntry[] = [
     category: 'source',
     ext: ['.py', '.pyi', '.pyw'],
     interpreters: ['python', 'pypy'],
+    tests: ['test_*.py', '*_test.py', 'conftest.py'],
   },
   { language: 'jupyter', category: 'source', ext: ['.ipynb'] },
   {
@@ -107,16 +157,41 @@ export const LANGUAGE_TABLE: readonly LanguageEntry[] = [
     ext: ['.rb', '.rake', '.gemspec'],
     names: ['Rakefile', 'Vagrantfile'],
     interpreters: ['ruby'],
+    tests: ['*_spec.rb', '*_test.rb'],
   },
-  { language: 'php', category: 'source', ext: ['.php', '.phtml'], interpreters: ['php'] },
+  {
+    language: 'php',
+    category: 'source',
+    ext: ['.php', '.phtml'],
+    interpreters: ['php'],
+    tests: ['*Test.php'],
+  },
   { language: 'perl', category: 'source', ext: ['.pl', '.pm'], interpreters: ['perl'] },
-  { language: 'lua', category: 'source', ext: ['.lua'], interpreters: ['lua', 'luajit'] },
+  {
+    language: 'lua',
+    category: 'source',
+    ext: ['.lua'],
+    interpreters: ['lua', 'luajit'],
+    tests: ['*_spec.lua'],
+  },
   { language: 'r', category: 'source', ext: ['.r'], interpreters: ['rscript'] },
   { language: 'julia', category: 'source', ext: ['.jl'], interpreters: ['julia'] },
-  { language: 'dart', category: 'source', ext: ['.dart'] },
-  { language: 'elixir', category: 'source', ext: ['.ex', '.exs'], interpreters: ['elixir'] },
+  { language: 'dart', category: 'source', ext: ['.dart'], tests: ['*_test.dart'] },
+  {
+    language: 'elixir',
+    category: 'source',
+    ext: ['.ex', '.exs'],
+    interpreters: ['elixir'],
+    tests: ['*_test.exs'],
+  },
   { language: 'erlang', category: 'source', ext: ['.erl', '.hrl'], interpreters: ['escript'] },
-  { language: 'haskell', category: 'source', ext: ['.hs', '.lhs'], interpreters: ['runhaskell'] },
+  {
+    language: 'haskell',
+    category: 'source',
+    ext: ['.hs', '.lhs'],
+    interpreters: ['runhaskell'],
+    tests: ['*Spec.hs'],
+  },
   { language: 'ocaml', category: 'source', ext: ['.ml', '.mli'] },
   { language: 'crystal', category: 'source', ext: ['.cr'] },
   { language: 'tcl', category: 'source', ext: ['.tcl'], interpreters: ['tclsh'] },
@@ -379,6 +454,24 @@ export function detectLanguage(path: string, firstLine?: string): DetectedLangua
     if (e) return { language: e.language, category: e.category };
   }
   return OTHER;
+}
+
+const testRes = new Map<string, RegExp[]>();
+const TEST_DIR_SET = new Set(TEST_DIRS);
+
+/** path（repo 相対）がテストのファイルか: 言語の名前の規約に合うか、途中の段が TEST_DIRS のどれか */
+export function isTestFile(path: string, language: string): boolean {
+  const segs = path.split('/');
+  if (segs.slice(0, -1).some((d) => TEST_DIR_SET.has(d))) return true;
+  let res = testRes.get(language);
+  if (!res) {
+    res = LANGUAGE_TABLE.filter((e) => e.language === language)
+      .flatMap((e) => e.tests ?? [])
+      .map((g) => globToRegExp(g));
+    testRes.set(language, res);
+  }
+  const base = segs[segs.length - 1] ?? '';
+  return res.some((re) => re.test(base));
 }
 
 /** 読めていないときのヒント（今の抽出器が設定で読める言語だけ） */

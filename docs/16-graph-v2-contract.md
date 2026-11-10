@@ -189,7 +189,7 @@ body の無い応答（`out/status`）から呼び出し元の `ret_n` への線
     "lists": { "unjoined": [], "undetermined": [], "strictErrors": [] },          // 1 つの一覧につき 100 件まで
     "coverage": {                                                                  // 段 0 の報告の数（Phase 9-L0。docs/23 §3.1）
       "scope": { "files": 73, "tracked": 88, "secret": 0, "methods": ["git"],
-                 "excluded": { "dir": 9, "output": 6, "generated": 0, "vendored": 0, "header": 0, "minified": 0, "tooLarge": 0 } },
+                 "excluded": { "unreadable": 0, "dir": 9, "output": 6, "generated": 0, "vendored": 0, "header": 0, "minified": 0, "tooLarge": 0 } },
       "languages": [ { "language": "sql", "files": 4, "lines": 20,
                        "read": { "adapter": 0, "extractor": 17, "hand": 0, "none": 3 }, "unread": { "files": 2, "lines": 3 } } ] } } }
 ```

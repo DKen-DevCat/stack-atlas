@@ -140,3 +140,10 @@ describe('cdktf extractor', async () => {
     expect(g2.nodes.find((n) => n.id === 'infra:api')?.meta?.['deployApp']).toBe('next');
   });
 });
+
+describe('read の申告（docs/23 §3.1。2026-11-11 Phase 9-L0 のレビュー）', () => {
+  it('申告するのはスタックの cdk.tf.json だけ（sourceDir の .ts は construct id を探すだけで、TS として読まない）', async () => {
+    const g = await extractor.extract(fixtureCtx(), { nodes: [], edges: [] });
+    expect(g.read).toEqual(['infra/cdktf.out/stacks/web/cdk.tf.json']);
+  });
+});

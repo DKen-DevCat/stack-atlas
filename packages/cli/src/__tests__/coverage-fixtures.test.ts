@@ -63,7 +63,7 @@ describe('fixture の数える範囲（Phase 9-L0）', () => {
 });
 
 describe('fixture の「読んだ」と読めていないソース（Phase 9-L0。見つかったことを固定する）', () => {
-  it('fixture-repo: next.config.mjs は nextjs-app と cache が読む（docs/23 の見込みでは警告だったが、読んでいる）。読めていないソースは無い', async () => {
+  it('fixture-repo: next.config.mjs は nextjs-app と cache が読む（docs/23 の見込みでは警告だったが、読んでいる）。infra/main.ts は読めていない', async () => {
     const r = await build('fixture-repo');
     expect(lang(r, 'javascript')).toEqual({
       language: 'javascript',
@@ -73,13 +73,17 @@ describe('fixture の「読んだ」と読めていないソース（Phase 9-L0�
       readBy: { cache: 9, 'nextjs-app': 9 },
       unread: { files: 0, lines: 0 },
     });
-    // infra/ の CDKtf の .ts は tsconfig に入っていないが、cdktf が construct の場所を探すのに読む
-    expect(lang(r, 'typescript')!.readBy).toMatchObject({ cdktf: 368 });
-    expect(lang(r, 'typescript')!.unread.files).toBe(0);
-    expect(r.harness!.coverage.unread).toEqual([]);
+    // infra/ の CDKtf の .ts は tsconfig に入っていない。cdktf は construct id の文字列を探すだけなので申告せず、
+    // construct が見つかったファイル（箱の file）だけが読んだに数える（2026-11-11 のレビュー: 以前は sourceDir の
+    // .ts を全部申告していた。cdktf 368 → 331 行、infra/main.ts 37 行が読めていない）
+    expect(lang(r, 'typescript')!.readBy).toMatchObject({ cdktf: 331 });
+    expect(
+      r.harness!.coverage.unread.map((u) => [u.language, u.files, u.lines, u.examples]),
+    ).toEqual([['typescript', 1, 37, ['infra/main.ts']]]);
+    // 読めていないソースは strict の警告にだけ（issues には出さない）
     expect(r.issues.filter((i) => i.path === 'coverage')).toEqual([]);
     if (tracked) expect(r.harness!.coverage.scope.excluded.output).toBe(6); // screens.dir の site/
-    expect(strictIssues(r).warnings.map((w) => w.rule)).not.toContain('unread');
+    expect(strictIssues(r).warnings.filter((w) => w.rule === 'unread')).toHaveLength(1);
   }, 60_000);
 
   it('fixture-gaps: legacy/api/stats.php（PHP）と down のマイグレーション（sql.migrations の外）が読めていない。.env.local は数えるが読まない', async () => {
@@ -93,10 +97,7 @@ describe('fixture の「読んだ」と読めていないソース（Phase 9-L0�
         ['platform/migrations/000001_init.down.sql', 'platform/migrations/000002_push.down.sql'],
       ],
     ]);
-    expect(r.issues.filter((i) => i.path === 'coverage').map((i) => i.level)).toEqual([
-      'warning',
-      'warning',
-    ]);
+    expect(r.issues.filter((i) => i.path === 'coverage')).toEqual([]);
     expect(c.scope.secret).toBe(1);
     // 言語アダプタの読んだファイル（go-types が無くても go が全部のファイルを申告する）
     expect(lang(r, 'go')!.unread).toEqual({ files: 0, lines: 0 });

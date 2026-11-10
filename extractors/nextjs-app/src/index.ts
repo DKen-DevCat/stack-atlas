@@ -221,7 +221,11 @@ export const extractor: Extractor = {
       `nextjs-app: ${[dirs.appDir, dirs.pagesDir].filter(Boolean).join(' + ')} から ${nodes.length} ノード${output ? `（output: ${output}）` : ''}`,
     );
     // 読んだ next.config（output・trailingSlash を読む。docs/23 §3.1）
-    return { nodes, edges, ...(nextConfig ? { read: [nextConfig.file] } : {}) };
+    return {
+      nodes,
+      edges,
+      ...(nextConfig && !nextConfig.tooLarge ? { read: [nextConfig.file] } : {}),
+    };
   },
 };
 

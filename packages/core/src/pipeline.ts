@@ -76,7 +76,7 @@ import {
   type StrictResult,
 } from './strict.js';
 import { applyViewsYaml } from './views-yaml.js';
-import { computeCoverage, coverageIssues, graphFilesOf } from './coverage.js';
+import { graphFilesOf, safeComputeCoverage } from './coverage.js';
 import type { UndeterminedWire } from './merge-v2.js';
 import { prefixRepoFiles, resolveRepos } from './repo.js';
 import { DEFAULT_RULES, runRules, type Rule } from './rules/index.js';
@@ -545,8 +545,10 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
                 }
               : {}),
           };
-    // 段 0 の報告（数える範囲・言語ごとの読めた行。docs/23 §3.1、Phase 9-L0）。読めていないソースは言語ごとに警告
-    const coverage = computeCoverage({
+    // 段 0 の報告（数える範囲・言語ごとの読めた行。docs/23 §3.1、Phase 9-L0）。読めていないソースは strict の警告
+    // （rule unread）にだけ出す（issues には出さない。2026-11-11 Phase 9-L0 のレビュー: 2 か所で数えていた）。
+    // 思わぬ例外でも build は止めない（unavailable の空の報告と issues の警告 1 件）
+    const cov = safeComputeCoverage({
       repos,
       configDir,
       config,
@@ -554,7 +556,11 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
       roles: new Map(opts.extractors.map((e) => [e.name, e.v2Role])),
       graphFiles: graphFilesOf(graph.nodes, graphV2.nodes, graphV2.types, graphV2.groups),
     });
-    issues.push(...coverageIssues(coverage));
+    const coverage = cov.coverage;
+    if (cov.warning) {
+      log.warn(cov.warning);
+      issues.push({ level: 'warning', path: 'coverage', message: cov.warning });
+    }
     result.harness = computeHarnessReport({
       coverage,
       graph: graphV2,

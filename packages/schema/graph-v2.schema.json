@@ -117,7 +117,7 @@
             },
             "excluded": {
               "type": "object",
-              "description": "除いた理由ごとの数（dir・output・generated・vendored・header・minified・tooLarge）",
+              "description": "除いた理由ごとの数（unreadable・dir・output・generated・vendored・header・minified・tooLarge）",
               "additionalProperties": { "type": "integer", "minimum": 0 }
             },
             "methods": {
