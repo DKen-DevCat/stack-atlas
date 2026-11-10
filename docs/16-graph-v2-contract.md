@@ -5,7 +5,7 @@
 
 ## 1. 結論
 
-- `version: 2`。トップは `project` / `nodes` / `wires` / `types` / `views`。v1 の `layers` / `edges` / `flows` は無い（`runtime` と `wires` と `views` に置き換わる）
+- `version: 2`。トップは `project` / `nodes` / `wires` / `types` / `views`（と `groups`。§8.2）。v1 の `layers` / `edges` / `flows` は無い（`runtime` と `wires` と `views` に置き換わる）
 - 箱（node）は口（ports）を持ち、口は項目（items）を持ち、項目は入れ子になる。線（wire）は項目から項目へ。箱の中の対応は `links`。状態による分岐は `variants` と `when`
 - 参照は文字列 1 種類: `<nodeId>#<portId>/<itemId>.<itemId>…`。ID の文字集合を絞って、`#` `/` `.` で必ず切れるようにする
 - 既存の 12 抽出器（v1）は捨てない。**v1 → v2 変換**で「箱の単位の線」に落として読む。項目まで下げるのは言語アダプタ（8-2）
@@ -190,6 +190,18 @@ body の無い応答（`out/status`）から呼び出し元の `ret_n` への線
 ```
 
 `validate --strict` のエラー: report が無い graph、`checked` に `skipped` の言語アダプタがある graph、`counts.strictErrors` が 0 でない graph（`lists.strictErrors` を出す）。
+
+### 8.2 group になった v1 の箱（`groups`。2026-11-10 Phase 8-6）
+
+```jsonc
+"groups": [ { "id": "lib:web/src/feature/spend/request.ts", "name": "request", "kind": "lib", "file": "web/src/feature/spend/request.ts" },
+            { "id": "handler:internal/api", "name": "internal/api", "kind": "handler", "file": "platform/internal/api/days.go" } ]
+```
+
+- 関数の箱で置き換わって**箱としては消えた** v1 の箱（D47・D56。id は中の箱の `group` の値）の、元の `name`・`kind`・`file`。`kind` は **v1 の語彙**（`handler`・`lib`・`schema` …。v2 の kind の enum ではない）
+- build（core の `groupInfosV2`）が書く: 箱の `group` の値のうち、v1 の箱の id で、v2 の箱としては残っていないもの。順は v2 の箱で最初に現れた順。手書きの v2 には無くてよい
+- 3D の地図（`@stack-atlas/wiring` の `projectMap`。docs/20）が group のノードの名前・kind・file に使う。無ければ id の接頭辞と最後の段から決める
+- 検証: `id`・`name`・`kind` は必須（スキーマ）、`id` の重複はエラー、どの箱の `group` でもない `id` と箱と同じ `id` は警告
 
 画面の `screen.regions[].source`（2026-11-09 8-4。docs/19 §3.7）: 省略時は `screenshot`（スクショで測った値）。`yaml` は `.stack-atlas/screens/<slug>.regions.yaml` で補った値で、ビューアは ref ごとに合わせ、HTML の計測（とスクショの regions）にある ref はそちらが勝つ。v1 の `screen.regions[].source` も同じ語彙
 

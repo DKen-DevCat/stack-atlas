@@ -13,8 +13,10 @@ pnpm atlas build <repo> -o out --with-viewer --no-screenshots -v   # 2. 解析�
 pnpm atlas serve out                                           # 3. http://127.0.0.1:4173/ を開く
 ```
 
-`out/graph.json` は **v2**（箱・口・項目・線。`docs/16`）で、ビューアは配線図で開く。3D の地図は同じディレクトリの
-**`out/graph.v1.json`**（v1）で、配線図の左上の「3D の地図」から開ける（地図の左上の「配線図」で戻る）。
+`out/graph.json` は **v2**（箱・口・項目・線。`docs/16`）で、ビューアは **2 面**（左に 3D の地図、右に配線図。Phase 8-6、`docs/20`）で開く。
+3D の地図も graph.json から描く（group で畳んだ俯瞰。地図のノードをクリックすると配線図がその箱を選び、球は両方の面で同じ時刻に流れる）。
+窓が 1100px 未満なら面は 1 つで、題名の横の「3D の地図」/「配線図」で切り替える。WebGL が無いときと `?pane=wiring` は配線図だけ。
+同じディレクトリの **`out/graph.v1.json`**（v1）は互換のために残る（ビューアの 2 面は使わない。開けば今までの 3D の地図だけ）。
 v2 は抽出器が出す v1 を `upgradeGraph` で変換した**箱の単位**のもの（項目まで下げるのは Phase 8-2 の言語アダプタ）なので、
 `stack-atlas validate out/graph.json` には「口の単位」の警告が全部の箱と線に出る（エラーでなければよい）。
 Phase 8-1 より前の出力（graph.json = v1）が要るときは `build --v1`。
@@ -59,9 +61,9 @@ repos（web / platform …） ─ 抽出器を repo ごとに回す（順番は 
    ├ 結線:      api-link（client ⇔ endpoint ⇔ Go ルート ⇔ API Gateway）
    └ 補正:      classify → deploy → overrides → 層 → flows.yaml
         ▼
-graph.v1.json（v1。4 層。file は複数 repo なら `<repo>/<path>`。3D の地図）
-        ▼ upgradeGraph（docs/16 §10）
-graph.json（v2。箱の単位。runtime のレーンと host の枠。配線図）
+graph.v1.json（v1。4 層。file は複数 repo なら `<repo>/<path>`。互換用の 3D の地図）
+        ▼ upgradeGraph（docs/16 §10）＋ 言語アダプタ・契約（Phase 8-2）
+graph.json（v2。runtime のレーンと host の枠。2 面: 3D の地図は projectMap で group に畳んだもの、配線図は全部開いたもの）
 ```
 
 実リポジトリ 2 つ（Go ＋ Terraform HCL ＋ Next 静的エクスポート）で、設定ファイル 1 枚で 149 ノード / 330 エッジ / エラー 0 / 警告 0 になった（詳細は `HANDOFF.md` §0）。
@@ -296,7 +298,7 @@ OpenAPI の `endpoint:` を経由するホップと、S3 に載った静的エ�
 文はプレースホルダ（「MISS → オリジン（S3）へ」など）なので、実際の挙動に合わせて書き換える。形式は `docs/09-design-phase2-5.md` §3.2。
 
 graph.json（v2）では flows は **views** に置き換わる（docs/15 §3.9）: 各フローの最初の箱（型の `type:` は飛ばす）が `views[].start`、
-`tone: cache-hit` は経路上の cache の `hit: true` になり、ステップの文は捨てる（文は 3D の地図、つまり graph.v1.json だけで使う）。
+`tone: cache-hit` は経路上の cache の `hit: true` になり、ステップの文は捨てる（文は graph.v1.json の 3D の地図だけで使う。2 面の地図は旧フローを出さず、配線図と同じ球を流す。D107）。
 
 views は `.stack-atlas/views.yaml`（docs/16 §8 の形 `{ id, name, description?, start, variants? }`）でも書ける。同じ id なら flows.yaml 由来の view に勝つ。`start` が解けない view は落として報告し、`build --strict` ではエラー。雛形は `pnpm atlas init-views <repo>`（始点の候補: 画面・trigger・利用者。既存のファイルは上書きしない）。
 
@@ -325,8 +327,8 @@ pnpm atlas init-views <repo>                   # .stack-atlas/views.yaml の雛�
 
 - スクショ: 対象サイトを起動して `screenshots.baseUrl` を指す。動的ルートは `routes`、認証は `storageState`。部品の領域は対象アプリのルート要素に `data-component="Name"` を付ける（`docs/10-screenshots-guide.md`）。`--no-screenshots` を外すと撮る
 - メモ: `<設定のあるディレクトリ>/.stack-atlas/memos.json`（Git 管理）。`serve --repo <dir>` で書き戻す。共有・差分は `docs/11-sharing.md`
-- CI と配信: `docs/ci-example.yml`（`build --strict` を関門に → `build --with-viewer` → 静的ホスティング。screens を使うなら対象アプリの静的エクスポートを先に作る。3D の地図の差分は `?graph=graph.v1.json&prev=prev/graph.v1.json`、
-  配線図（v2）の差分は `stack-atlas diff`。diff は v1 と v2 を混ぜても v1 の側を v2 に変換して比べる）
+- CI と配信: `docs/ci-example.yml`（`build --strict` を関門に → `build --with-viewer` → 静的ホスティング。screens を使うなら対象アプリの静的エクスポートを先に作る。差分は `?graph=graph.json&prev=prev/graph.json` で
+  2 面の両方（地図は projectMap どうしで比べる）。CLI の `stack-atlas diff` は v1 と v2 を混ぜても v1 の側を v2 に変換して比べる）
 
 **設定のパスは repo の中だけ**（2026-11-10 8-4 のレビュー。docs/19 §12）: 抽出器が読むパス・glob（`files[].glob`・`openapi.files`・`sql.migrations`・`ts.tsconfig`・`next.{appDir,pagesDir,tsconfig}`・`cdktf.{out,sourceDir}`・`terraform.root`・`cloudformation.templates`・`api.{client,clients}`・`deploy.*.handlers`・`screenshots.storageState`・`screens.{dir,publicDir}`）に絶対パス・`..`・repo の外へ出るシンボリックリンクを書くと、警告して読まない（`repos` は config の外の repo を並べるので対象外）。秘密らしいファイル（dotfile・`*.pem`・`*.key`・`id_*`・`*secret*`・`*credential*` など）と repo の外のファイルは、箱にはなるが `code`（中身の抜粋）を graph に入れない。
 

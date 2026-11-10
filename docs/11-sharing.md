@@ -8,6 +8,7 @@
   - `stack-atlas serve out --repo <repo>` で開いて「**サーバーに保存**」を押す（リポジトリのファイルに直接書き戻す）。
 - graph に無いノード ID のメモ（リネームで ID が変わったなど）は、トップバーの「**孤立メモ (N)**」から今のノードへ移すか削除する。
 - **差分表示**は `?prev=<前回の graph.json>` を付けて開く（または「開く ▾ → 前回と比較…」）。追加は緑、削除は灰色のゴースト、変更は黄色。
+  graph.json（v2）は 2 面（3D の地図と配線図。docs/20）の両方に出る（地図は前の graph も projectMap で写して比べる）。前の graph が v1 なら差分は出さず、配線図の題名の横に「前の graph が v1 です」。
 - **配信**は `stack-atlas build <repo> -o out --with-viewer` の `out/` をそのまま静的ホスティングに置くだけ。GitHub Actions → S3 + CloudFront のテンプレートが `docs/ci-example.yml`。
   `out/screens/`（ビルド成果物の画面。`screens` 抽出器）を配るときは、`screens/*` の応答に **sandbox 付きの CSP ヘッダ**を付ける（`serve` は自動で付ける。CloudFront は下の「画面の応答ヘッダ」）。
 - 外部 SaaS は使わない。抽出はローカル／自前の CI、配信は静的ファイルか社内の `stack-atlas serve`。
@@ -84,6 +85,8 @@ index.html?graph=https://atlas.example.com/atlas/graph.json&prev=https://atlas.e
 - URL を使わずに、「開く ▾ → 前回と比較…」で手元の graph.json を選んでもよい（今の graph はそのまま）。
 - トップバーに「差分 +A −R ~C」（追加・削除・変更ノード数）が出る。押すと色分けを切り替える。ツールチップにエッジの増減も出る。
 - CLI の `stack-atlas diff a.json b.json` も同じ規則で差分を出す。
+- 2 面（graph.json が v2。Phase 8-6）では、3D の地図の差分は `projectMap(前)` と `projectMap(今)` の地図のノード（group・host・箱）どうし、配線図の差分は箱・項目・線どうし。
+  前が v1（graph.v1.json や `--v1` の build）なら、どちらの面も差分を出さない（2026-11-10 変更: 以前は graph.v1.json どうしを 3D の地図で比べた）
 
 `docs/ci-example.yml` は、配信のたびに今の graph.json を `prev/graph.json` に退避するので、上の 1 行目の URL で「前回のデプロイからの変化」が見える。
 

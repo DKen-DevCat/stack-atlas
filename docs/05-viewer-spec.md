@@ -123,7 +123,9 @@
 
 ## 配線図（graph.json v2。Phase 8-0b）
 
-`version: 2` の graph.json（契約は `docs/16-graph-v2-contract.md`）を開くと、3D の地図ではなく **配線図**（SVG）で描く。v1 はこれまでどおり 3D の地図。
+`version: 2` の graph.json（契約は `docs/16-graph-v2-contract.md`）を開くと、**配線図**（SVG）で描く。v1 はこれまでどおり 3D の地図。
+2026-11-10（Phase 8-6。`docs/20` §7）からは、WebGL があれば **2 面**（左に 3D の地図 = v2 を `projectMap` で group に畳んだもの、右に配線図）で開く。
+選択は配線図の 1 か所にあり、地図はそれを写して光らせる。球は配線図の再生バーの時刻で両方の面に流れる。WebGL が無いときと `?pane=wiring` は配線図だけ、`?sel=<id>` で選んで開く。
 入口は `packages/viewer/src/main.ts`（`graph/load.ts` が `version` を見て `validateGraphV2` で検証し、エラーと警告を既存の一覧に出す）。配線図は WebGL を使わない。
 
 - **規則はすべて `@stack-atlas/wiring`**（たどる・選ぶ・球の時刻・切れている線・レイアウト）。ビューアは描画と入力だけ（docs/16 D44）
