@@ -18,6 +18,7 @@ import {
   parseWhenKey,
   wireTypeCompatible,
   wireTypeMatch,
+  type CoverageSummaryV2,
 } from './v2.js';
 
 interface Def {
@@ -133,11 +134,42 @@ describe('v2.ts と graph-v2.schema.json の一致', () => {
     const report = schema.$defs.report! as unknown as Def & {
       properties: { checked: { additionalProperties: Def } };
     };
-    expect(keys(report)).toEqual(sorted(['version', 'checked', 'counts', 'lists']));
+    // 2026-11-10（Phase 9-L0。docs/23 §3.1）: 段 0 の報告の数 coverage を足した（任意。required は変えない）
+    expect(keys(report)).toEqual(sorted(['version', 'checked', 'counts', 'lists', 'coverage']));
     expect(sorted(report.required!)).toEqual(['checked', 'counts', 'version']);
     const checked = report.properties.checked.additionalProperties;
     expect(keys(checked)).toEqual(sorted(['status', 'role', 'reason']));
     expect(sorted(checked.properties.status!.enum!)).toEqual(sorted(CHECKED_STATUSES));
+  });
+
+  it('報告の coverage（Phase 9-L0。docs/23 §3.1）: CoverageSummaryV2 と同じキー', () => {
+    expect(schema.$defs.report!.properties.coverage!.$ref).toBe('#/$defs/coverageSummary');
+    const cov = schema.$defs.coverageSummary! as unknown as Def & {
+      properties: {
+        scope: Def & { properties: { methods: { items: { enum: string[] } } } };
+        languages: { items: Def };
+      };
+    };
+    expect(keys(cov)).toEqual(sorted(['scope', 'languages']));
+    // CoverageSummaryV2['scope'] のキー
+    const scopeKeys: Array<keyof CoverageSummaryV2['scope']> = [
+      'files',
+      'tracked',
+      'secret',
+      'excluded',
+      'methods',
+    ];
+    expect(keys(cov.properties.scope)).toEqual(sorted(scopeKeys));
+    expect(sorted(cov.properties.scope.required!)).toEqual(sorted(scopeKeys));
+    expect(sorted(cov.properties.scope.properties.methods.items.enum)).toEqual(['git', 'walk']);
+    const langKeys: Array<keyof CoverageSummaryV2['languages'][number]> = [
+      'language',
+      'files',
+      'lines',
+      'read',
+      'unread',
+    ];
+    expect(keys(cov.properties.languages.items)).toEqual(sorted(langKeys));
   });
 });
 

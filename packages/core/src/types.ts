@@ -81,6 +81,12 @@ export interface PartialGraph {
    * `skipped` になり、validate --strict がエラーにする（検査が黙って弱まらないように。docs/19 §3.3、D72）
    */
   skipped?: string;
+  /**
+   * 読んだファイル（repo 相対。Phase 9-L0、docs/23 §3.1）。箱・型の `file` に出ないのに読んだもの（型だけの TS・go.mod・
+   * .tfvars・next.config・箱を出さないマイグレーションなど）を申告する。報告の coverage が「読んだ」に数える。
+   * 複数 repo ならパイプラインが `<repo>/` を付ける（file と同じ）
+   */
+  read?: string[];
 }
 
 export interface Logger {

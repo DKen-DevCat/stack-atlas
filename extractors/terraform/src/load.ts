@@ -11,6 +11,8 @@ export const MAX_MODULE_DEPTH = 5;
 export interface SourceFile {
   abs: string;
   text: string;
+  /** HCL として解析できたか（できないファイルは読んだファイルとして申告しない。docs/23 §3.1） */
+  parsed?: boolean;
 }
 
 export interface ModuleInstance {
@@ -63,7 +65,7 @@ export async function loadModules(
   rootDir: string,
   log: Logger,
   repoRoot: string,
-): Promise<{ modules: Map<string, ModuleInstance>; tfvars: JsonObject }> {
+): Promise<{ modules: Map<string, ModuleInstance>; tfvars: JsonObject; tfvarsFiles: string[] }> {
   const parse = await hclParse();
   const modules = new Map<string, ModuleInstance>();
 
@@ -83,10 +85,12 @@ export async function loadModules(
     const calls: Record<string, JsonObject> = {};
     for (const abs of tfFiles(dir)) {
       const text = readFileSync(abs, 'utf8');
-      inst.files.push({ abs, text });
+      const file: SourceFile = { abs, text };
+      inst.files.push(file);
       let json;
       try {
         json = normalizeHclJson(await parse(basename(abs), text));
+        file.parsed = true;
       } catch (e) {
         log.warn(
           `terraform: ${relative(repoRoot, abs)} を解析できません: ${String(e).split('\n')[0]}`,
@@ -142,13 +146,16 @@ export async function loadModules(
   } catch {
     /* ignore */
   }
+  const tfvarsFiles: string[] = [];
   for (const n of names.sort()) {
     try {
       const j = await parse(n, readFileSync(join(rootDir, n), 'utf8'));
       if (isObject(j)) Object.assign(tfvars, j);
+      // 読めて解析できたものだけ申告する（解析できない .tfvars は読んだことにしない。2026-11-11 Phase 9-L0 のレビュー）
+      tfvarsFiles.push(join(rootDir, n));
     } catch (e) {
       log.debug(`terraform: ${n} を読めません: ${String(e)}`);
     }
   }
-  return { modules, tfvars };
+  return { modules, tfvars, tfvarsFiles };
 }

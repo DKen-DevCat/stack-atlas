@@ -182,6 +182,8 @@ type Output struct {
 	Routes    []Route     `json:"routes"`
 	Warnings  []Warning   `json:"warnings"`
 	Stats     Stats       `json:"stats"`
+	// Files は読んだ module のパッケージのファイル（root 相対、/ 区切り、パスの順。docs/23 §3.1 の read）
+	Files []string `json:"files"`
 }
 
 type analyzer struct {
@@ -402,8 +404,15 @@ func (a *analyzer) run() Output {
 		if p.Kind == kindModule && len(p.Files) > 0 {
 			out.Stats.Packages++
 			out.Stats.TypeErrors += p.TypeErrors
+			for _, f := range p.FileNames {
+				out.Files = append(out.Files, a.l.rel(f))
+			}
 		}
 	}
+	if out.Files == nil {
+		out.Files = []string{}
+	}
+	sort.Strings(out.Files)
 	return out
 }
 

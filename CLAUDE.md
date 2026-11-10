@@ -27,12 +27,13 @@
 8'. **`docs/15-design-dataflow-model.md`** — Phase 8 の設計（箱・口・項目・線のモデル、たどる規則、表示の規則、分岐、型 API による抽出、D27〜D35）。`docs/14-design-harness.md` はハーネス配布・ビルド成果物の画面（層の節は docs/15 に置き換え）。モックは `prototype/dataflow-mock.html`
 8''. Phase 8 の設計と実装結果: `docs/16-graph-v2-contract.md`（graph.json v2 の契約）、`docs/17-design-adapters.md`（言語アダプタと合流）、`docs/18-design-wiring-viewer.md`（配線図ビューア・画面・views、D60〜D81）、`docs/20-design-map-link.md`（8-6 の 3D の地図 ⇄ 配線図の 2 面。§6 Q20 の決定、§7 実装結果、D106〜D113）
 8'''. **`docs/19-design-harness-v2.md`** — Phase 8-4 のハーネス（補いの `v2:`・手書きの部分グラフ・views.yaml・`build --dry-run --json` / `--strict`・`init --skill`・`init-views`、D67〜D105。§11 ドッグフード、§12 レビューの修正）。skill の本文は `harness/skill/`（SKILL.md と references/）、隙間を仕込んだ fixture は `examples/fixture-gaps/`、その正解表は §9（**正解表と参照解 `packages/cli/src/__tests__/fixtures/gaps-answers/` を fixture-gaps の中や skill に書かない**。ドッグフードのエージェントが読む）
+8''''. **`docs/23-design-any-repo.md`** — Phase 9-L: どのリポジトリ・どの構成にもはめる（ファイル・構文（tree-sitter）・型（LSP）の 3 段、言語ごとの違いはデータ、レシピ、線の `confidence`、実行の許可、D170〜D183、Q27〜Q33）。`docs/22-design-one-model.md` — Phase 9: モデルを 1 つに（包含の木・地図は畳みの段・アダプタの自立・直す入力を 1 つ、D140〜D159、Q22〜Q26）。**判断の基準: 「見たことのない言語の repo でも動くか」**
 9. `docs/10-screenshots-guide.md`（`data-component` と screenshots の設定）、`docs/11-sharing.md`（メモ・差分・配信）、`docs/ci-example.yml`
 10. 必要に応じて `docs/05-viewer-spec.md`（UI 仕様）、`docs/04-extractors.md`（抽出方法）、各 `extractors/*/README.md`
 
 ## 現在の状態と次のタスク
 
-テストは `pnpm test` で 1437 件（skip 2。`STACK_ATLAS_REQUIRE_GO=1` で go の側も）、viewer の e2e は 58 件（3D の地図の spec は手元のヘッドレスで止まる・遅いことがある。CI で実行。配線図だけを確かめる spec は `&pane=wiring`）。`examples/fixture-poly/`（2 repo の合成）は 56 ノード / 95 エッジ / 2 フロー / エラー 0。
+テストは `pnpm test` で 1479 件（skip 2。`STACK_ATLAS_REQUIRE_GO=1` で go の側も）、viewer の e2e は 58 件（3D の地図の spec は手元のヘッドレスで止まる・遅いことがある。CI で実行。配線図だけを確かめる spec は `&pane=wiring`）。`examples/fixture-poly/`（2 repo の合成）は 56 ノード / 95 エッジ / 2 フロー / エラー 0。
 実リポジトリでは設定を**この公開リポジトリの外**（兄弟ディレクトリ。`repos: { web: ../damage-web, platform: ../damage-platform }`）に置いて build し、149 / 330 / エラー 0 / 警告 0 を確認した（内訳は `HANDOFF.md` §0）。
 
 次にやること: ユーザーの判断待ち（Q17 エージェントを実リポジトリに当てるか、Q19 配線図の折りたたみ）。8-6 の残り（合成 300 箱でクリックから光るまで 50ms。配線図の描き直しを差分に）は docs/20 §7.6。Phase 6 の残り:
@@ -57,7 +58,7 @@
 
 - 解析対象は業務コードになりうる。**ソースコードを外部 SaaS に送らない**。抽出もビューアもローカル／自前ホスティングで完結させる。
 - **実リポジトリ（`damage-web` / `damage-platform`）の中身はこの公開リポジトリに入れない**: コード、リソース名、ルート、テーブル名、環境変数名、graph.json、スクショ、issues.json のいずれも。名前と件数だけ書いてよい。実リポジトリ用の config / overrides / flows は実リポジトリ側か非公開の兄弟ディレクトリに置く。
-- 抽出器を書くときの規約: 設定のパス・glob を読む前に `repoPath` / `confineRepoPath` / `globInRepo`（core。repo の外・外へ出るリンクを読まない）、walk はシンボリックリンクを辿らない（docs/19 §12、D102）。設定セクションは `sectionFor(ctx, config.xxx)` で自分の repo かを判定する。kind は `classifyKind(ctx, file, defaultKind)` で決めてから ID の接頭辞を付ける（`applyClassify` は ID を変えないため）。`file` は repo 相対パスで返す（複数 repo の `<repo>/` はパイプラインが付ける。自分で付けるなら `repoFile()`）。推定で線を引いたら必ず warn に `推定` と「明示できるキー」を書く（D18）。
+- 抽出器を書くときの規約: 設定のパス・glob を読む前に `repoPath` / `confineRepoPath` / `globInRepo`（core。repo の外・外へ出るリンクを読まない）、walk はシンボリックリンクを辿らない（docs/19 §12、D102）。設定セクションは `sectionFor(ctx, config.xxx)` で自分の repo かを判定する。kind は `classifyKind(ctx, file, defaultKind)` で決めてから ID の接頭辞を付ける（`applyClassify` は ID を変えないため）。`file` は repo 相対パスで返す（複数 repo の `<repo>/` はパイプラインが付ける。自分で付けるなら `repoFile()`）。推定で線を引いたら必ず warn に `推定` と「明示できるキー」を書く（D18）。箱・型の `file` に出ないのに読んだファイル（型だけの TS・go.mod・.tfvars・next.config など）は `PartialGraph.read` で申告する（段 0 の報告が「読んだ」に数える。docs/23 §3.1・§11）。
 - ビューアは graph.json だけを入力にし、特定プロジェクトの知識をハードコードしない。**ビューアは `@stack-atlas/core` に依存しない**（依存してよいのは `@stack-atlas/schema` と `@stack-atlas/wiring` だけ。たどる規則・球の時刻・レイアウト前処理は wiring に置く。D44）。
 - スタック固有の処理はすべて抽出器（extractor）側に閉じ込める。
 - 抽出器の契約は `packages/core/src/types.ts`。変えるときは core 側と各抽出器の両方を直す。

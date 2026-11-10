@@ -536,6 +536,8 @@ describe('build (fixture-poly)', () => {
       ['info', 'screens:/'],
       ['info', 'screens:/push'],
     ]);
+    // 段 0 の報告（Phase 9-L0）の読めていないソース（down のマイグレーション）は strict の警告にだけ出し、issues には
+    // 出さない（2026-11-11 のレビュー。一時は issues にも出していた）
     expect(issues.filter((i) => i.level === 'warning').map((i) => i.path)).toEqual([
       'screens:/',
       'screens:_next/static/css/7f3a9c1d2e4b5a60.css',
