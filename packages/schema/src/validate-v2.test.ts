@@ -151,6 +151,31 @@ describe('validateGraphV2', () => {
     ).toContainEqual(expect.stringContaining('"login" を宣言していません'));
   });
 
+  // 2026-11-10 追加（8-6）: トップの groups（group になった v1 の箱の元の名前・kind・file。docs/20 §5.1 #3）
+  it('groups: 形はスキーマ、id の重複はエラー、どの箱の group でもない id・箱と同じ id は警告', () => {
+    const withGroup = (gs: unknown[]) =>
+      broken((g) => {
+        node(g, 'fn:getToday').group = 'lib:web/src/feature/spend/request';
+        (g as { groups?: unknown[] }).groups = gs;
+      });
+    const ok = { id: 'lib:web/src/feature/spend/request', name: 'request', kind: 'lib' };
+    const r = validateGraphV2(withGroup([{ ...ok, file: 'web/src/feature/spend/request.ts' }]));
+    expect(r.errors).toEqual([]);
+    expect(r.warnings.filter((w) => w.path.startsWith('/groups'))).toEqual([]);
+    // kind が無い・知らないキーはスキーマ違反
+    expect(validateGraphV2(withGroup([{ id: ok.id, name: 'x' }])).ok).toBe(false);
+    expect(validateGraphV2(withGroup([{ ...ok, extra: 1 }])).ok).toBe(false);
+    expect(messages(withGroup([ok, ok]))).toContainEqual(expect.stringContaining('重複しています'));
+    const w = (gs: unknown[]) =>
+      validateGraphV2(withGroup(gs))
+        .warnings.filter((x) => x.path.startsWith('/groups'))
+        .map((x) => x.message);
+    expect(w([{ ...ok, id: 'lib:nope' }])).toEqual([
+      'group "lib:nope" はどの箱の group でもありません',
+    ]);
+    expect(w([{ ...ok, id: 'route:/' }])).toEqual(['group "route:/" と同じ id の箱があります']);
+  });
+
   it('broken の path は線のどちらかの端で解ける', () => {
     const w = sample.wires.findIndex((x) => x.broken?.length);
     expect(messages(broken((g) => (g.wires[w]!.broken![0]!.path = 'nope.x')))).toContainEqual(

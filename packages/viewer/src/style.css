@@ -100,6 +100,10 @@ code {
   border-radius: 9px;
   overflow: hidden;
 }
+/* flows の無い graph のフローの切り替え（2 面の地図は旧フローを出さない。D107）。display: flex が hidden に勝たないように */
+.seg[hidden] {
+  display: none;
+}
 .seg button {
   background: none;
   border: 0;
@@ -981,57 +985,70 @@ table.ct td:first-child {
   color: #fde68a;
 }
 
-/* ---- スマホ ---- */
+/* ---- 狭い面（スマホ・2 面の左の地図） ----
+ * 窓の幅ではなく、描く面の幅で決める（Viewer が ResizeObserver で .viewer.narrow を付ける。docs/20 §5.1 #11）。
+ * 3D の地図だけのページでは面 = 窓なので、以前の @media (max-width: 760px) と同じ */
+.viewer.narrow .top h1 small,
+.viewer.narrow .repo {
+  display: none;
+}
+.viewer.narrow .left {
+  top: 150px;
+  left: 10px;
+}
+.viewer.narrow .lchip {
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 11px;
+}
+.viewer.narrow .lchip span {
+  display: none;
+}
+.viewer.narrow .kinds {
+  display: none;
+}
+.viewer.narrow .searchbox input.search {
+  width: 110px;
+}
+.viewer.narrow .labelseg .lbl {
+  display: none;
+}
+.viewer.narrow .legend {
+  display: none;
+}
+.viewer.narrow .panel {
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: 0;
+  width: auto;
+  max-height: 58vh;
+  border-radius: 16px 16px 0 0;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.viewer.narrow .flowpill {
+  bottom: auto;
+  top: 150px;
+  left: auto;
+  right: 10px;
+  transform: none;
+  max-width: 60vw;
+  white-space: normal;
+  border-radius: 12px;
+}
+/* 検証の一覧の枠は面の外（body）なので窓の幅で */
 @media (max-width: 760px) {
-  .top h1 small,
-  .repo {
-    display: none;
-  }
-  .left {
-    top: 150px;
-    left: 10px;
-  }
-  .lchip {
-    min-width: 0;
-    padding: 5px 8px;
-    font-size: 11px;
-  }
-  .lchip span {
-    display: none;
-  }
-  .kinds {
-    display: none;
-  }
-  .searchbox input.search {
-    width: 110px;
-  }
-  .labelseg .lbl {
-    display: none;
-  }
-  .legend {
-    display: none;
-  }
-  .panel {
-    left: 0;
-    right: 0;
-    top: auto;
-    bottom: 0;
-    width: auto;
-    max-height: 58vh;
-    border-radius: 16px 16px 0 0;
-    padding-bottom: env(safe-area-inset-bottom);
-  }
-  .flowpill {
-    bottom: auto;
-    top: 150px;
-    left: auto;
-    right: 10px;
-    transform: none;
-    max-width: 60vw;
-    white-space: normal;
-    border-radius: 12px;
-  }
   .overlays {
     top: 110px;
   }
+}
+
+/* ---- 2 面の地図（Phase 8-6。docs/15 §3.6 の規則を地図にも） ----
+ * 沈んだノードはラベルも消す（背景のラベルが手前に出ない）。始点は白い枠 */
+.viewer.linked .nl.dim {
+  visibility: hidden;
+}
+.nl.start {
+  border-color: #fff;
+  box-shadow: 0 0 0 1px #fff;
 }

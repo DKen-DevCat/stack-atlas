@@ -21,6 +21,11 @@ export interface WiringMemosOptions {
   apiUrl?: string;
   /** メモのある箱が変わった（角の印を描き直す） */
   onMarksChange: () => void;
+  /**
+   * 2 面のとき（Phase 8-6）: 孤立メモの判定に足す id と、「移す…」の候補に足すもの（3D の地図のノード）。
+   * store はもう片方の面と共有し、変わったら印・札・孤立メモを合わせ直す（docs/20 §5.1 #12）
+   */
+  extraTargets?: readonly { id: string; name: string }[];
 }
 
 const sameSet = (a: ReadonlySet<string>, b: ReadonlySet<string>) =>
@@ -40,8 +45,11 @@ export class WiringMemos {
   private marks: Set<string>;
   private apiUrl: string | undefined;
   private disposed = false;
+  private readonly extraIds: readonly string[];
+  private readonly offStore: () => void;
 
   constructor(private readonly opts: WiringMemosOptions) {
+    this.extraIds = (opts.extraTargets ?? []).map((t) => t.id);
     this.apiUrl = opts.apiUrl;
     this.marks = memoBoxIds(opts.index, opts.store.all());
     this.entries = h('div', { class: 'wv-memo-entries' });
@@ -61,17 +69,19 @@ export class WiringMemos {
       class: 'wv-link',
       attrs: { type: 'button', 'data-orphans': '' },
     });
+    const seenTarget = new Set<string>();
     const targets = [
       ...[...opts.index.nodes.values()].map((n) => ({ id: n.id, name: n.node.name })),
       ...[...opts.index.types.values()].map((t) => ({ id: t.id, name: t.name })),
-    ];
+      ...(opts.extraTargets ?? []),
+    ].filter((t) => !seenTarget.has(t.id) && !!seenTarget.add(t.id));
     this.orphans = new OrphanList(targets, {
       onDelete: (id) => {
-        opts.store.set(id, '');
+        opts.store.set(id, '', this);
         this.changed();
       },
       onMove: (from, to) => {
-        opts.store.move(from, to);
+        opts.store.move(from, to, this);
         this.changed();
         this.refreshEntries();
       },
@@ -83,6 +93,13 @@ export class WiringMemos {
       else this.orphans.show(this.orphanItems());
     });
     this.refreshOrphans();
+    // もう片方の面（3D の地図）で書いた・移したメモと、サーバーへの保存（setShared）。自分で書いたものは受けない
+    // （書いたあとは自分で直す。以前は自分の入力 1 文字ごとに印と孤立メモを 2 回数え直していた）
+    this.offStore = opts.store.subscribe(() => {
+      if (this.disposed) return;
+      this.changed();
+      this.refreshEntries();
+    }, this);
   }
 
   /** 角を折る箱 */
@@ -106,6 +123,7 @@ export class WiringMemos {
 
   dispose(): void {
     this.disposed = true;
+    this.offStore();
   }
 
   private entry(t: MemoTarget): HTMLElement {
@@ -119,7 +137,7 @@ export class WiringMemos {
     });
     ta.value = this.opts.store.get(t.id);
     ta.addEventListener('input', () => {
-      this.opts.store.set(t.id, ta.value);
+      this.opts.store.set(t.id, ta.value, this);
       this.changed();
       this.refreshEntries();
     });
@@ -158,7 +176,10 @@ export class WiringMemos {
 
   private orphanItems() {
     const all = this.opts.store.all();
-    return memoOrphans(this.opts.index, all).map((id) => ({ id, text: memoOf(all, id) ?? '' }));
+    return memoOrphans(this.opts.index, all, this.extraIds).map((id) => ({
+      id,
+      text: memoOf(all, id) ?? '',
+    }));
   }
 
   private refreshOrphans(): void {

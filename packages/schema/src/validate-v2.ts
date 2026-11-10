@@ -277,6 +277,19 @@ function checkGraph(g: GraphV2): { errors: ValidationIssue[]; warnings: Validati
     }
   });
 
+  // groups（Phase 8-6。group になった v1 の箱の元の名前・kind・file）: id の重複はエラー、どの箱の group でもない id と、
+  // 箱と同じ id は警告（地図のノードの名前に使われないだけで、配線図は描ける）
+  const groupValues = new Set(g.nodes.flatMap((n) => (n.group === undefined ? [] : [n.group])));
+  const groupIds = new Set<string>();
+  g.groups?.forEach((gr, i) => {
+    const base = `/groups/${i}/id`;
+    if (groupIds.has(gr.id)) error(base, `group "${gr.id}" が重複しています`);
+    groupIds.add(gr.id);
+    if (nodes.has(gr.id)) warn(base, `group "${gr.id}" と同じ id の箱があります`);
+    else if (!groupValues.has(gr.id))
+      warn(base, `group "${gr.id}" はどの箱の group でもありません`);
+  });
+
   return { errors, warnings };
 }
 

@@ -19,7 +19,13 @@ import {
 } from '../paths.js';
 import { mergePartialGraphs } from '../merge.js';
 import { prefixRepoFiles } from '../repo.js';
-import { cleanupV2, coverageV2, mergeV2, removeOverrideWiresV2 } from '../merge-v2.js';
+import {
+  cleanupV2,
+  coverageV2,
+  groupInfosV2,
+  mergeV2,
+  removeOverrideWiresV2,
+} from '../merge-v2.js';
 import { handlerRoutes, joinAll, joinEndpoints } from '../join.js';
 import { mergeNamedTypes, mergePartialV2 } from '../v2-parts.js';
 import { writeBroken } from '../broken-v2.js';
@@ -397,6 +403,46 @@ describe('mergeV2 → join → cleanupV2（D50・D53）', () => {
     expect([
       ...mergeV2(upgraded, { ...partial, groups: { 'fn:getToday': 'lib:src/request.ts' } }).groups,
     ]).toEqual([['lib:src/request.ts', ['fn:getToday']]]);
+  });
+
+  // 2026-11-10 追加（8-6）: group になった v1 の箱の元の名前・kind・file を v2 のトップの groups に残す（docs/20 §5.1 #3）
+  it('groupInfosV2: 消えた v1 の箱だけ、v1 の name・kind・file を、v2 の箱で最初に現れた順に', () => {
+    const v1 = {
+      nodes: [
+        {
+          id: 'lib:src/request.ts',
+          layer: 'web',
+          kind: 'lib',
+          name: 'request',
+          file: 'src/request.ts',
+        },
+        { id: 'handler:api', layer: 'api', kind: 'handler', name: 'api' },
+        { id: 'comp:Card', layer: 'web', kind: 'component', name: 'Card' },
+      ],
+    };
+    const box = (id: string, group?: string) => ({
+      id,
+      kind: 'fn' as const,
+      name: id,
+      runtime: 'browser' as const,
+      ports: [],
+      ...(group ? { group } : {}),
+    });
+    const v2 = {
+      nodes: [
+        box('fn:a', 'handler:api'),
+        box('fn:b', 'lib:src/request.ts'),
+        box('fn:c', 'lib:src/request.ts'),
+        // group の値が v1 の箱でない（ディレクトリ）・v2 の箱として残っている id は入れない
+        box('fn:d', 'web/src/app'),
+        box('comp:Card'),
+        box('fn:e', 'comp:Card'),
+      ],
+    };
+    expect(groupInfosV2(v2, v1)).toEqual([
+      { id: 'handler:api', name: 'api', kind: 'handler' },
+      { id: 'lib:src/request.ts', name: 'request', kind: 'lib', file: 'src/request.ts' },
+    ]);
   });
 
   it('Go のパッケージの箱（classify で schema になったものも）は meta.go.pkg の被覆で group、@runtime の複製は sharedOf で', () => {

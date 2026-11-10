@@ -291,6 +291,18 @@ export interface ViewV2 {
   variants?: Record<string, boolean>;
 }
 
+/**
+ * group になった v1 の箱（関数の箱で置き換わり、箱としては消えたもの）の元の名前・kind・file（Phase 8-6。docs/20 §5.1 #3）。
+ * id は箱の `group` の値。3D の地図（@stack-atlas/wiring の projectMap）が group のノードの名前と kind に使う
+ */
+export interface GroupInfoV2 {
+  id: string;
+  name: string;
+  /** v1 の語彙の kind（handler・lib・schema など） */
+  kind: string;
+  file?: string;
+}
+
 export interface GraphV2 {
   $schema?: string;
   version: 2;
@@ -299,6 +311,8 @@ export interface GraphV2 {
   nodes: NodeV2[];
   wires: WireV2[];
   views?: ViewV2[];
+  /** group になった v1 の箱（Phase 8-6） */
+  groups?: GroupInfoV2[];
 }
 
 /** 参照 `<nodeId>#<portId>/<a>.<b>` を切る。最初の `#` で箱、次の `/` で口、残りを `.` で項目（D36） */

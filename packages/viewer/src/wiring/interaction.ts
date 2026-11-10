@@ -22,6 +22,8 @@ export interface InteractionDeps {
   hideTable: () => void;
   /** 全体が収まる倍率にする（`F` キー） */
   fitAll: () => void;
+  /** キー（Esc・F）を受けるか。2 面のときは最後に触った面だけ（docs/20 §5.1 #8）。省略時は常に受ける */
+  keys?: () => boolean;
 }
 
 type KeyTarget = { tagName?: string; isContentEditable?: boolean; type?: string } | null;
@@ -128,6 +130,7 @@ export function installInteraction(d: InteractionDeps): () => void {
     svg.querySelectorAll('.wire.hov').forEach((p) => p.classList.remove('hov'));
   };
   const onKey = (ev: KeyboardEvent) => {
+    if (d.keys && !d.keys()) return;
     if (ev.key === 'Escape') {
       const a = escapeAction(ev);
       if (a === 'clear') d.select(null);

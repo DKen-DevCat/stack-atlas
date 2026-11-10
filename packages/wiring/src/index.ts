@@ -33,6 +33,32 @@ export {
   type TraverseOptions,
 } from './traverse.js';
 export { select, type Selection, type LitSelection } from './select.js';
+export {
+  projectMap,
+  litOnMap,
+  edgeKey,
+  unitBase,
+  stripRuntime,
+  MAP_EDGE_PRIORITY,
+  VIA_EDGE_KIND,
+  PREFIX_KIND,
+  V2_KIND_TO_V1,
+  type MapProjection,
+  type MapEdgeInfo,
+  type MapEdgeKind,
+  type MapLit,
+  type ProjectMapOptions,
+} from './project-map.js';
+export {
+  mapFlow,
+  mapFlowAt,
+  PULSE_MIN,
+  type MapFlow,
+  type MapBall,
+  type MapPulse,
+  type MapBallAt,
+  type MapPulseAt,
+} from './map-flow.js';
 export { viewSelection, applyView, findView } from './views.js';
 export {
   diffGraphsV2,

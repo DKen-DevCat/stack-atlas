@@ -119,7 +119,8 @@ function collectForeign(page: Page): string[] {
 
 async function openBuilt(page: Page, name: string, opts: ServeOpts = {}) {
   await serveBuilt(page, name, opts);
-  await page.goto(`?graph=built-screens/${name}/graph.json`);
+  // 2026-11-10 変更（8-6）: v2 は 2 面で開くので、配線図だけで確かめる（&pane=wiring。docs/20 §5.1 #17）
+  await page.goto(`?graph=built-screens/${name}/graph.json&pane=wiring`);
   await waitReady(page);
   await expect(page.locator('.wv')).toBeVisible();
   // 検証の一覧（あれば）を閉じる。2026-11-09 変更（8-3c）: 配線図では一覧が題名の横のリンクになり（D64）、図の上の枠は

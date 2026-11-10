@@ -56,6 +56,8 @@ export interface CreateNodesOptions {
   screenshotUrl(n: ModelNode): string | undefined;
   nameOf(id: string): string;
   makeLabel(n: ModelNode): { el: HTMLDivElement; memoBadge: HTMLSpanElement };
+  /** 画面のテクスチャが変わった（スクショを読んだ・描き直した。止まっている間は描かないので描き直しを頼む） */
+  onTextureUpdate?: () => void;
 }
 
 export function createSceneNodes(
@@ -85,6 +87,7 @@ export function createSceneNodes(
         nameOf: opts.nameOf,
         onUpdate: () => {
           if (texture) texture.needsUpdate = true;
+          opts.onTextureUpdate?.();
         },
       });
       texture = new THREE.CanvasTexture(screen.canvas);
@@ -185,8 +188,16 @@ export function setNodeObjectVisible(n: SceneNode, visible: boolean): void {
   (n.type === 'screen' ? n.pivot : n.hit).visible = visible;
 }
 
+/** ラベルの見た目の class（NodeVisual の normal 以外） */
+const VISUAL_CLASSES: readonly NodeVisual[] = ['sel', 'down', 'up', 'dim', 'flow', 'soft'];
+
 export function setNodeVisual(n: SceneNode, st: NodeVisual): void {
-  n.label.className = 'nl' + (st === 'normal' ? '' : ' ' + st);
+  // ラベルは見た目の class だけを付け替える（LOD の lod-dot・lod-hide、差分の diff-*、始点の start は触らない。
+  // 以前は className を丸ごと書き換えていて、2 面の地図の脈動（毎フレーム枠を戻す）でそれらが消えてちらついた。docs/20 §7.7）
+  for (const c of VISUAL_CLASSES) {
+    const on = c === st;
+    if (n.label.classList.contains(c) !== on) n.label.classList.toggle(c, on);
+  }
   if (n.type === 'screen') {
     n.frameMat.color.set(
       st === 'sel' || st === 'down'

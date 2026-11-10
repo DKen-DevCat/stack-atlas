@@ -1,13 +1,16 @@
 /**
- * エントリポイント: graph.json の入力（?graph=、ドロップ、ファイル選択）→ 検証 → Viewer。
- * - `version: 2` の graph は validateGraphV2 で検証し、3D の Viewer ではなく配線図（wiring/）で開く（SVG なので WebGL は要らない）
- * - `?prev=<URL>`（または「開く ▾ → 前回と比較…」）で前回の graph.json を読み、差分を色分けする。配線図は前も v2 のとき
- *   差分を描き、前が v1 なら題名の横に「前の graph が v1 です」（docs/18 §3.4）
- * - `?view=<id>` は配線図で graph の views を当てて開く（共有用。docs/18 §3.4）。URL（?graph=）から開いたときだけ読み書きする
- *   （ドロップ・ファイル選択で開いた graph の view は URL に書かない。graph に無い id は警告を出して URL から外す）
- * - graph.json と同じディレクトリの memos.json（と serve の GET /api/memos）を共有メモとして読む（3D の地図と配線図の両方）
- * - 検証の一覧は 3D の地図では図の上の枠、配線図では題名の横の「警告 N 件」のリンク（D64）
- * - build の出力（docs/16 §10）の graph.json（v2）と graph.v1.json（v1）は、隣にあれば左上のリンクで行き来する
+ * エントリポイント: graph.json の入力（?graph=、ドロップ、ファイル選択）→ 検証 → 画面。
+ * - `version: 2` の graph は validateGraphV2 で検証し、WebGL があれば 2 面（左に 3D の地図、右に配線図。Phase 8-6、docs/20。
+ *   split/）で開く。地図は v2 を projectMap で写したもの。WebGL が無い・作れない・`?pane=wiring` なら配線図だけ（SVG）
+ * - `version: 1` の graph（ドロップ、`--v1`、race-site、`?graph=graph.v1.json`）は今までどおり 3D の地図だけ
+ * - `?prev=<URL>`（または「開く ▾ → 前回と比較…」）で前回の graph.json を読み、差分を色分けする。v2 どうしなら配線図と
+ *   地図（projectMap(prev) と比べる）の両方、前が v1 なら題名の横に「前の graph が v1 です」で地図も比べない（docs/18 §3.4・docs/20 §5.1 #13）
+ * - `?view=<id>` は graph の views を当てて開く、`?sel=<id>` は箱・地図のノード・host を選んで開く（共有用。`?view=` が勝つ）。
+ *   URL（?graph=）から開いたときだけ読み書きする（ドロップ・ファイル選択で開いた graph は URL に書かない。解けない値は警告を出して外す）
+ * - graph.json と同じディレクトリの memos.json（と serve の GET /api/memos）を共有メモとして読む（2 面は 1 つの store を共有）
+ * - 検証の一覧は 3D の地図では図の上の枠、配線図（2 面を含む）では題名の横の「警告 N 件」のリンク（D64）
+ * - 配線図だけで開いたとき（`?pane=wiring`）と 3D の地図だけのときは、build の出力（docs/16 §10）の graph.json（v2）と
+ *   graph.v1.json（v1）が隣にあれば左上のリンクで行き来する（2 面ではリンクを出さない。docs/20 §5.1 #14）
  */
 import './style.css';
 import type { Graph, GraphV2, ValidationIssue } from '@stack-atlas/schema';
@@ -23,6 +26,8 @@ import {
 } from './graph/load';
 import { alternateGraph, graphExists } from './graph/alternate';
 import { hasWebGL } from './scene/renderer';
+import { mountSplit, type SplitApp, type SplitDebug } from './split/app';
+import { wiringOnly } from './split/link';
 import { startPlan, viewFor } from './startup';
 import { mountWiring, type WiringApp, type WiringDebug } from './wiring/app';
 import { h } from './ui/dom';
@@ -38,9 +43,12 @@ import {
 
 type Status = 'loading' | 'empty' | 'ready' | 'error';
 interface DebugHandle {
+  /** 3D の地図（v1 の 3D だけのページと、2 面の左の地図） */
   viewer: Viewer | null;
-  /** 配線図（v2）を開いているときのデバッグ用の口 */
+  /** 配線図（v2）を開いているときのデバッグ用の口（2 面の右の配線図も） */
   wiring: WiringDebug | null;
+  /** 2 面のときの口（Phase 8-6） */
+  split: SplitDebug | null;
   status: Status;
 }
 
@@ -57,9 +65,10 @@ document.body.append(overlays);
 
 let viewer: Viewer | null = null;
 let wiring: WiringApp | null = null;
+let split: SplitApp | null = null;
 /** 今表示している graph（「前回と比較…」で作り直すため） */
 let current: { res: LoadResult; shared: SharedMemoSource } | null = null;
-const debug: DebugHandle = { viewer: null, wiring: null, status: 'loading' };
+const debug: DebugHandle = { viewer: null, wiring: null, split: null, status: 'loading' };
 window.__stackAtlas = debug;
 
 function setStatus(s: Status) {
@@ -82,8 +91,11 @@ async function fetchSamples(): Promise<SampleEntry[]> {
   }
 }
 
-/** 3D の地図と配線図のどちらも片付ける */
+/** 3D の地図・配線図・2 面のどれも片付ける */
 function disposeAll() {
+  split?.dispose();
+  split = null;
+  debug.split = null;
   viewer?.dispose();
   viewer = null;
   debug.viewer = null;
@@ -130,9 +142,10 @@ function prevFrom(r: LoadResult): PrevGraph {
 /** 画面を出し直した回数（隣の graph の確かめが終わる前に別の graph を開いたら、リンクを出さない） */
 let shownSeq = 0;
 
-/** URL（?graph=）から開いたとき: ?view= の id（無ければ undefined）。ファイルで開いたときは渡さない */
+/** URL（?graph=）から開いたとき: ?view= の id と ?sel= の値（無ければ undefined）。ファイルで開いたときは渡さない */
 interface FromUrl {
   viewId: string | undefined;
+  sel?: string | undefined;
 }
 
 function showResult(
@@ -145,11 +158,11 @@ function showResult(
   overlays.replaceChildren();
   // 配線図は、v1 から変換した箱の単位の v2 で必ず出る警告（口の単位・置き場の項目の wireType unknown）を一覧に出さない
   const issues0 = res.v2 ? wiringIssues(res) : res.issues;
-  const view = viewFor(res, hasWebGL());
-  // 3D の地図は v1 どうしで比べる（前が v2 なら警告だけ）
+  const view = viewFor(res, hasWebGL(), wiringOnly(location.search));
+  // 3D の地図だけのページは v1 どうしで比べる（前が v2 なら警告だけ）
   const prevIssue =
     prev.issue ??
-    (view !== 'wiring' && prev.graphV2
+    (view !== 'wiring' && view !== 'split' && prev.graphV2
       ? {
           level: 'warning' as const,
           path: 'prev',
@@ -163,8 +176,11 @@ function showResult(
     const box = createIssuesBox(allIssues, res.versionWarning, !!(res.graph ?? res.graphV2));
     if (box) overlays.append(box);
   };
-  if (view === 'wiring') {
-    showWiring(res, { shared, issues: allIssues, prev, fromUrl, showIssuesBox });
+  if (view === 'split' || view === 'wiring') {
+    const start = { shared, issues: allIssues, prev, fromUrl, showIssuesBox };
+    // 地図（WebGL）を作れなければ配線図だけ（docs/20 §5.1 #9）
+    if (view === 'split' && showSplit(res, start)) return;
+    showWiring(res, start);
     return;
   }
   showIssuesBox();
@@ -201,6 +217,62 @@ function showResult(
     ? `${res.graph.project.name} — Stack Atlas`
     : 'Stack Atlas';
   setStatus('ready');
+}
+
+/**
+ * graph v2 を 2 面で開く（Phase 8-6。docs/20）。地図の WebGL を作れなければ false（呼ぶ側が配線図だけで開く）。
+ * 参照の解けない graph は配線図の索引で例外になるので、そのときも false（配線図だけで開き直して一覧のエラーを出す）
+ */
+function showSplit(res: LoadResult, w: WiringStart): boolean {
+  if (!res.graphV2) return false;
+  disposeAll();
+  current = { res, shared: w.shared };
+  const graph = res.graphV2;
+  const scope = storageScope(graph.project?.name, res.source);
+  try {
+    split = mountSplit({
+      root: app,
+      graph,
+      load: res,
+      issues: w.issues,
+      memos: {
+        store: new SharedMemoStore(scope, w.shared.memos),
+        ...(w.shared.api && w.shared.apiUrl ? { apiUrl: w.shared.apiUrl } : {}),
+      },
+      ...(w.prev.graphV2
+        ? { prev: { v2: w.prev.graphV2 } }
+        : w.prev.graph
+          ? { prev: { v1: true as const } }
+          : {}),
+      ...(w.fromUrl?.viewId ? { view: w.fromUrl.viewId } : {}),
+      ...(w.fromUrl?.sel ? { sel: w.fromUrl.sel } : {}),
+      // ファイルで開いた graph の view・選択を URL に書くと、再読み込みで別の graph（?graph= が無い）に当たる
+      ...(w.fromUrl
+        ? {
+            onViewChange: (id: string | null) => setParam('view', id),
+            onSelChange: (id: string | null) => setParam('sel', id),
+          }
+        : {}),
+      onOpenFile: openFile,
+      onOpenPrev: openPrevFile,
+    });
+  } catch (e) {
+    console.warn(
+      `[stack-atlas] 2 面を開けないため配線図だけで開きます: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    app.replaceChildren();
+    return false;
+  }
+  debug.viewer = split.map;
+  debug.wiring = split.wiring.debug;
+  debug.split = split.debug;
+  document.title = graph.project?.name ? `${graph.project.name} — Stack Atlas` : 'Stack Atlas';
+  const p = split.projection.graph;
+  console.info(
+    `[stack-atlas] ${res.source}: 箱 ${graph.nodes.length}、線 ${graph.wires.length} → 地図のノード ${p.nodes.length}・線 ${p.edges.length}・層 ${p.layers.length}（2 面）`,
+  );
+  setStatus('ready');
+  return true;
 }
 
 interface WiringStart {
@@ -329,7 +401,7 @@ function dropParams(...names: string[]) {
 async function openFile(f: File) {
   setStatus('loading');
   showResult(await loadGraphFromFile(f), { memos: {}, api: false });
-  dropParams('graph', 'prev', 'view');
+  dropParams('graph', 'prev', 'view', 'sel');
 }
 
 /** 「前回と比較…」: 今の graph はそのままに、選んだファイルを比較元にして作り直す */
@@ -362,8 +434,10 @@ async function start() {
     res.graph || res.graphV2
       ? await loadSharedMemos(res.baseUrl, location.href)
       : { memos: {}, api: false };
-  const viewId = new URLSearchParams(location.search).get('view') ?? undefined;
-  showResult(res, shared, prevRes ? prevFrom(prevRes) : {}, { viewId });
+  const q = new URLSearchParams(location.search);
+  const viewId = q.get('view') ?? undefined;
+  const sel = q.get('sel') ?? undefined;
+  showResult(res, shared, prevRes ? prevFrom(prevRes) : {}, { viewId, sel });
 }
 
 void start();

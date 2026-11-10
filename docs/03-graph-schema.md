@@ -162,4 +162,6 @@ Phase 8 で、箱の単位の `nodes` / `edges` に代えて **箱（node）→ 
 | たどる・選ぶ・球の時刻・切れている線（純 TS） | `packages/wiring`（`@stack-atlas/wiring`。schema にだけ依存）: `indexGraph` / `traverse` / `select` / `schedule` / `detectBroken` |
 | 手で組んだ例 | `examples/fixture-poly.today.v2.json`（fixture-poly の `/`（画面）→ `GET /today` → `transactions` の経路と、契約の食い違いを出す `POST /transactions`。箱 20・線 32。`pnpm validate` で エラー 0・警告 1） |
 
+トップの `groups`（2026-11-10 Phase 8-6）: group になった v1 の箱の元の `name`・`kind`（v1 の語彙）・`file`（docs/16 §8.2）。3D の地図は v2 の graph.json を `@stack-atlas/wiring` の `projectMap` で v1 の形に写して描き（docs/20）、group のノードの名前と kind にこれを使う。graph.v1.json（v1）は互換のために出し続けるが、2 面のビューアは使わない。
+
 v1 は読めるまま残す（`validateGraph`、`graph.schema.json`、この文書の上の節）。v1 → v2 の変換（`upgradeGraph`）とパイプラインの v2 化は 8-1（docs/16 §10）。

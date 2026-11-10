@@ -15,13 +15,18 @@ describe('startPlan', () => {
 });
 
 describe('viewFor', () => {
-  it('v2 は WebGL が無くても配線図', () => {
+  // 2026-11-10 変更（8-6）: v2 は WebGL があれば 2 面（左に 3D の地図、右に配線図）。以前は WebGL があっても配線図だけ
+  it('v2 は WebGL があれば 2 面、`?pane=wiring` か WebGL が無ければ配線図だけ', () => {
+    expect(viewFor({ v2: true }, true)).toBe('split');
+    expect(viewFor({ v2: true, graph: {} }, true)).toBe('split');
+    expect(viewFor({ v2: true }, true, true)).toBe('wiring');
     expect(viewFor({ v2: true }, false)).toBe('wiring');
-    expect(viewFor({ v2: true, graph: {} }, true)).toBe('wiring');
+    expect(viewFor({ v2: true }, false, true)).toBe('wiring');
   });
 
-  it('v1 は WebGL があれば 3D の地図、無ければ「WebGL が使えない」', () => {
+  it('v1 は WebGL があれば 3D の地図だけ（`?pane=wiring` でも）、無ければ「WebGL が使えない」', () => {
     expect(viewFor({ graph: {} }, true)).toBe('map');
+    expect(viewFor({ graph: {} }, true, true)).toBe('map');
     expect(viewFor({ graph: {} }, false)).toBe('no-webgl');
   });
 

@@ -9,9 +9,9 @@
 #   checkout（対象リポジトリ + Stack Atlas 本体）→ Stack Atlas をビルド
 #   →（screens を使うなら）対象アプリの静的エクスポートを作る
 #   → `stack-atlas build target --strict --dry-run`（関門。埋められる隙間があれば失敗。LLM は呼ばない。docs/19 §3.3）
-#   → `stack-atlas build . -o out --with-viewer`（graph.json（v2。配線図）・graph.v1.json（v1。3D の地図）・memos.json・
-#     スクショ・ビューアを out/ に出す。docs/16 §10）
-#   → 前回の graph.v1.json を prev/ に退避（3D の地図の差分表示 ?prev= 用）→ out/ を S3 に同期 → CloudFront を無効化
+#   → `stack-atlas build . -o out --with-viewer`（graph.json（v2）・graph.v1.json（v1。互換用）・memos.json・
+#     スクショ・ビューアを out/ に出す。docs/16 §10）。ビューアは graph.json を 2 面（左に 3D の地図、右に配線図。docs/20）で開く
+#   → 前回の graph.json を prev/ に退避（差分表示 ?prev= 用。地図と配線図の両方）→ out/ を S3 に同期 → CloudFront を無効化
 #
 # 外部 SaaS は使わない。ソースコードは Actions のランナーの中だけで解析し、出力（静的ファイル）だけを自前の S3 に置く。
 
@@ -127,20 +127,21 @@ jobs:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 今配信している graph.v1.json（3D の地図）を prev/graph.v1.json として残す。
-      # ビューアを ?graph=graph.v1.json&prev=prev/graph.v1.json で開くと、前回からの追加・削除・変更が色分けされる
-      # （差分の色分けは 3D の地図だけ。配線図（graph.json v2）の差分は `stack-atlas diff` で見る）
-      - name: 前回の graph.v1.json を prev/ に退避
+      # 今配信している graph.json（v2）を prev/graph.json として残す。
+      # ビューアを ?graph=graph.json&prev=prev/graph.json で開くと、2 面の両方（3D の地図と配線図）で前回からの
+      # 追加・削除・変更が色分けされる（Phase 8-6。2026-11-10 変更: 以前は graph.v1.json を退避し、差分は 3D の地図だけだった。
+      # 前回が v1 の graph.json のときは差分を出さず「前の graph が v1 です」になる）
+      - name: 前回の graph.json を prev/ に退避
         run: |
           mkdir -p out/prev
-          aws s3 cp "s3://${S3_BUCKET}/${S3_PREFIX}/graph.v1.json" out/prev/graph.v1.json || echo "前回の graph.v1.json はありません（初回）"
+          aws s3 cp "s3://${S3_BUCKET}/${S3_PREFIX}/graph.json" out/prev/graph.json || echo "前回の graph.json はありません（初回）"
 
       - name: S3 に同期
         run: |
           # graph.json / graph.v1.json / memos.json / index.html はキャッシュさせない（毎回更新されるため）
           aws s3 sync out "s3://${S3_BUCKET}/${S3_PREFIX}/" --delete \
             --exclude "graph.json" --exclude "graph.v1.json" --exclude "memos.json" --exclude "index.html" --exclude "prev/*"
-          for f in graph.json graph.v1.json memos.json index.html prev/graph.v1.json; do
+          for f in graph.json graph.v1.json memos.json index.html prev/graph.json; do
             if [ -f "out/$f" ]; then
               aws s3 cp "out/$f" "s3://${S3_BUCKET}/${S3_PREFIX}/$f" --cache-control "no-cache"
             fi
@@ -158,9 +159,8 @@ jobs:
           BASE="https://<CLOUDFRONT_DOMAIN>/${S3_PREFIX}"
           {
             echo "### Stack Atlas"
-            echo "- 配線図: ${BASE}/index.html?graph=graph.json"
-            echo "- 3D の地図: ${BASE}/index.html?graph=graph.v1.json"
-            echo "- 前回との差分（3D の地図）: ${BASE}/index.html?graph=graph.v1.json&prev=prev/graph.v1.json"
+            echo "- 3D の地図と配線図（2 面）: ${BASE}/index.html?graph=graph.json"
+            echo "- 前回との差分: ${BASE}/index.html?graph=graph.json&prev=prev/graph.json"
           } >> "$GITHUB_STEP_SUMMARY"
 
 # 補足:

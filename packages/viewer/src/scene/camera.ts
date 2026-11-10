@@ -30,6 +30,11 @@ export class CameraAnimator {
     this.start(new THREE.Vector3(), home);
   }
 
+  /** 寄せ・リセットの途中か（止まっている間は描かない。docs/20 §5.1 #10） */
+  get active(): boolean {
+    return this.anim !== null;
+  }
+
   update(now: number): void {
     const a = this.anim;
     if (!a) return;

@@ -5,7 +5,9 @@ import { PREV_EDITS as E, prevOfToday } from '../../wiring/src/__tests__/diff-fi
 import { collectErrors, waitReady } from './helpers';
 
 const SAMPLE = 'samples/fixture-poly.today.v2.json';
-const V2_URL = `?graph=${SAMPLE}`;
+// 2026-11-10 変更（8-6）: v2 は WebGL があれば 2 面（左に 3D の地図、右に配線図）で開くので、配線図だけを確かめるテストは
+// `&pane=wiring`（docs/20 §5.1 #17）で 1 面にする。2 面は split.spec.ts
+const V2_URL = `?graph=${SAMPLE}&pane=wiring`;
 
 function sampleV2() {
   return JSON.parse(

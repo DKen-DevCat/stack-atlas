@@ -33,12 +33,17 @@ export function collectErrors(page: Page): string[] {
   return errors;
 }
 
-/** graph.json の URL を差し替えて開く */
-export async function openWithGraph(page: Page, graph: unknown, name = 'test.graph.json') {
+/** graph.json の URL を差し替えて開く（extra は URL に足すクエリ。例 `&pane=wiring`） */
+export async function openWithGraph(
+  page: Page,
+  graph: unknown,
+  name = 'test.graph.json',
+  extra = '',
+) {
   await page.route(`**/${name}`, (route) =>
     route.fulfill({ contentType: 'application/json', body: JSON.stringify(graph) }),
   );
-  await page.goto(`?graph=${name}`);
+  await page.goto(`?graph=${name}${extra}`);
   await waitReady(page);
 }
 

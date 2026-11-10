@@ -106,21 +106,26 @@ export function createCanvas(opts: CanvasOptions): Canvas {
     drag = null;
     stage.classList.remove('dragging');
   };
-  // 窓の大きさが変わったら中心を保ったまま追従
+  // 面の大きさが変わったら中心を保ったまま追従（窓の resize と、2 面の境目のドラッグ。ResizeObserver で面を見る。
+  // 隠した面の 0 の大きさは無視する。docs/20 §5.1 #11）
   let last = stage.getBoundingClientRect();
   const onResize = () => {
     const r = stage.getBoundingClientRect();
+    if (!(r.width > 0) || !(r.height > 0)) return;
+    if (r.width === last.width && r.height === last.height) return;
     view.tx += (r.width - last.width) / 2;
     view.ty += (r.height - last.height) / 2;
     last = r;
     apply();
   };
+  const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(onResize);
+  ro?.observe(stage);
 
   stage.addEventListener('wheel', onWheel, { passive: false });
   stage.addEventListener('mousedown', onDown);
   window.addEventListener('mousemove', onMove);
   window.addEventListener('mouseup', onUp);
-  window.addEventListener('resize', onResize);
+  if (!ro) window.addEventListener('resize', onResize);
 
   return {
     view,
@@ -138,6 +143,7 @@ export function createCanvas(opts: CanvasOptions): Canvas {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       window.removeEventListener('resize', onResize);
+      ro?.disconnect();
     },
   };
 }

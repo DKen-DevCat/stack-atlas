@@ -10,7 +10,7 @@
 
 現状: **Phase 0〜5（フィクスチャ `examples/fixture-repo/`）と Phase 7「どんな構成にもはめる」が完了**し、**Phase 6（実リポジトリへの適用）はグラフ生成まで完了**。
 抽出器 15 個（files / cdktf / terraform / cloudformation / nextjs-app / ts-imports / ts-types / go / go-types / openapi / sql / api-link / cache / screenshots / screens。ts-types と go-types は v2 の言語アダプタ、screens はビルド成果物の画面）→ `graph.json` → ビューア、`stack-atlas` CLI（build / validate / serve / diff / init-flows / init-views / init --skill）、メモ共有・差分表示・配信テンプレートまで動く。
-**Phase 8**（箱・口・項目・線の graph.json v2 と配線図、ハーネス）は 8-0〜8-5 が済み、8-6（3D の地図との接続）はユーザーの確認（Q20）待ち（`docs/06` の Phase 8、`HANDOFF.md` §0 の 2026-11-10 追記）。
+**Phase 8**（箱・口・項目・線の graph.json v2 と配線図、ハーネス）は 8-0〜8-6 が済んだ（`docs/06` の Phase 8、`HANDOFF.md` §0 の 2026-11-10 追記）。v2 の graph.json は WebGL があれば 2 面（左に 3D の地図 = `projectMap` で写したもの、右に配線図。選択と球を写し合う。`docs/20` §7）で開き、v1 は今までどおり 3D の地図だけ。
 ユーザーの実リポジトリ 2 つ（`damage-web`: Next 静的エクスポート → S3 + CloudFront、`damage-platform`: Go Lambda ×5 ＋ Terraform HCL ＋ OpenAPI ＋ SQL）で **149 ノード / 330 エッジ / エラー 0 / 警告 0**。
 ビューアは 150〜250 ノードでも読めるよう、板の拡張・ラベルの LOD・検索・kind チップを実装済み。残りは実アプリのスクショ・flows の推敲・配信先。最初の単一 HTML プロトタイプ（`prototype/`）は参照用に残している。
 
@@ -25,17 +25,17 @@
 7. `docs/12-design-generalization.md` — Phase 6・7 の設計（複数 repo、Terraform / Go / OpenAPI / SQL、`classify` / `files` / `kinds`）、決定事項 D14〜D19、末尾に実装結果
 8. `docs/13-apply-to-your-repo.md` — 実リポジトリへの適用ガイド（設定キー一覧、ID の規約、制限）
 8'. **`docs/15-design-dataflow-model.md`** — Phase 8 の設計（箱・口・項目・線のモデル、たどる規則、表示の規則、分岐、型 API による抽出、D27〜D35）。`docs/14-design-harness.md` はハーネス配布・ビルド成果物の画面（層の節は docs/15 に置き換え）。モックは `prototype/dataflow-mock.html`
-8''. Phase 8 の設計と実装結果: `docs/16-graph-v2-contract.md`（graph.json v2 の契約）、`docs/17-design-adapters.md`（言語アダプタと合流）、`docs/18-design-wiring-viewer.md`（配線図ビューア・画面・views、D60〜D81）、`docs/20-design-map-link.md`（8-6 の下書き。**実装は Q20 の後**）
+8''. Phase 8 の設計と実装結果: `docs/16-graph-v2-contract.md`（graph.json v2 の契約）、`docs/17-design-adapters.md`（言語アダプタと合流）、`docs/18-design-wiring-viewer.md`（配線図ビューア・画面・views、D60〜D81）、`docs/20-design-map-link.md`（8-6 の 3D の地図 ⇄ 配線図の 2 面。§6 Q20 の決定、§7 実装結果、D106〜D113）
 8'''. **`docs/19-design-harness-v2.md`** — Phase 8-4 のハーネス（補いの `v2:`・手書きの部分グラフ・views.yaml・`build --dry-run --json` / `--strict`・`init --skill`・`init-views`、D67〜D105。§11 ドッグフード、§12 レビューの修正）。skill の本文は `harness/skill/`（SKILL.md と references/）、隙間を仕込んだ fixture は `examples/fixture-gaps/`、その正解表は §9（**正解表と参照解 `packages/cli/src/__tests__/fixtures/gaps-answers/` を fixture-gaps の中や skill に書かない**。ドッグフードのエージェントが読む）
 9. `docs/10-screenshots-guide.md`（`data-component` と screenshots の設定）、`docs/11-sharing.md`（メモ・差分・配信）、`docs/ci-example.yml`
 10. 必要に応じて `docs/05-viewer-spec.md`（UI 仕様）、`docs/04-extractors.md`（抽出方法）、各 `extractors/*/README.md`
 
 ## 現在の状態と次のタスク
 
-テストは `pnpm test` で 1270 件（skip 2。`STACK_ATLAS_REQUIRE_GO=1` で go の側も）、viewer の e2e は 45 件（3D の地図の spec は手元のヘッドレスで止まることがある。CI で実行）。`examples/fixture-poly/`（2 repo の合成）は 56 ノード / 95 エッジ / 2 フロー / エラー 0。
+テストは `pnpm test` で 1357 件（skip 2。`STACK_ATLAS_REQUIRE_GO=1` で go の側も）、viewer の e2e は 58 件（3D の地図の spec は手元のヘッドレスで止まる・遅いことがある。CI で実行。配線図だけを確かめる spec は `&pane=wiring`）。`examples/fixture-poly/`（2 repo の合成）は 56 ノード / 95 エッジ / 2 フロー / エラー 0。
 実リポジトリでは設定を**この公開リポジトリの外**（兄弟ディレクトリ。`repos: { web: ../damage-web, platform: ../damage-platform }`）に置いて build し、149 / 330 / エラー 0 / 警告 0 を確認した（内訳は `HANDOFF.md` §0）。
 
-次にやること: ユーザーの判断待ち（Q17 エージェントを実リポジトリに当てるか、Q19 配線図の折りたたみ、Q20 8-6 の 2 面の地図）。Phase 6 の残り:
+次にやること: ユーザーの判断待ち（Q17 エージェントを実リポジトリに当てるか、Q19 配線図の折りたたみ）。8-6 の残り（合成 300 箱でクリックから光るまで 50ms。配線図の描き直しを差分に）は docs/20 §7.6。Phase 6 の残り:
 
 1. （完了）ビューアの大規模 graph 対応: 板の拡張、ラベル「すべて / 関連のみ / なし」と LOD、検索（`/`）、kind チップ
 2. 実アプリのスクショ: サイトを起動し、`data-component` を付け、`screenshots`（`baseUrl` / `routes` / `storageState`）を書く
@@ -78,11 +78,11 @@ tsconfig.base.json  eslint.config.js  .prettierrc  .editorconfig  .nvmrc(22)
 .github/workflows/ci.yml           ← lint・typecheck・test・build・サンプル検証・e2e
 packages/
   schema/                          ← graph.json の JSON Schema（正。v1 と v2）・型・validateGraph() / validateGraphV2()・検証 CLI
-  wiring/                          ← 配線図の規則（v2 の索引・たどる・選ぶ・球の時刻・切れている線）。純 TS、schema にだけ依存
+  wiring/                          ← 配線図の規則（v2 の索引・たどる・選ぶ・球の時刻・切れている線）と地図の射影（projectMap・litOnMap・mapFlow）。純 TS、schema にだけ依存
   core/                            ← 抽出器の契約（src/types.ts）、repo / classify / deploy / merge / overrides / flows / rules/ / buildGraph()（src/pipeline.ts）、diff、memos
   tf-graph/                        ← IaC 共通: Terraform JSON → infra ノード・エッジ・cache（cdktf / terraform / cloudformation が使う）
   cli/                             ← stack-atlas コマンド（src/commands/ に build / validate / serve / diff / init-flows / init-views / init-skill、harness.ts）
-  viewer/                          ← Vite + TypeScript + three.js の静的アプリ（src/graph・layout・scene・screen・ui、e2e/）
+  viewer/                          ← Vite + TypeScript + three.js の静的アプリ（src/graph・layout・scene・screen・ui・wiring（配線図）・split（2 面）、e2e/）
 harness/skill/                     ← Claude Code の skill（SKILL.md・references/・templates/・VERSION）。`init --skill` のコピー元（docs/19 §3.5）
 extractors/                        ← 15 個。CLI の順: files → cdktf → terraform → cloudformation → nextjs-app → ts-imports → ts-types → go → go-types → openapi → sql → api-link → cache → screenshots → screens
   files/  cdktf/  terraform/  cloudformation/   ← glob → ノード、インフラ層（CDKtf / HCL / CDK・SAM・CFn）

@@ -28,9 +28,16 @@ export function memoBoxIds(index: GraphIndex, memos: MemoMap): Set<string> {
   return out;
 }
 
-/** 孤立メモ: 箱（host の枠を含む）・型・group のどれの id でもないメモ。id の昇順 */
-export function memoOrphans(index: GraphIndex, memos: MemoMap): string[] {
-  const known = new Set<string>([...index.nodes.keys(), ...index.types.keys()]);
+/**
+ * 孤立メモ: 箱（host の枠を含む）・型・group のどれの id でもないメモ。id の昇順。
+ * extra は 2 面のときの 3D の地図のノードの id（docs/20 §5.1 #12「v2 の箱 ∪ 型 ∪ group ∪ 地図のノード」）
+ */
+export function memoOrphans(
+  index: GraphIndex,
+  memos: MemoMap,
+  extra: Iterable<string> = [],
+): string[] {
+  const known = new Set<string>([...index.nodes.keys(), ...index.types.keys(), ...extra]);
   for (const n of index.nodes.values()) if (n.node.group !== undefined) known.add(n.node.group);
   return Object.keys(memos)
     .filter((id) => !known.has(id) && hasMemo(memos, id))
@@ -60,6 +67,9 @@ export function memoTargets(
     return [{ id: selection.typeRef, label: t?.name ?? selection.typeRef, role: 'type' }];
   }
   if (selection.kind === 'wire') return [];
+  // 地図の group（8-6）: group の id（v1 の箱の id）のメモ。札の見出しは地図のノードの名前（label。無ければ id）
+  if (selection.kind === 'group')
+    return [{ id: selection.id, label: selection.label ?? selection.id, role: 'group' }];
   const id = selection.kind === 'item' ? index.items.get(selection.ref)?.node.id : selection.id;
   const n = id === undefined ? undefined : index.nodes.get(id);
   if (!n) return [];

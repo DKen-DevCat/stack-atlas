@@ -47,6 +47,11 @@
       "type": "array",
       "description": "名前付きの始点（flows.yaml の置き換え）",
       "items": { "$ref": "#/$defs/view" }
+    },
+    "groups": {
+      "type": "array",
+      "description": "group になった v1 の箱（関数の箱で置き換わり、箱としては消えたもの）の元の名前・kind・file。3D の地図（projectMap）が group のノードの名前と kind に使う（docs/20 §5.1 #3、Phase 8-6）",
+      "items": { "$ref": "#/$defs/groupInfo" }
     }
   },
   "$defs": {
@@ -338,6 +343,21 @@
           "description": "error=名前が相手に無い・wireType が互換でない / warn=nullable → 必須"
         },
         "reason": { "type": "string" }
+      }
+    },
+    "groupInfo": {
+      "type": "object",
+      "required": ["id", "name", "kind"],
+      "additionalProperties": false,
+      "description": "group の値（箱の group）と同じ id の、元の v1 の箱",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "description": "group の値（v1 の箱の id。D56）" },
+        "name": { "type": "string", "description": "v1 の箱の名前" },
+        "kind": {
+          "type": "string",
+          "description": "v1 の箱の kind（v1 の語彙: handler・lib・schema など。地図のノードの kind）"
+        },
+        "file": { "type": "string", "description": "v1 の箱の file（リポジトリルートからの相対パス）" }
       }
     },
     "view": {

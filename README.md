@@ -49,7 +49,8 @@ pnpm atlas serve out-poly
 pnpm dev                    # → http://localhost:5173/?graph=samples/race-site.graph.json
 ```
 
-`version: 2` の graph.json（箱・口・項目・線。`docs/16`）は同じビューアが配線図で開く（例: `?graph=samples/fixture-poly.today.v2.json`。仕様は `docs/05` の「配線図」）。
+`version: 2` の graph.json（箱・口・項目・線。`docs/16`）は同じビューアが **2 面**で開く: 左に 3D の地図（v2 を group で畳んだ俯瞰）、右に配線図。
+選択は両方の面に写り、球（データの流れ）は両方の面で同じ時刻に流れる（例: `?graph=samples/fixture-poly.today.v2.json`。WebGL が無いときと `&pane=wiring` は配線図だけ。仕様は `docs/20`・`docs/05` の「配線図」）。
 
 ## CLI
 
@@ -57,7 +58,7 @@ pnpm dev                    # → http://localhost:5173/?graph=samples/race-site
 
 | コマンド | 内容 |
 |---|---|
-| `build <repo> [-o <outDir>] [--with-viewer] [--no-screenshots] [--v1] [-v]` | 解析して `graph.json`（v2。配線図）/ `graph.v1.json`（v1。3D の地図）/ `issues.json` / `memos.json`（と `shots/`、ビューア）を `outDir` に出す。`--v1` は従来の v1 の graph.json だけ（v2 は作らない）。検証エラーがあれば終了コード 1。出力先のファイルがシンボリックリンクなら書かずに終了コード 2 |
+| `build <repo> [-o <outDir>] [--with-viewer] [--no-screenshots] [--v1] [-v]` | 解析して `graph.json`（v2。3D の地図と配線図の 2 面）/ `graph.v1.json`（v1。互換用。開くと今までの 3D の地図だけ）/ `issues.json` / `memos.json`（と `shots/`、ビューア）を `outDir` に出す。`--v1` は従来の v1 の graph.json だけ（v2 は作らない）。検証エラーがあれば終了コード 1。出力先のファイルがシンボリックリンクなら書かずに終了コード 2 |
 | `build <repo> --dry-run --json` / `--strict` | ハーネス用（docs/19）。`--dry-run` は出力先に書かず、`--json` は標準出力を報告の JSON だけにする。`--strict` は埋められる隙間（結べない呼び出し・解けない補いなど）があれば終了コード 1（CI の関門） |
 | `validate [--strict] <graph.json...>` | スキーマと参照整合性の検証（`pnpm validate <file>` でも可）。`--strict` は graph.json の build の報告も読む |
 | `serve <outDir> [--port 4173] [--host 127.0.0.1] [--repo <repo>] [--allowed-host <name>]...` | `outDir` を配信。`--repo` を付けるとビューアのメモ保存が `<repo>/.stack-atlas/memos.json` に書き戻される。Host ヘッダがループバック・`--host`・`--allowed-host` 以外なら 403 |
