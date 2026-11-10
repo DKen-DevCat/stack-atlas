@@ -41,7 +41,11 @@ export interface HiddenBroken {
 export interface FoldView {
   /** 全体の索引（たどるのはこちら） */
   source: GraphIndex;
-  /** 畳んだ graph（見えている箱・畳んだ箱・host の枠と、見えている線）。何も畳んでいなければ元の graph そのもの */
+  /**
+   * 畳んだ graph（見えている箱・畳んだ箱・host の枠と、見えている線）。何も畳んでいなければ元の graph そのもの。
+   * 畳んだときは `views`・`groups` を持たない（箱の id・項目の参照が畳んだ graph に無いことがある）。
+   * views・groups・地図（projectMap）は全体の graph と `source` で使う
+   */
   graph: GraphV2;
   /** 畳んだ graph の索引（配置・描画はこちら）。何も畳んでいなければ元の索引そのもの */
   index: GraphIndex;
@@ -59,6 +63,11 @@ export interface FoldView {
   open: Cut;
   /** 単位（見えている箱・畳んだ箱）の id → `▾ <名前>` に出す入れ物（いちばん内側の開いた入れ物）の id。根の直下の単位は持たない */
   crumbs: Map<string, string>;
+  /**
+   * 見えている線のキー → 層を決める線か（束は、中に isForward の線が 1 本でもあるか）。`layoutWiring` の `forward` に渡す
+   * （`foldLayoutOptions`）。畳んだ箱の `out/_` は、参照（D53）かどうかを口から読めないため。何も畳んでいなければ空
+   */
+  forward: Map<string, boolean>;
   /** 畳んだ箱が 1 つでもあるか（false なら graph・index は元と同じもの） */
   folded: boolean;
 }
@@ -95,8 +104,7 @@ export function foldView(
   cut: Cut,
   slice: ReadonlyMap<string, string>,
 ): FoldView {
-  const { tree: t, open } = openIn(c, cut);
-  const openCut: Cut = new Set(t.ids.filter((_, i) => open[i]));
+  const { tree: t, open, cut: openCut } = openIn(c, cut);
 
   // 入れ物 i を含む、いちばん上の閉じた入れ物（i 自身を含む）。祖先も自分も開いていれば -1。浅い順に決める
   const top = new Int32Array(t.ids.length).fill(-1);
@@ -189,21 +197,20 @@ export function foldView(
       hiddenBroken,
       open: openCut,
       crumbs,
+      forward: new Map(),
       folded: false,
     };
   }
 
   // 線。束は（from の端, to の端, 戻りか）ごと。graph の中では、束の最初の線の位置に置く
-  const lines: { wire: WireV2; keys: string[] }[] = [];
+  const lines: { wire: WireV2; keys: string[]; bundle?: Bundle }[] = [];
   const bundles = new Map<string, Map<string, [Bundle | undefined, Bundle | undefined]>>();
-  const lineNo = new Map<string, number>();
   for (const w of index.wires) {
     const fu = unitOf.get(w.fromNode.id)!;
     const tu = unitOf.get(w.toNode.id)!;
     const fromFolded = fu !== w.fromNode.id;
     const toFolded = tu !== w.toNode.id;
     if (!fromFolded && !toFolded) {
-      lineNo.set(w.key, lines.length);
       lines.push({ wire: w.wire, keys: [w.key] });
       continue;
     }
@@ -243,8 +250,7 @@ export function foldView(
         keys: [],
       };
       pair[side] = bundle;
-      lineNo.set(w.key, lines.length);
-      lines.push({ wire: bundle.wire, keys: bundle.keys });
+      lines.push({ wire: bundle.wire, keys: bundle.keys, bundle });
     } else if (forward && !bundle.forward) {
       bundle.wire.via = w.wire.via;
       bundle.forward = true;
@@ -261,13 +267,25 @@ export function foldView(
     }
   }
 
-  const graph: GraphV2 = { ...index.graph, nodes, wires: lines.map((l) => l.wire) };
+  // views・groups は持たない（id が畳んだ graph に無いことがある）
+  const src = index.graph;
+  const graph: GraphV2 = {
+    ...(src.$schema === undefined ? {} : { $schema: src.$schema }),
+    version: src.version,
+    ...(src.project === undefined ? {} : { project: src.project }),
+    ...(src.types === undefined ? {} : { types: src.types }),
+    nodes,
+    wires: lines.map((l) => l.wire),
+  };
   const folded = indexGraph(graph);
   // 線のキーは畳んだ索引が振ったもの（添字から作ると仮定しない）
+  const forwardOf = new Map<string, boolean>();
+  const sourceOf = new Map(index.wires.map((w) => [w.key, w]));
   lines.forEach((l, i) => {
     const key = folded.wires[i]!.key;
     wiresOf.set(key, l.keys);
     for (const k of l.keys) lineOf.set(k, key);
+    forwardOf.set(key, l.bundle ? l.bundle.forward : isForward(sourceOf.get(l.keys[0]!)!));
   });
   return {
     source: index,
@@ -280,6 +298,7 @@ export function foldView(
     hiddenBroken,
     open: openCut,
     crumbs,
+    forward: forwardOf,
     folded: true,
   };
 }
@@ -302,6 +321,22 @@ function linesOf(view: FoldView): Map<string, IndexedWire> {
  */
 export function segmentOn(view: FoldView, seg: Segment): Segment | null {
   if (!view.folded) return seg;
+  // 区間のキーは全体の索引の中で一意で、写す先は view ごとに決まる。litOn・foldLengths・flowOn が同じ区間を何度も写すので覚える
+  let memo = segCache.get(view);
+  if (!memo) {
+    memo = new Map();
+    segCache.set(view, memo);
+  }
+  const hit = memo.get(seg.key);
+  if (hit !== undefined) return hit;
+  const out = mapSegment(view, seg);
+  memo.set(seg.key, out);
+  return out;
+}
+
+const segCache = new WeakMap<FoldView, Map<string, Segment | null>>();
+
+function mapSegment(view: FoldView, seg: Segment): Segment | null {
   if (seg.kind === 'link' || !seg.wire) {
     const id = seg.node?.id ?? seg.from.node.id;
     if (view.unitOf.get(id) !== id) return null;

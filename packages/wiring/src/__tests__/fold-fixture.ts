@@ -117,6 +117,7 @@ export function viewJson(v: FoldView): string {
     hiddenBroken: [...v.hiddenBroken],
     open: [...v.open],
     crumbs: [...v.crumbs],
+    forward: [...v.forward],
     folded: v.folded,
   });
 }

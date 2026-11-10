@@ -48,10 +48,14 @@ function normalizeIn(t: Tree, ids: Iterable<string>): Uint8Array {
 
 const cutOf = (t: Tree, open: Uint8Array): Cut => new Set(t.ids.filter((_, i) => open[i]));
 
-/** 木の索引と、正規の形の「開いているか」（fold.ts が使う。パッケージの外には出さない） */
-export function openIn(c: Containment, ids: Iterable<string>): { tree: Tree; open: Uint8Array } {
+/** 木の索引と、正規の形の「開いているか」と切り口（fold.ts が使う。パッケージの外には出さない） */
+export function openIn(
+  c: Containment,
+  ids: Iterable<string>,
+): { tree: Tree; open: Uint8Array; cut: Cut } {
   const tree = treeOf(c);
-  return { tree, open: normalizeIn(tree, ids) };
+  const open = normalizeIn(tree, ids);
+  return { tree, open, cut: cutOf(tree, open) };
 }
 
 /**

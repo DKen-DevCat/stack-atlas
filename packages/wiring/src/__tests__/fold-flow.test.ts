@@ -10,8 +10,15 @@ import {
   slicesOf,
   type Cut,
 } from '../cut.js';
-import { foldView, litOn, type FoldView } from '../fold.js';
-import { FOLD_HIDDEN, FOLD_WIDTH, flowOn, foldLengths, foldWidthOf } from '../fold-flow.js';
+import { foldView, litOn, segmentOn, type FoldView } from '../fold.js';
+import {
+  FOLD_HIDDEN,
+  FOLD_WIDTH,
+  flowOn,
+  foldLayoutOptions,
+  foldLengths,
+  foldWidthOf,
+} from '../fold-flow.js';
 import { indexGraph, type GraphIndex } from '../graph-index.js';
 import { defaultWidthOf, layoutWiring, segmentRoute } from '../layout/index.js';
 import type { WiringLayout } from '../layout/types.js';
@@ -45,7 +52,7 @@ const foldSched = (view: FoldView, layout: WiringLayout, lit: LitSelection, hidd
     }),
     ...opts(lit),
   });
-const foldLayout = (v: FoldView) => layoutWiring(v.index, { widthOf: foldWidthOf(v) });
+const foldLayout = (v: FoldView) => layoutWiring(v.index, foldLayoutOptions(v));
 
 function setup(graph: GraphV2) {
   const index = indexGraph(graph);
@@ -150,6 +157,61 @@ describe('flowOn', () => {
         expect(t0s).toEqual([...t0s].sort((a, b) => a - b));
       }
     }
+  });
+
+  it('67 通りの選択 × 13 通りの切り口でも球は消えない。脈動になるのは単位の中の線だけ。この view の索引に無い線は描かない', () => {
+    let balls = 0;
+    for (const id of boxIds(poly.graph)) {
+      const lit = sel(poly.index, id);
+      for (const { view, layout } of views) {
+        const sched = foldSched(view, layout, lit);
+        const f = flowOn(view, sched);
+        const want = drawnBalls(sched).flatMap((b) =>
+          b.seg.kind === 'wire' ? [b.seg.wire!.key] : [],
+        );
+        const got = [...f.balls.flatMap((b) => b.wires), ...f.pulses.flatMap((p) => p.wires)];
+        expect([...got].sort()).toEqual([...want].sort());
+        for (const p of f.pulses) for (const w of p.wires) expect(view.lineOf.get(w)).toBeNull();
+        balls += want.length;
+      }
+    }
+    expect(balls).toBeGreaterThan(5000);
+    // 索引に無い線（別の graph の schedule）の球は、脈動にも球にもしない
+    const { view, layout } = views[0]!;
+    const lit = sel(poly.index, 'route:/');
+    const sched = foldSched(view, layout, lit);
+    const b = sched.balls.find(
+      (x) => x.seg.kind === 'wire' && view.lineOf.get(x.seg.wire!.key) === null,
+    )!;
+    const alien = {
+      ...b,
+      seg: { ...b.seg, key: 'w9999|x|y', wire: { ...b.seg.wire!, key: 'w9999' } },
+    };
+    const f = flowOn(view, { ...sched, balls: [alien] });
+    expect(f).toEqual({ balls: [], pulses: [], cycle: sched.cycle });
+  });
+
+  it('segmentOn は同じ区間に同じものを返す（view ごとに覚える）。foldLengths は写した経路の長さ', () => {
+    const { view, layout } = views[1]!;
+    const a = sel(poly.index, 'route:/');
+    const b = sel(poly.index, 'actor:user');
+    const len = foldLengths(view, layout, { speed: SPEED });
+    let shared = 0;
+    for (const s of a.segs) {
+      const on = segmentOn(view, s);
+      expect(segmentOn(view, s)).toBe(on);
+      if (s.kind === 'wire')
+        expect(len(s)).toBe(on ? (segmentRoute(layout, on)?.length ?? 0) : FOLD_HIDDEN * SPEED);
+      const other = b.segs.find((x) => x.key === s.key);
+      if (other) {
+        expect(segmentOn(view, other)).toBe(on);
+        shared++;
+      }
+    }
+    expect(shared).toBeGreaterThan(0);
+    // 写した区間は litOn の区間と同じもの
+    const lit = litOn(view, a);
+    for (const s of lit.segs) expect(a.segs.some((x) => segmentOn(view, x) === s)).toBe(true);
   });
 
   it('route:/（8-6 の基準）: 13 通りの切り口のどれでも地図の球は 21。配線図の球と脈動は全部畳むと 6 と 15、初めの切り口で 13 と 8', () => {

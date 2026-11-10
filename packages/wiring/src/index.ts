@@ -92,6 +92,7 @@ export {
   foldLengths,
   flowOn,
   foldWidthOf,
+  foldLayoutOptions,
   FOLD_WIDTH,
   FOLD_HIDDEN,
   type FoldBall,

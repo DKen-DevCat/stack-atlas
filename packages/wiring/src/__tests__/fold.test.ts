@@ -8,10 +8,12 @@ import { diffOverlayV2 } from '../diff.js';
 import { foldView, lineActive, litOn, segmentOn, type FoldView } from '../fold.js';
 import { indexGraph, type GraphIndex } from '../graph-index.js';
 import { layoutWiring } from '../layout/index.js';
+import { isForward } from '../layout/model.js';
+import { foldLayoutOptions, foldWidthOf } from '../fold-flow.js';
 import { select } from '../select.js';
 import { defaultState } from '../variants.js';
-import { W } from './fixture.js';
-import { boxIds, deepFreeze, fbox, load, spikeCuts, viewJson } from './fold-fixture.js';
+import { I, N, P, W } from './fixture.js';
+import { boxIds, deepFreeze, fbox, load, pathCut, spikeCuts, viewJson } from './fold-fixture.js';
 import { synthetic } from './synthetic.js';
 
 const setup = (graph: GraphV2) => {
@@ -368,6 +370,98 @@ describe('foldView — 束', () => {
       for (const k of shown)
         expect(v.index.wires.find((w) => w.key === k)!.wire.broken?.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('foldView — 層を決める線・views と groups（レビューの修正）', () => {
+  /** 項目の単位になった箱（`out/_` と `out/r`）。`out/_` から出る線は参照（D53）で、層を決めない */
+  const refined = (id: string, file?: string): NodeV2 =>
+    N(
+      id,
+      'fn',
+      'browser',
+      [P('in', 'in', [I('a', 'string')]), P('out', 'out', [I('_', 'unknown'), I('r', 'string')])],
+      file === undefined ? {} : { file },
+    );
+  // r → a1 は呼び出し、a1・a2 → r は参照だけ。r → s → t は呼び出し。a1・a2 は src/a に畳む（畳んだ箱は r より先に宣言される）
+  const refGraph = (): GraphV2 => ({
+    version: 2,
+    nodes: [
+      refined('fn:a1', 'src/a/1.ts'),
+      refined('fn:a2', 'src/a/2.ts'),
+      refined('fn:r'),
+      refined('fn:s'),
+      refined('fn:t'),
+    ],
+    wires: [
+      W('fn:r#out/r', 'fn:a1#in/a', 'call'),
+      W('fn:a1#out/_', 'fn:r#in/a', 'call'),
+      W('fn:a2#out/_', 'fn:r#in/a', 'call'),
+      W('fn:r#out/r', 'fn:s#in/a', 'call'),
+      W('fn:s#out/r', 'fn:t#in/a', 'call'),
+    ],
+  });
+
+  it('参照だけの束は層を決めない（view.forward）。foldLayoutOptions で渡すと、平らな配置と同じ向きに並ぶ', () => {
+    const s = setup(refGraph());
+    const v = s.view(new Set());
+    const chip = unitId(v, 'd:src/a');
+    const keyOf = (w: string) => v.lineOf.get(w)!;
+    expect(v.lineOf.get('w1')).toBe(v.lineOf.get('w2'));
+    expect(v.forward.get(keyOf('w0'))).toBe(true);
+    expect(v.forward.get(keyOf('w1'))).toBe(false);
+    // 畳んだ箱の out/_ は項目の単位でないので、線だけを見ると層を決める線に見える（だから view.forward が要る）
+    expect(isForward(v.index.wires.find((w) => w.key === keyOf('w1'))!)).toBe(true);
+    const flat = layoutWiring(s.index);
+    const with_ = layoutWiring(v.index, foldLayoutOptions(v));
+    const without = layoutWiring(v.index, { widthOf: foldWidthOf(v) });
+    const col = (l: typeof flat, id: string) => l.boxes.get(id)!.col;
+    // 平らな配置: 呼ばれる a1 は r より右の列
+    expect(col(flat, 'fn:a1')).toBeGreaterThan(col(flat, 'fn:r'));
+    expect(col(with_, chip)).toBeGreaterThan(col(with_, 'fn:r'));
+    // 渡さなければ、参照の束と呼び出しが輪になり、先に宣言された畳んだ箱が r より右に出ない（修正前の形。同じ列）
+    expect(col(without, chip)).toBeLessThanOrEqual(col(without, 'fn:r'));
+  });
+
+  it('poly-86: 束の「層を決める線か」は中の線から決まる。線だけを見たときと違う線がある（参照の束。35 通りの切り口で 164 本）', () => {
+    const s = setup(load('poly-86'));
+    const src = new Map(s.index.wires.map((w) => [w.key, w]));
+    const cutsAll = [
+      ...spikeCuts(s.c, s.index, s.slice).map(([, x]) => x),
+      ...[...s.c.containers.keys()].map((id) => pathCut(s.c, id)),
+    ];
+    let lines = 0;
+    let differs = 0;
+    for (const cut of cutsAll) {
+      const v = s.view(cut);
+      for (const w of v.index.wires) {
+        const want = v.wiresOf.get(w.key)!.some((k) => isForward(src.get(k)!));
+        expect(v.forward.get(w.key)).toBe(want);
+        lines++;
+        if (want !== isForward(w)) differs++;
+      }
+    }
+    expect(cutsAll).toHaveLength(35);
+    expect(lines).toBe(1518);
+    expect(differs).toBe(164);
+    // 何も畳まなければ空（既定の isForward のまま）
+    const all = s.view(normalizeCut(s.c, s.c.containers.keys()));
+    expect(all.forward.size).toBe(0);
+    expect(foldLayoutOptions(all)).toEqual({ widthOf: expect.any(Function) });
+  });
+
+  it('畳んだ graph は views・groups を持たない（id が畳んだ graph に無いことがある）。types・project はそのまま', () => {
+    const s = setup(load('poly-86'));
+    expect(s.graph.views?.length).toBeGreaterThan(0);
+    expect(s.graph.groups?.length).toBeGreaterThan(0);
+    const v = s.view(new Set());
+    expect(v.graph.views).toBeUndefined();
+    expect(v.graph.groups).toBeUndefined();
+    expect(v.graph.types).toBe(s.graph.types);
+    expect(v.graph.project).toBe(s.graph.project);
+    expect(Object.keys(v.graph).sort()).toEqual(['nodes', 'project', 'types', 'version', 'wires']);
+    // 何も畳まなければ元の graph そのもの（views の id はそのまま使える）
+    expect(s.view(normalizeCut(s.c, s.c.containers.keys())).graph.views).toBe(s.graph.views);
   });
 });
 

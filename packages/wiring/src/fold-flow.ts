@@ -3,6 +3,7 @@
 // 地図と共有するのは、重なりをまとめる関数（mergeOverlaps）と脈動の最短の長さ（PULSE_MIN）だけ（mapFlow の本体は使わない）
 import { segmentOn, type FoldView } from './fold.js';
 import { defaultWidthOf, segmentRoute } from './layout/index.js';
+import { isForward } from './layout/model.js';
 import type { LayoutOptions, WiringLayout } from './layout/types.js';
 import { mergeOverlaps, PULSE_MIN } from './map-flow.js';
 import { drawnBalls, type Ball, type Schedule } from './schedule.js';
@@ -19,6 +20,21 @@ export function foldWidthOf(
   base: NonNullable<LayoutOptions['widthOf']> = defaultWidthOf,
 ): NonNullable<LayoutOptions['widthOf']> {
   return (node, boxWidth) => (view.units.has(node.id) ? FOLD_WIDTH : base(node, boxWidth));
+}
+
+/**
+ * 畳んだ索引の配置（`layoutWiring(view.index, foldLayoutOptions(view))`）に渡す設定: 畳んだ箱の幅（`foldWidthOf`）と、
+ * 層を決める線（`view.forward`。束は中の線から決める）。`base` のほかの設定はそのまま。何も畳んでいなければ `base` に幅だけ足したもの
+ */
+export function foldLayoutOptions(view: FoldView, base: LayoutOptions = {}): LayoutOptions {
+  const widthOf = foldWidthOf(view, base.widthOf ?? defaultWidthOf);
+  if (!view.folded) return { ...base, widthOf };
+  const forward = base.forward ?? isForward;
+  return {
+    ...base,
+    widthOf,
+    forward: (w) => view.forward.get(w.key) ?? forward(w),
+  };
 }
 
 export interface FoldLengthOptions {
@@ -40,10 +56,18 @@ export function foldLengths(
   opts: FoldLengthOptions = {},
 ): (seg: Segment) => number {
   const hidden = (opts.hidden ?? FOLD_HIDDEN) * (opts.speed ?? 1);
+  // 束に写る区間は多くが同じ経路になるので、写した先の区間ごとに 1 回だけ経路を作る
+  const lengths = new Map<string, number>();
   return (seg) => {
     if (seg.kind !== 'wire' || !seg.wire) return 0;
     const on = segmentOn(view, seg);
-    return on ? (segmentRoute(layout, on)?.length ?? 0) : hidden;
+    if (!on) return hidden;
+    let len = lengths.get(on.key);
+    if (len === undefined) {
+      len = segmentRoute(layout, on)?.length ?? 0;
+      lengths.set(on.key, len);
+    }
+    return len;
   };
 }
 
@@ -108,8 +132,11 @@ export function flowOn(view: FoldView, sched: Schedule): FoldFlow {
       return;
     }
     if (!on || !on.wire) {
+      // 単位の中に入って見えない線だけが脈動になる（lineOf が null）。それ以外で写せない区間は、この view の全体の索引
+      // （source）のものではない（別の索引で作った schedule）ので描かない
+      if (view.lineOf.get(s.wire.key) !== null) return;
       const unit = view.unitOf.get(s.from.node.id);
-      if (unit === undefined) return;
+      if (unit === undefined || !view.units.has(unit)) return;
       const t1 = Math.min(Math.max(b.t0 + b.dur, b.t0 + PULSE_MIN), sched.cycle);
       const list = pulses.get(unit);
       const pulse = { unit, t0: b.t0, t1, wires: [s.wire.key] };

@@ -585,9 +585,9 @@ Phase 9（docs/22 で設計）: graph が包含の木（repo > ディレクト�
 
 ## 11. 8-8a の実装結果（2026-11-10）
 
-**結論**: §8 の型と関数を `@stack-atlas/wiring` に入れた（ビューア・スキーマ・CLI・graph.json・`litOnMap`・`mapFlow` の本体は変えていない）。§3 の単体テストの数は、1 つ（見えている箱の項目の順）を除いて設計どおりに出た。テストは 1357 → **1432**（skip 2。wiring 184 → 259）。
+**結論**: §8 の型と関数を `@stack-atlas/wiring` に入れた（ビューア・スキーマ・CLI・graph.json・`litOnMap`・`mapFlow` の本体は変えていない）。§3 の単体テストの数は、1 つ（見えている箱の項目の順）を除いて設計どおりに出た。テストは 1357 → **1437**（skip 2。wiring 184 → 264。§11.4 のレビューの修正の 5 件を含む）。
 
-**置き場所**（行数）: `containment.ts`（279。木）、`cut.ts`（198。切り口・置き場・初めの切り口）、`fold.ts`（416。`foldView`・`segmentOn`・`litOn`・`lineActive`）、`fold-flow.ts`（151。`foldWidthOf`・`foldLengths`・`flowOn`）。テストは `containment.test.ts` 23 件・`cut.test.ts` 19 件・`fold.test.ts` 21 件・`fold-flow.test.ts` 12 件（共通の道具は `fold-fixture.ts`）。配置の中核の変更は export 2 つだけ（`layout/model.ts` の `laneIndexOf`、`map-flow.ts` の `mergeOverlaps`）。
+**置き場所**（行数）: `containment.ts`（279。木）、`cut.ts`（198。切り口・置き場・初めの切り口）、`fold.ts`（416。`foldView`・`segmentOn`・`litOn`・`lineActive`）、`fold-flow.ts`（151。`foldWidthOf`・`foldLengths`・`flowOn`）。テストは `containment.test.ts` 23 件・`cut.test.ts` 19 件・`fold.test.ts` 24 件・`fold-flow.test.ts` 14 件（共通の道具は `fold-fixture.ts`）。配置の中核の変更は export 2 つ（`layout/model.ts` の `laneIndexOf`、`map-flow.ts` の `mergeOverlaps`）と、`LayoutOptions.forward`（層を決める線の判定を差し替える。既定は今の `isForward`。§11.4 の 1）。
 
 ### 11.1 測った数（テストで固定した値）
 
@@ -624,7 +624,8 @@ Phase 9（docs/22 で設計）: graph が包含の木（repo > ディレクト�
 5. 畳んだ箱のノードの `kind` は `fn`（スキーマの kind は閉じた集合。ビューアは `view.units` で畳んだ箱かを見分ける）。口は `in/_`・`out/_`（項目の名前「値」、型 `unknown`）
 6. `hiddenBroken.count` は線の本数ではなく `broken` の件数
 7. `group` が文字列でない箱は group 無しとして扱う
-8. 分かっている端（§9 に足す）: 畳んだ箱の runtime と host は中の最初の箱のもの。レーンをまたぐ host の箱を一部だけ畳むと、畳んだ箱が平らな配置と別のレーンに出ることがある。畳んだ箱から出る束は、層を決めるとき向きを決める線として扱われる
+8. 分かっている端（§9 に足す）: 畳んだ箱の runtime と host は中の最初の箱のもの。レーンをまたぐ host の箱を一部だけ畳むと、畳んだ箱が平らな配置と別のレーンに出ることがある
+9. 配置は `layoutWiring(view.index, foldLayoutOptions(view))`（幅と、層を決める線。§11.4 の 1）。`foldWidthOf` だけを渡すと、参照だけの束が層を決める線になる
 
 ### 11.3 8-8b が呼ぶ順（表示 1 回ぶん）
 
@@ -634,7 +635,7 @@ const c = containmentOf(graph);              // graph を読んだとき 1 回
 const slice = slicesOf(index);
 const cut = normalizeCut(c, urlOpen ?? initialCut(c, index, slice)); // 開閉は openContainer / closeContainer / openTo
 const view = foldView(index, c, cut, slice);
-const layout = layoutWiring(view.index, { widthOf: foldWidthOf(view) });
+const layout = layoutWiring(view.index, foldLayoutOptions(view)); // 幅と、層を決める線（view.forward）
 const lit = select(index, state, selection);  // たどるのは全体の索引
 const shown = litOn(view, lit);               // 光らせるのは畳んだ索引の語彙
 const sched = schedule(lit, lit.flowStarts, {
@@ -644,3 +645,18 @@ const sched = schedule(lit, lit.flowStarts, {
 const flow = flowOn(view, sched);             // 配線図の球と畳んだ箱の脈動
 const mapSide = mapFlow(projectMap(graph), sched); // 地図は今のまま
 ```
+
+### 11.4 レビュー（/code-review medium）の指摘と扱い
+
+| # | 指摘 | 扱い |
+|---|---|---|
+| 1 | 畳んだ箱の `out/_` から出る束は、中の線が参照（D53）だけでも層を決める線になる | **直した**。`FoldView.forward`（見えている線 → 中に `isForward` の線があるか）と `LayoutOptions.forward` を足し、`foldLayoutOptions(view)` で渡す。poly-86 の 35 通りの切り口で 1518 本中 164 本が、線だけを見た判定と違う（テストで固定）。参照と呼び出しが輪になる合成の graph で、平らな配置と同じ向きに並ぶことを確かめた |
+| 2 | 畳んだ graph が `views`・`groups` を持ったままで、id が畳んだ graph に無いことがある | **直した**。畳んだときは `views`・`groups` を落とす（`$schema`・`version`・`project`・`types`・`nodes`・`wires` だけ）。views・groups・地図は全体の graph と `source` で使う、と `FoldView.graph` に書いた。畳まなければ元の graph そのもの（id はそのまま使える） |
+| 3 | 束の上で時間の重なる球を 1 つにまとめると、見えている端の子の項目が違っても最初の区間の上に描く | **直さない**。今の配線図の `drawnBalls` も 1 本の線に 1 球（最も早い区間）で、地図の `mapFlow` も束の上で時間の重なる球を 1 つにする（D33: 1 通信 = 1 球）。重ならない球は区間ごとに残る |
+| 4 | `segmentOn` が単位の中以外の理由で写せない区間の球を、黙って捨てる | **直した（はっきりさせた）**。脈動にするのは `lineOf` が null（単位の中）の線だけ、それ以外で写せないのは別の索引で作った schedule なので描かない、と分けた。67 選択 × 13 切り口で、描く球が全部「見えている線の球」か「脈動」に入ることを確かめた |
+| 5 | `foldLengths` が呼ぶたびに `segmentOn` と経路を作り直す | **直した**。`segmentOn` は view ごとに区間のキーで覚え（同じ区間に同じものを返す）、`foldLengths` は写した区間ごとに長さを 1 回だけ作る |
+| 6 | 切り口の関数と `foldView` が呼ぶたびに `treeOf` で木を作り直す | **直さない**。1 回 0.03〜0.04ms（poly-86・合成 300）で、開閉 1 回に 2 回。`Containment` の Map は書き換えられるので、WeakMap で覚えると古い木を返す危険の方が大きい |
+| 7 | `fold.ts` の `lineNo` を書くだけで読まない | **直した**（消した） |
+| 8 | `fold.ts` が `cut.ts` の `cutOf` と同じことをしている | **直した**（`openIn` が切り口も返す） |
+| 9 | `FoldUnit.count` は `boxes.length` と同じ | **直さない**。§8 の型にあり、ビューアの表示（中の箱の数）に使う値。作るのは 1 か所で、テストで `count === boxes.length` を確かめている |
+
