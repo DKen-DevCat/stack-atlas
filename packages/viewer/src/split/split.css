@@ -54,8 +54,4 @@
 .split.narrow[data-pane='map'] .split-wiring .balls {
   display: none;
 }
-/* 配線図の面は窓より狭いので、メモの札は再生バーの上に（窓の幅 900px 以下と同じ）。幅は面に合わせる */
-.split-wiring .wv-memo {
-  bottom: 48px;
-  width: min(360px, calc(100% - 32px));
-}
+/* 配線図の部品（メモの札・再生バー・警告の一覧）の大きさと位置は、配線図の側が面の幅で決める（wiring/style.css の @container。docs/18 §11.9） */

@@ -16,6 +16,8 @@ export interface Canvas {
   open(focus: Rect | null): void;
   /** 直前の mousedown 〜 mouseup がドラッグだったか（クリックにしないため。読むと消える） */
   consumeDrag(): boolean;
+  /** 面の大きさ（最後に測った値。resize で測り直す。毎フレーム読んでも DOM を測らない） */
+  stageSize(): { width: number; height: number };
   dispose(): void;
 }
 
@@ -23,8 +25,8 @@ export interface CanvasOptions {
   stage: HTMLElement;
   /** 変換を当てる要素（描き直すたびに変わるので関数で渡す） */
   target: () => SVGGElement | null;
-  /** 中身の大きさ */
-  size: { w: number; h: number };
+  /** 中身の大きさ（今の場面の配置。場面を差し替えると変わるので関数で渡す） */
+  size: () => { w: number; h: number };
   /** ドラッグを始めない要素（分岐の表など） */
   ignore?: (t: EventTarget | null) => boolean;
   /** 上端の帯の高さ（全体表示で避ける） */
@@ -34,16 +36,24 @@ export interface CanvasOptions {
 }
 
 export function createCanvas(opts: CanvasOptions): Canvas {
-  const { stage, target, size } = opts;
+  const { stage, target } = opts;
+  const size = opts.size;
   const top = opts.top ?? 44;
   const view: View = { k: 1, tx: 0, ty: 0 };
+  // 面の大きさの控え（点滅が「見えている項目」を決めるのに使う。0 の大きさでは上書きしない）
+  let known = { width: 0, height: 0 };
+  const remember = (r: { width: number; height: number }) => {
+    if (r.width > 0 && r.height > 0) known = { width: r.width, height: r.height };
+  };
   const apply = () => {
     target()?.setAttribute('transform', `translate(${view.tx},${view.ty}) scale(${view.k})`);
     opts.onApply?.(view);
   };
   const viewport = (): Viewport | null => {
     const r = stage.getBoundingClientRect();
-    if (r.width <= 0 || r.height <= 0 || size.w <= 0 || size.h <= 0) return null;
+    const s = size();
+    if (r.width <= 0 || r.height <= 0 || s.w <= 0 || s.h <= 0) return null;
+    remember(r);
     return { width: r.width, height: r.height, top };
   };
   const set = (v: View) => {
@@ -54,11 +64,11 @@ export function createCanvas(opts: CanvasOptions): Canvas {
   };
   const fit = () => {
     const vp = viewport();
-    if (vp) set(fitView(vp, size));
+    if (vp) set(fitView(vp, size()));
   };
   const open = (focus: Rect | null) => {
     const vp = viewport();
-    if (vp) set(openingView(vp, size, focus));
+    if (vp) set(openingView(vp, size(), focus));
   };
 
   const onWheel = (ev: WheelEvent) => {
@@ -70,7 +80,7 @@ export function createCanvas(opts: CanvasOptions): Canvas {
       const cy = ev.clientY - r.top;
       // 縮小の下限は図の大きさで変わる（大きな図は全体が収まる倍率まで縮める。view.ts の minScale）
       const vp = viewport();
-      const kMin = vp ? minScale(vp, size) : K_MIN;
+      const kMin = vp ? minScale(vp, size()) : K_MIN;
       const k = Math.min(K_MAX, Math.max(kMin, view.k * Math.exp(-ev.deltaY * 0.01)));
       view.tx = cx - (cx - view.tx) * (k / view.k);
       view.ty = cy - (cy - view.ty) * (k / view.k);
@@ -109,6 +119,7 @@ export function createCanvas(opts: CanvasOptions): Canvas {
   // 面の大きさが変わったら中心を保ったまま追従（窓の resize と、2 面の境目のドラッグ。ResizeObserver で面を見る。
   // 隠した面の 0 の大きさは無視する。docs/20 §5.1 #11）
   let last = stage.getBoundingClientRect();
+  remember(last);
   const onResize = () => {
     const r = stage.getBoundingClientRect();
     if (!(r.width > 0) || !(r.height > 0)) return;
@@ -116,6 +127,7 @@ export function createCanvas(opts: CanvasOptions): Canvas {
     view.tx += (r.width - last.width) / 2;
     view.ty += (r.height - last.height) / 2;
     last = r;
+    remember(r);
     apply();
   };
   const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(onResize);
@@ -137,6 +149,7 @@ export function createCanvas(opts: CanvasOptions): Canvas {
       dragged = false;
       return d;
     },
+    stageSize: () => known,
     dispose() {
       stage.removeEventListener('wheel', onWheel);
       stage.removeEventListener('mousedown', onDown);

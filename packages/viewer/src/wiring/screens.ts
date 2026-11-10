@@ -14,7 +14,8 @@ import {
   type ScreenRegion,
   type WiringLayout,
 } from '@stack-atlas/wiring';
-import { esc } from './render';
+import { DIM } from './dim';
+import { esc } from './markup';
 import type { View } from './view';
 
 /** 読み込む箱の画面上の幅の下限（px） */
@@ -23,8 +24,8 @@ export const MIN_LIVE_PX = 200;
 export const MAX_LIVE = 6;
 /** load の後に fonts.ready と画像を待つ上限（ms） */
 export const SETTLE_MS = 3000;
-/** 沈んだ箱の不透明度（style.css の `.wv .box.dim`。整合はテストで確かめる） */
-export const DIM_OPACITY = 0.15;
+/** 沈んだ画面（iframe）の不透明度。沈んだ箱の係数と同じ（dim.ts の DIM.box。CSS との整合は dim.test.ts） */
+export const DIM_OPACITY = DIM.box;
 /** 1 つの画面で測る [data-component] の数の上限（極端な HTML で止まらない） */
 export const MAX_COMPONENTS = 2000;
 
@@ -174,7 +175,7 @@ export function planLive(
   return cand.slice(0, max).map((c) => c.id);
 }
 
-/** 画面の不透明度: 何か選んでいて、画面の箱が光っていなければ沈める（箱の `.dim` と同じ） */
+/** 画面の不透明度: 何か選んでいて、画面の箱が光っていなければ沈める（沈んだ箱と同じ係数） */
 export function screenOpacity(lit: LitSelection | null, id: string): number {
   return lit && !lit.boxes.has(id) ? DIM_OPACITY : 1;
 }

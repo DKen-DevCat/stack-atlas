@@ -1,5 +1,8 @@
 // 配線図（graph.json v2）のアプリ。索引・レイアウト・たどる規則は @stack-atlas/wiring、ここは描画と入力だけ（D44）。
-// 部品: render（SVG）、interaction（クリック・hover・Esc）、balls（球と再生バー）、variantTable（分岐の表）、canvas（無限の平面）、
+// SVG は場面（描く索引・配置・差分とメモの印）ごとに 1 回だけ作り（setScene）、選択・分岐・view は class の付け替え（paint）で
+// 映す（docs/18 §11.3、D114）。配置を握る部品（画面の層・canvas・Player・分岐の表）は今の場面から読む。
+// 部品: sceneView（場面の DOM。render = markup、paint = 塗りの計画）、interaction（クリック・hover・Esc）、
+// balls（球と再生バー）・flash（項目の点滅）、variantTable（分岐の表）、canvas（無限の平面）、
 // screenLayer（画面の箱の中のビルド成果物の HTML。SVG の下の iframe の層。docs/18 §3.3）、
 // viewsMenu・memoCard・issuesLink（views のメニュー、メモの札、検証の一覧のリンク。docs/18 §3.4）、drawPlan（差分を足した描く graph と配置）
 import type { GraphV2, ValidationIssue } from '@stack-atlas/schema';
@@ -7,6 +10,7 @@ import {
   defaultState,
   findView,
   indexGraph,
+  layoutWiring,
   select,
   variantKey,
   type GraphIndex,
@@ -19,13 +23,15 @@ import {
 import { createAltLink, type AltLink } from '../graph/altLink';
 import { h } from '../ui/dom';
 import type { SharedMemoStore } from '../ui/memos';
-import { Player, type BallPosition } from './balls';
+import { layoutFlow, Player, type BallPosition, type FlowRules } from './balls';
 import { createCanvas, type Canvas } from './canvas';
 import { planDraw } from './drawPlan';
+import { Flasher, itemTargets, pinVisible } from './flash';
 import { installInteraction, TABLE } from './interaction';
 import { createIssuesLink } from './issuesLink';
 import { WiringMemos } from './memoCard';
-import { renderScene } from './render';
+import { inactiveOf } from './paint';
+import { SceneView, type Paint, type Scene } from './sceneView';
 import { ScreenLayer, type ScreenDebug } from './screenLayer';
 import { renderRegions } from './screens';
 import { VariantTable } from './variantTable';
@@ -60,8 +66,15 @@ export interface WiringDebug {
   readonly screens: ScreenDebug;
   /** views のメニューで選んでいる view の id（docs/18 §3.4） */
   readonly viewId: string | null;
-  /** 図を描いた回数（開いた直後は 1 回。?view= で開いても 1 回） */
+  /**
+   * 図の全体を作った回数（場面を当てた回数。開いた直後は 1 回。?view= で開いても 1 回）。選択・分岐・view では増えない
+   * （docs/18 §11.3、D114）。メモの印が変わったとき（角を折る箱が増減）と rebuild で増える
+   */
   readonly renders: number;
+  /** class を付け替えた回数（選択・解除・分岐・view） */
+  readonly paints: number;
+  /** 待っている・走っている項目の点滅の数（解除・選び直しで 0 になる） */
+  readonly flashing: { timers: number; running: number };
   /** 右下の角を折った箱（メモのある箱） */
   readonly memoBoxes: string[];
   /** 差分の印（?prev= が v2 のとき。幽霊・今だけ・型の変わった項目） */
@@ -75,6 +88,13 @@ export interface WiringDebug {
   seek(t: number): void;
   setPaused(paused: boolean): void;
   ballPositions(): BallPosition[];
+  /** 今の g.view の markup（球の層の中身は除く）。付け替えたあとと作り直したあとの等価を確かめる */
+  viewHtml(): string;
+  /**
+   * 今の状態で場面を当て直す（全体を作り直す。選択・分岐・視点はそのまま、球は続きから）。boxWidth を渡すと
+   * 箱の幅を変えた配置で当て直す（配置の違う場面を当てる口の確かめ。折りたたみ = Q19 が使う継ぎ目）
+   */
+  rebuild(opts?: { boxWidth?: number }): void;
 }
 
 /** 球の時刻の正（Phase 8-6、D106）。2 面のとき 3D の地図はこれを写して同じ時刻に球を動かす */
@@ -89,6 +109,7 @@ export interface WiringClock {
 
 export interface WiringApp {
   readonly index: GraphIndex;
+  /** 今の場面の配置（場面を差し替えると変わる） */
   readonly layout: WiringLayout;
   readonly debug: WiringDebug;
   /** 今の選択と光っているもの */
@@ -144,7 +165,7 @@ export interface WiringOptions {
   onViewChange?: (id: string | null) => void;
   /**
    * 選択が変わった（クリック・Esc・views・分岐・select のどれでも）。2 面のとき 3D の地図に選択を写す（docs/20 §5.1 #6）。
-   * 描き直した後に 1 回だけ呼ぶ
+   * 付け替えた後に 1 回だけ呼ぶ
    */
   onSelectionChange?: (selection: Selection | null, lit: LitSelection | null) => void;
   /** 球の時刻の基準が変わった（新しい schedule・シーク・一時停止・再生・速さ）。2 面の地図が写し直す（D106） */
@@ -171,7 +192,7 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     opts.graph,
     opts.prev && 'v2' in opts.prev ? opts.prev.v2 : undefined,
   );
-  const { overlay, drawIndex, layout } = plan;
+  const { overlay, drawIndex } = plan;
   if (plan.issue) issues.push(plan.issue);
   let state: VariantState = defaultState(index);
   let selection: Selection | null = null;
@@ -233,9 +254,13 @@ export function mountWiring(opts: WiringOptions): WiringApp {
         store: opts.memos.store,
         ...(opts.memos.apiUrl ? { apiUrl: opts.memos.apiUrl } : {}),
         ...(opts.memos.extraTargets ? { extraTargets: opts.memos.extraTargets } : {}),
-        onMarksChange: () => render(false),
+        // 角を折る箱が増減したときだけ場面を当て直す（空 ↔ 書いた。打つたびではない）。球は続きから
+        onMarksChange: () => setScene({ ...scene, memos: memoBoxes() }),
       })
     : null;
+  const memoBoxes = () => memoUi?.boxIds() ?? null;
+  // 今の場面（docs/18 §11.3）。8-7 では開いたときの 1 つと、メモの印が変わったときの作り直しだけ
+  let scene: Scene = { index: drawIndex, layout: plan.layout, diff: overlay, memos: memoBoxes() };
   const prevNote =
     opts.prev && 'v1' in opts.prev
       ? h('span', { class: 'wv-note' }, '前の graph が v1 です')
@@ -262,57 +287,86 @@ export function mountWiring(opts: WiringOptions): WiringApp {
   );
   opts.root.replaceChildren(root);
 
-  const viewG = () => svg.querySelector<SVGGElement>('g.view');
+  const view = new SceneView(svg);
+  const viewG = () => view.view;
   const regionsSvg = () => renderRegions(screens.specs, screens.regions(), lit);
   const screens = new ScreenLayer({
     stage,
     svg,
     index,
-    layout,
+    layout: scene.layout,
     baseUrl: opts.baseUrl,
     // 測り終えた（か読めなかった）画面の領域の枠だけ描き直す（球と経路はそのまま）
-    onRegions: () => {
-      const g = svg.querySelector('g.regions');
-      if (g) g.innerHTML = regionsSvg();
-    },
+    onRegions: () => view.setRegions(regionsSvg()),
   });
   stage.prepend(screens.el);
   const canvas: Canvas = createCanvas({
     stage,
     target: viewG,
-    size: { w: layout.width, h: layout.height },
+    size: () => ({ w: scene.layout.width, h: scene.layout.height }),
     ignore: (t) => t instanceof Element && !!t.closest(TABLE),
     onApply: (v) => screens.setView(v),
   });
-  const player = new Player(svg, layout, { play, seek, speed, speedLabel }, () => opts.onClock?.());
+  // 項目の点滅: 要素は場面の Map から引き、画面に見えている項目だけ（配置の座標と canvas の表示範囲から。DOM を測らない）
+  const flasher = new Flasher<Element>({
+    targets: (ref) => itemTargets(view.itemParts(ref)),
+    visible: (ref) => pinVisible(scene.layout.pins.get(ref), canvas.view, canvas.stageSize()),
+  });
+  // 球の規則（線の時間と描く球）は場面から読む。場面が決めていなければ配置の経路（配置ごとに 1 回作る）
+  let flowOf: { layout: WiringLayout; rules: FlowRules } | null = null;
+  const flow = (): FlowRules => {
+    if (scene.flow) return scene.flow;
+    if (flowOf?.layout !== scene.layout)
+      flowOf = { layout: scene.layout, rules: layoutFlow(scene.layout) };
+    return flowOf.rules;
+  };
+  const player = new Player(
+    { layout: () => scene.layout, flow, balls: () => view.balls, flasher },
+    { play, seek, speed, speedLabel },
+    () => opts.onClock?.(),
+  );
   const table = new VariantTable({
     index,
-    layout,
+    layout: () => scene.layout,
     target: viewG,
+    before: () => view.lit,
     state: () => state,
     onChange: (nodeId, vid, value) => setVariant(nodeId, vid, value),
   });
 
-  let renders = 0;
-  const render = (restart: boolean) => {
-    renders++;
-    svg.innerHTML = `<g class="view">${renderScene({
-      index: drawIndex,
-      layout,
-      state,
-      lit,
-      regions: regionsSvg(),
-      ...(memoUi ? { memos: memoUi.boxIds() } : {}),
-      ...(overlay ? { diff: overlay } : {}),
-    })}</g>`;
-    screens.decorate();
+  // ポインタが最後に入った箱（選択中は明るくしない。解除したらこの箱の hover を出し直す）
+  let overBox: string | null = null;
+  // 全体を作ったあと・付け替えたあとに共通の後始末。塗りの計画の外に状態を残さない（docs/18 §11.3）:
+  // 根の has-sel（沈める側はこれで決まる）、画面の iframe、球（前の選択の点滅は取り消す）、分岐の表、hover
+  const finish = (restart: boolean) => {
+    root.classList.toggle('has-sel', !!lit);
     screens.setLit(lit);
-    canvas.apply();
     player.setup(lit, restart);
     table.refresh();
-    root.classList.toggle('has-sel', !!lit);
+    view.setHover(lit ? null : overBox);
   };
-  // 選択を変える（描き直しは呼ぶ側。開いた直後の ?view= は描く前に当てる）
+  // 塗りに渡す値（描く索引の語彙）: 光るものと、今の分岐に無い線・項目。選ぶのは今の graph の索引（index）で、描くのは
+  // 場面の索引（差分があれば幽霊を足した索引）。id は同じなので光るものはそのまま渡す（畳んだ場面は写して渡す。docs/21 §2.3）
+  const painted = (): Paint => ({ lit, inactive: inactiveOf(scene.index, state) });
+  /**
+   * 場面を当てる = 全体を作る。違う配置・索引で何度でも呼べる。今の選択と分岐を当て直し、球は周回の中の同じ割合の位置から
+   * 続ける（restart なら 0 秒から）。視点は動かさない（どこを映すかは呼ぶ側が決める）
+   */
+  const setScene = (next: Scene, restart = false) => {
+    const moved = next.layout !== scene.layout;
+    scene = next;
+    if (moved) screens.setLayout(scene.layout);
+    view.setScene(scene, painted(), regionsSvg());
+    screens.decorate();
+    canvas.apply();
+    finish(restart);
+  };
+  // 選択・分岐・view が変わった: class の付け替えだけ（要素は作り直さない）。球は 0 秒から
+  const paint = () => {
+    view.paint(painted(), regionsSvg());
+    finish(true);
+  };
+  // 選択を変える（付け替えは呼ぶ側。開いた直後の ?view= は作る前に当てる）
   const applySelection = (next: Selection | null, fromView: boolean) => {
     selection = next;
     lit = next ? select(index, state, next) : null;
@@ -322,7 +376,7 @@ export function mountWiring(opts: WiringOptions): WiringApp {
   };
   const doSelect = (next: Selection | null, fromView = false) => {
     applySelection(next, fromView);
-    render(true);
+    paint();
     opts.onSelectionChange?.(selection, lit);
   };
   // 経路を計算し直して 0 秒から
@@ -330,7 +384,7 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     state = { ...state, [variantKey(nodeId, variantId)]: value };
     lit = selection ? select(index, state, selection) : null;
     choice.clear();
-    render(true);
+    paint();
     opts.onSelectionChange?.(selection, lit);
   };
   // view を選ぶ: 分岐を既定に戻して variants を当て、start から選ぶ。空の選択肢は分岐を既定に戻して選択の解除
@@ -342,7 +396,7 @@ export function mountWiring(opts: WiringOptions): WiringApp {
   };
   const pickView = (id: string | null) => {
     applyPick(id);
-    render(true);
+    paint();
     opts.onSelectionChange?.(selection, lit);
   };
 
@@ -356,6 +410,10 @@ export function mountWiring(opts: WiringOptions): WiringApp {
       return w ? { from: w.wire.from, to: w.wire.to } : null;
     },
     select: doSelect,
+    hover: (id) => {
+      overBox = id;
+      if (!lit) view.setHover(id);
+    },
     consumeDrag: () => canvas.consumeDrag(),
     hasVariants: (id) => !!index.nodes.get(id)?.node.variants?.length,
     tableNode: () => table.nodeId,
@@ -365,15 +423,16 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     ...(opts.keys ? { keys: opts.keys } : {}),
   });
 
-  // ?view= は描く前に当て（開いた直後に描くのは 1 回だけ）、その始点のあたりを映す（無ければ最初の画面の箱のあたり）。
+  // ?view= は作る前に当て（開いた直後に全体を作るのは 1 回だけ）、その始点のあたりを映す（無ければ最初の画面の箱のあたり）。
   // graph に無い id は警告を出して URL から外す
   if (initialView) applyPick(initialView.id);
   else if (opts.view) opts.onViewChange?.(null);
   if (!initialView && opts.select) applySelection(opts.select, false);
-  // 配置は graph ごとにここで 1 回だけ（選択・分岐の切り替えは描き直すだけで、箱を動かさない。docs/18 §3.1）
-  render(true);
+  // 配置は graph ごとにここで 1 回だけ（選択・分岐の切り替えは付け替えるだけで、箱を動かさない。docs/18 §3.1）
+  setScene(scene, true);
   canvas.open(
-    (selection && selectionFocus(index, layout, selection)) || openingFocus(index, layout),
+    (selection && selectionFocus(index, scene.layout, selection)) ||
+      openingFocus(index, scene.layout),
   );
 
   const debug: WiringDebug = {
@@ -415,7 +474,7 @@ export function mountWiring(opts: WiringOptions): WiringApp {
       return player.tau(performance.now());
     },
     get size() {
-      return { width: layout.width, height: layout.height };
+      return { width: scene.layout.width, height: scene.layout.height };
     },
     get view() {
       return { ...canvas.view };
@@ -427,7 +486,13 @@ export function mountWiring(opts: WiringOptions): WiringApp {
       return choice.id;
     },
     get renders() {
-      return renders;
+      return view.renders;
+    },
+    get paints() {
+      return view.paints;
+    },
+    get flashing() {
+      return flasher.pending;
     },
     get memoBoxes() {
       return memoUi ? [...memoUi.boxIds()].sort() : [];
@@ -445,6 +510,15 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     seek: (t) => player.seek(t),
     setPaused: (p) => player.setPaused(p),
     ballPositions: () => player.positions(),
+    viewHtml: () => view.viewHtml(),
+    rebuild: (o) => {
+      if (!o?.boxWidth) return setScene({ ...scene });
+      const layout = layoutWiring(scene.index, {
+        ...(overlay ? { ghostItems: overlay.ghost.items } : {}),
+        boxWidth: o.boxWidth,
+      });
+      setScene({ ...scene, layout });
+    },
   };
 
   const clock: WiringClock = {
@@ -459,7 +533,9 @@ export function mountWiring(opts: WiringOptions): WiringApp {
 
   return {
     index,
-    layout,
+    get layout() {
+      return scene.layout;
+    },
     debug,
     get selection() {
       return selection;
@@ -472,7 +548,7 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     setAltLink: (link) => alt.set(link),
     setHidden: (v) => player.setHidden(v),
     reveal() {
-      const r = selectionFocus(index, layout, selection);
+      const r = selectionFocus(index, scene.layout, selection);
       const st = stage.getBoundingClientRect();
       if (!r || st.width <= 0 || st.height <= 0) return;
       const v = canvas.view;

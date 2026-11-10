@@ -6,22 +6,26 @@ import {
   type VariantState,
   type WiringLayout,
 } from '@stack-atlas/wiring';
-import { esc } from './render';
+import { esc } from './markup';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const ROW = 20;
 /**
  * 箱の右辺から表までの間。この間には透明な橋（.vtable-bridge）を置き、ポインタが箱 → 表へ動く途中も「表の上」にする。
- * 橋は箱の層より下に入れる（箱の右辺のピンのクリックを奪わない）
+ * 橋は光る線の層の直前（= host の枠の直後。箱と光る線より下）に入れる（箱の右辺のピンと光る線のクリックを奪わない）。
+ * 層は名前で探さず、要素を受け取る（見つからないと橋が最前面に付いてピンのクリックを奪う。docs/18 §11.3）
  */
 const GAP = 6;
 const WIDTH = 150;
 
 export interface VariantTableDeps {
   index: GraphIndex;
-  layout: WiringLayout;
+  /** 今の配置（場面を差し替えると変わる） */
+  layout: () => WiringLayout;
   /** 表を置く g（拡大縮小に追従するよう、#view の中） */
   target: () => SVGGElement | null;
+  /** 橋をこの要素の直前に入れる（光る線の層）。無ければ g の先頭（いちばん下） */
+  before: () => Element | null;
   state: () => VariantState;
   onChange: (nodeId: string, variantId: string, value: boolean) => void;
 }
@@ -33,7 +37,8 @@ export class VariantTable {
   constructor(private readonly deps: VariantTableDeps) {}
 
   show(nodeId: string) {
-    const { index, layout } = this.deps;
+    const { index } = this.deps;
+    const layout = this.deps.layout();
     const n = index.nodes.get(nodeId);
     const b = layout.boxes.get(nodeId);
     this.remove();
@@ -80,10 +85,11 @@ export class VariantTable {
     bridge.setAttribute('width', String(GAP));
     bridge.setAttribute('height', String(height));
     bridge.dataset.node = nodeId;
-    target.insertBefore(bridge, target.querySelector(':scope > g.base-boxes'));
+    const before = this.deps.before();
+    target.insertBefore(bridge, before?.parentNode === target ? before : target.firstChild);
   }
 
-  /** 描き直したあとに、出ていた表を出し直す */
+  /** 作り直した・付け替えたあとに、出ていた表を出し直す（対のチェックと、view で既定に戻した分岐を映す） */
   refresh() {
     if (this.nodeId) this.show(this.nodeId);
   }

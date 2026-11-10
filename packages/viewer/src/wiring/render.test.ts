@@ -1,4 +1,4 @@
-// 配線図の SVG（文字列）: 層の順（光るものが手前）、沈める、分岐で薄く残す、切れている線、文字の収め方、エスケープ
+// 配線図の SVG（文字列）: 層の順、選択と分岐の class（塗りの計画どおり）、切れている線、文字の収め方、エスケープ
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { GraphV2 } from '@stack-atlas/schema';
@@ -12,7 +12,15 @@ import {
 } from '@stack-atlas/wiring';
 import { withScreenHtml } from '../../../wiring/src/__tests__/fixture';
 import { SAMPLE_V2_PATH } from '../graph/testSample';
-import { clipText, fitLabel, frameWithHole, renderScene, SCREEN_CUT_ID, textWidth } from './render';
+import {
+  clipText,
+  fitLabel,
+  frameWithHole,
+  LAYERS,
+  renderScene,
+  SCREEN_CUT_ID,
+  textWidth,
+} from './render';
 
 const graph = JSON.parse(readFileSync(SAMPLE_V2_PATH, 'utf8')) as GraphV2;
 const index = indexGraph(graph);
@@ -23,18 +31,11 @@ const scene = (lit: ReturnType<typeof select>, state: VariantState = state0) =>
   renderScene({ index, layout, state, lit });
 /**
  * 層（g.class）の中身を取り出す（層の印 `<g class="名前">` は 1 つずつしか無い）。
- * 2026-11-09 変更（8-3b）: 光る箱と球の間に部品の領域の枠の層（regions）が入った
+ * 2026-11-09 変更（8-3b）: 光る箱と球の間に部品の領域の枠の層（regions）が入った。
+ * 2026-11-10 変更（8-7、D116）: 箱は 1 つの層（boxes）で、光る線の層は箱の下・host の上になった
+ * （前: lanes → base-wires → hosts → base-boxes → lit-wires → lit-boxes → regions → balls）。順の正は render.ts の LAYERS
  */
-const ORDER = [
-  'lanes',
-  'base-wires',
-  'hosts',
-  'base-boxes',
-  'lit-wires',
-  'lit-boxes',
-  'regions',
-  'balls',
-];
+const ORDER: readonly string[] = LAYERS;
 const layer = (svg: string, name: string) => {
   const i = ORDER.indexOf(name);
   const start = svg.indexOf(`<g class="${name}">`) + `<g class="${name}">`.length;
@@ -45,7 +46,19 @@ const layer = (svg: string, name: string) => {
 const count = (s: string, re: RegExp) => (s.match(re) ?? []).length;
 
 describe('renderScene', () => {
-  it('選択なし: 箱・枠・線は全部下の層、線は細く薄く、切れている線は赤 2 件・黄 1 件（lit）', () => {
+  it('層の順は lanes → base-wires → hosts → lit-wires → boxes → regions → balls', () => {
+    expect(ORDER).toEqual([
+      'lanes',
+      'base-wires',
+      'hosts',
+      'lit-wires',
+      'boxes',
+      'regions',
+      'balls',
+    ]);
+  });
+
+  it('選択なし: 光る線の層は空、線は細く薄く、切れている線は赤 2 件・黄 1 件（lit）で基の層', () => {
     const svg = scene(null);
     expect(count(svg, /data-box="/g)).toBe(layout.boxes.size);
     expect(count(svg, /data-host="/g)).toBe(2);
@@ -55,47 +68,82 @@ describe('renderScene', () => {
     // 赤（error）は 3 件から 2 件になり、黄（warn）が 1 件になった
     expect(count(svg, /class="wire broken error lit"/g)).toBe(2);
     expect(count(svg, /class="wire broken warn lit"/g)).toBe(1);
-    expect(layer(svg, 'lit-boxes')).toBe('');
-    expect(svg).not.toContain(' dim"');
+    // 2026-11-10 変更（8-7）: 光る箱の層（lit-boxes）は無くなった。選択が無ければ光る線の層は空で、lit の箱も無い。
+    // 切れた線は全部が基の層。沈める class（dim・dimmed・off）はどの状態でも付けない（D122）
+    expect(layer(svg, 'lit-wires')).toBe('');
+    expect(count(layer(svg, 'base-wires'), /data-broken="/g)).toBe(3);
+    expect(svg).not.toMatch(/class="box[^"]* lit/);
+    expect(svg).not.toMatch(/class="[^"]*\b(dim|dimmed)\b/);
     // 箱の種類は外側の左上（y が箱の上端より上）
     const b = layout.boxes.get('route:/')!;
     expect(svg).toContain(`<text class="kind" x="${b.x}" y="${b.y - 4}">screen</text>`);
   });
 
-  it('画面を選ぶ: 光る箱と線は手前の層、光らない箱は dim（ラベルは CSS で消す）、始点は start', () => {
-    const lit = select(index, state0, { kind: 'box', id: 'route:/' });
+  it('画面を選ぶ: 箱は 1 つの層のまま、光る箱は lit・始点は start、光らない箱には何も付けない（根の has-sel と CSS で沈む）', () => {
+    const lit = select(index, state0, { kind: 'box', id: 'route:/' })!;
     const svg = scene(lit);
-    const front = layer(svg, 'lit-boxes');
-    const back = layer(svg, 'base-boxes');
-    expect(front).toContain('data-box="fn:internal/api.handleToday"');
-    expect(front).toContain('class="box lit start" data-box="route:/"');
-    expect(back).toContain('class="box dim" data-box="endpoint:POST /transactions"');
-    expect(back).not.toContain('data-box="route:/"');
-    // 層の順: 枠 → 沈んだ箱 → 光る線 → 光る箱 → 球
+    // 2026-11-10 変更（8-7、D116・D122）: 前は光る箱を lit-boxes の層へ移し、光らない箱に dim を付けていた。
+    // 今は箱を動かさず、光る側にだけ class を付ける
+    const boxes = layer(svg, 'boxes');
+    expect(count(boxes, /data-box="/g)).toBe(layout.boxes.size);
+    expect(boxes).toContain('class="box lit" data-box="fn:internal/api.handleToday"');
+    expect(boxes).toContain('class="box lit start" data-box="route:/"');
+    expect(boxes).toContain('class="box" data-box="endpoint:POST /transactions"');
+    expect(count(boxes, /class="box[^"]* lit[^"]*" data-box="/g)).toBe(lit.boxes.size);
+    // 層の順: 線 → 枠 → 光る線 → 箱 → 部品の領域 → 球
     const at = ORDER.map((n) => svg.indexOf(`<g class="${n}">`));
     expect(at.every((x, i) => x >= 0 && (i === 0 || x > at[i - 1]!))).toBe(true);
     // 光る線は via の太さと当たり判定を持つ。キャッシュの箱の中の対応線を描く
     expect(count(layer(svg, 'lit-wires'), /class="wire hitarea"/g)).toBeGreaterThan(5);
     expect(layer(svg, 'lit-wires')).toContain('class="wire lit inner"');
-    // 光っている線は下の層から外れる
-    expect(count(layer(svg, 'base-wires'), /class="wire thin/g)).toBeLessThan(graph.wires.length);
-    // POST の経路の切れている線は沈む（光っていない箱から出る）
-    expect(svg).toContain('class="wire broken error dimmed"');
+    // 2026-11-10 変更（8-7）: 光っている線も基の層に残す（前は外していた）。under で隠し、光る区間は上の層に描く
+    const base = layer(svg, 'base-wires');
+    expect(count(base, /class="wire thin/g)).toBe(graph.wires.length);
+    const litKeys = new Set(
+      lit.segs.flatMap((s) => (s.kind === 'wire' && s.wire ? [s.wire.key] : [])),
+    );
+    expect(count(base, /class="wire thin[^"]* under[" ]/g)).toBe(litKeys.size);
+    expect(count(layer(svg, 'lit-wires'), /class="wire hitarea"/g)).toBe(
+      lit.segs.filter((s) => s.kind === 'wire' && s.wire).length,
+    );
+    // POST の経路の切れている線は沈む（光っていない箱から出る）。2026-11-10 変更（8-7）: dimmed は付けず、lit が無いだけ。
+    // 沈んだ切れた線は基の層、送り側の箱が光る切れた線（lit）は光る線の層（写しは作らない。data-broken は線ごとに 1 つ）
+    expect(base).toContain('class="wire broken error" data-broken=');
+    expect(base).not.toMatch(/class="wire broken \w+ lit"/);
+    expect(layer(svg, 'lit-wires')).not.toMatch(/class="wire broken \w+"/);
+    expect(count(svg, /data-broken="/g)).toBe(3);
+    expect(count(svg, /data-cut="/g)).toBe(3);
+  });
+
+  it('切れた線: 送り側の箱が光る選択では lit のまま光る線の層に入り、線と切れた端の印が続けて並ぶ', () => {
+    // 2026-11-10 追加（8-7）: 付け替えでは要素ごと層を移す。全体を作る経路も同じ並びになる
+    const from = index.items.get(layout.broken[0]!.from)!.node.id;
+    const svg = scene(select(index, state0, { kind: 'box', id: from }));
+    const top = layer(svg, 'lit-wires');
+    const key = layout.broken[0]!.key;
+    expect(top).toMatch(
+      new RegExp(
+        `class="wire broken \\w+ lit" data-broken="${key}"[^>]*>.*?</path><path class="wire broken \\w+ cut lit" data-cut="${key}"`,
+      ),
+    );
+    expect(layer(svg, 'base-wires')).not.toContain(`data-broken="${key}"`);
   });
 
   it('型を選ぶ: 横断面。光る線は描かず、始点の項目は start にしない', () => {
     const lit = select(index, state0, { kind: 'type', typeRef: 'type:Entry' });
     const svg = scene(lit);
     expect(layer(svg, 'lit-wires')).not.toContain('class="wire lit ');
-    expect(svg).toContain('class="item on child"');
-    expect(svg).not.toMatch(/class="item on start/);
+    // 2026-11-10 変更（8-7）: 選択と分岐の class は末尾に書く（前は `item on child`）。付け替えが末尾だけ差し替えるため
+    expect(svg).toContain('class="item child on"');
+    expect(svg).not.toMatch(/class="item[^"]* on start/);
   });
 
   it('分岐: CloudFront HIT では S3 が沈み、画面の下流は光ったまま', () => {
     const hit = { ...state0, [variantKey('infra:static_site/this', 'hit')]: true };
     const svg = scene(select(index, hit, { kind: 'box', id: 'route:/' }), hit);
-    expect(layer(svg, 'base-boxes')).toContain('class="box dim" data-box="infra:static_site/site"');
-    expect(layer(svg, 'lit-boxes')).toContain('data-box="comp:TodayIsland"');
+    // 2026-11-10 変更（8-7）: 沈む箱は class が付かないこと、光る箱は lit で見る（前は層と dim）
+    expect(layer(svg, 'boxes')).toContain('class="box" data-box="infra:static_site/site"');
+    expect(layer(svg, 'boxes')).toContain('class="box lit" data-box="comp:TodayIsland"');
   });
 
   it('文字は箱の幅に収め、削ったときだけ元の文字を title に入れる', () => {
@@ -271,7 +319,7 @@ describe('画面の箱（画面の HTML を持つ箱。docs/18 §3.3）', () => 
     expect(scene(null)).not.toContain('clip-path');
   });
 
-  it('部品の領域の枠は光る箱の上・球の下の層（regions）に入る', () => {
+  it('部品の領域の枠は箱の上・球の下の層（regions）に入る', () => {
     const lit = select(idx, defaultState(idx), { kind: 'box', id: 'route:/' });
     const svg = renderScene({
       index: idx,
