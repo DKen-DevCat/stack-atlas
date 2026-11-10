@@ -1,26 +1,27 @@
 # 23. 設計: どのリポジトリ・どの構成にもはめる（Phase 9-L）
 
-作成: 2026-11-10。**状態: 下書き（独立の設計レビューの前・ユーザーの確認の前）。** 決定の番号は **D170 から**（docs/22 は D140〜D159）、質問の番号は **Q27 から**。
+作成: 2026-11-10。**状態: 設計レビュー（1 回）を反映した版。ユーザーの確認（§7）の前。** 決定の番号は **D170 から**（docs/22 は D140〜D159）、質問の番号は **Q27 から**。レビューの記録は §10。
 
 ## 0. なぜ書くか
 
 - 要件 R9（docs/01）は「どんなプロジェクトにも適用できる」。D30（docs/15）は「新しい言語は LSP から始められる」と書いた。**どちらも作っていなかった**。読めるのは TS（compiler API）と Go（go/packages）と、契約（OpenAPI・SQL）・IaC（CDKtf・Terraform・CloudFormation）・Next の画面だけ
-- Q17 で、ユーザーの個人のリポジトリ diiv-farm（非公開。ここには名前と件数だけ書く）に当てた。Swift 473 ファイル（約 7.8 万行）・Python 48・TS 51 ＋ Svelte 19・shell 31。結果:
-  - 抽出器 15 個がすべて「該当なし」、箱 0。**それでも `--strict` は「エラー 0・警告 0」で通った**（空の graph を正しいと言った）。報告には、読めなかったソースの数がどこにも出ない
+- Q17 で、ユーザーの個人のリポジトリ diiv-farm（非公開。ここには名前と件数だけ書く）に当てた。Swift 473 ファイル（約 7.8 万行）・Python 48・TS 51 ＋ Svelte 19・shell 31。SwiftPM のパッケージ 8・Xcode のプロジェクト 3・launchd の plist がある。Terraform・OpenAPI・SQL・Go は無い。結果:
+  - 抽出器 15 個がすべて「該当なし」、箱 0。**それでも `--strict` は「エラー 0・警告 0」で通った**。報告には、読めなかったソースの数がどこにも出ない
   - skill に従うエージェント（別プロセス、許可を絞ったもの）は 5 分・96 手で使用量の上限に当たって止まった。それまでに書けたのは TS の設定 1 行と補い 11 件だけ。エージェント自身が「言語アダプタが読めるのは TS の 1 ディレクトリだけ。残りは手書きする」と書いていた
 - ユーザーの言葉（2026-11-10）: 「全てのリポジトリの全ての構成に対して当てはめたい」「特定の言語のみ対応、は要件を満たしていない」
 
 ## 1. 結論
 
-- **抽出を 3 つの段に分け、どの段も言語の名前をコードに持たない**。言語ごとの違いは**データ**（文法・問い合わせのファイル・型の対応表・レシピ）に置く。言語を足す作業は「データを 1 組足す」で、抽出器のパッケージは増やさない
-  - **段 0「ファイル」**（どの言語でも、何も入れずに）: 追跡されているファイルをすべて入れ物の木（repo・ディレクトリ・ファイル）に載せ、言語を判定する。報告に「言語ごとのファイル数・箱になった割合・どの段で読んだか」を出す。**読めないソースが残れば `--strict` を落とす**。空の地図は出さない
-  - **段 1「構文」**（ほぼすべての言語）: tree-sitter（汎用の構文解析器。WASM で手元で動く。GitHub のコード移動と同じもの）1 つで、定義（関数・メソッド・型とそのフィールド）・引数と戻り値の書かれた型・import・呼び出しを読む。線は名前の解決で引き、確かさは `crude`、出所は `syntax`。名前が 2 つ以上に当たるときは引かずに未確定の一覧へ
-  - **段 2「型」**（言語サーバーがある言語）: 言語サーバーの共通の約束（LSP）を話すクライアント 1 つ。「定義へ飛ぶ」で段 1 の線の呼び先を確定（`exact`）し、未確定を解き、項目の型を埋める。**手元に入っているサーバーだけを使う**（こちらからは入れない）。対象のコードを実行するもの（ビルドを走らせる索引など）は設定で明示したときだけ
-  - TS と Go の今のアダプタは、段 2 の「専用版」として残す（同じファイルは専用版が勝つ。段 1 は読まない）
-- **プロセスの境**（HTTP の受け口と呼び出し・IPC・キュー・定期実行・launchd・コンテナ）と**構成ファイル**（Dockerfile・compose・k8s・launchd の plist・systemd・Procfile・package.json の scripts・CI の定義・Makefile・SwiftPM / Xcode / Gradle のターゲット）は**レシピ**で読む。レシピは「tree-sitter の問い合わせ（または YAML・JSON・plist のパス）＋出すもの」のデータ。合流（endpoint・table・event の照合）は今の join のまま
-- **実行の場所（runtime）に 2 つ足す**: `client`（利用者の端末で動くネイティブのアプリ。iOS・macOS・Android・デスクトップ）と `unknown`（決まらない）。決まらない箱を黙って `server` に入れない
-- 段とレシピで取れないものは、エージェント（skill）が補う。**段 0 の報告と未確定の一覧が、そのままエージェントの仕事の一覧になる**
-- 段取りは 6 段（9-L0〜9-L5。§4）。**9-L0（報告と strict の穴）は依存を足さずにすぐ直せる**ので最初に出す。tree-sitter はネットワークを伴う依存の追加なので、ユーザーの確認（Q27）の後
+- **抽出を 3 つの段に分ける**。言語ごとの違いは**データ**（問い合わせ・言語の性質の表・型の表・レシピ）に置く。エンジンは言語の名前を知らない。ただし「import の解き方」「見える範囲の単位」などの**方式は数種類だけ知っていて**、言語の性質の表がどれを使うかを選ぶ（D172）。言語を足す作業は「データを 1 組足す」で、抽出器のパッケージは増やさない
+  - **段 0「ファイル」**（どの言語でも、何も入れずに）: 数える範囲（git が追跡しているファイルから、生成物・依存の置き場を除いたもの。§3.1）のファイルをすべて入れ物の木に載せ、言語を判定する。報告に「言語ごとの行数・どの段で読めたか」を出す。**箱 0 なら `--strict` を落とす**。読めないソースは 9-L0 では警告、段 1 が入ったら（9-L1）エラー
+  - **段 1「構文」**（文法のある言語すべて）: tree-sitter（汎用の構文解析器。WASM で手元で動く）1 つで、定義・引数と戻り値の書かれた型・import・呼び出しを読む。**線は「同じ言語・同じモジュールの中で、受け手の分かる呼び出しが 1 つの定義に決まる」ときだけ引き、推定の印（`confidence: crude`）を付ける**。決まらなければ線を引かずに未確定の一覧へ（D173）
+  - **段 2「型」**（言語サーバーがある言語）: 言語サーバーの共通の約束（LSP）を話すクライアント 1 つ。呼び先を確定（`exact`）し、未確定を解き、項目の型を埋める。手元に入っているサーバーだけを使う。**対象のコードを実行しうるサーバーは、repo が書けない場所（CLI の引数か、repo の外の利用者の設定）で許したときだけ起動する**（D174）
+  - TS と Go の今のアダプタは、段 2 の「専用版」として残す（専用版が読んだファイルは段 1 が読まない）
+- **プロセスの境**（HTTP の受け口と呼び出し・プロセスの起動・定期実行・コンテナ）、**構成ファイル**（launchd の plist・Dockerfile・compose・SwiftPM / Xcode / Gradle のターゲット・package.json の scripts など）、**画面と部品**（SwiftUI の View・Svelte・Compose）は**レシピ**で読む。レシピの約束は docs/22 D150 と 1 つにする（名前・出所・明示のキー・解けなければ未確定。§3.4）
+- **推定の線は推定に見える**: 線に `confidence` の欄を足し、ビューアは `crude` の線を破線で描き、凡例と「推定の線を出す・隠す」を持つ（D180）
+- **実行の場所（runtime）に `client`（利用者の端末で動くネイティブのアプリ）と `unknown`（決まらない）を足す**。決まらない箱を黙って既定のレーン（今は `browser`）に入れない（D177）
+- 段とレシピで取れないものは、エージェント（skill）が補う。段 0 の報告と未確定の一覧（並べ替えて上限つき）が、エージェントの仕事の一覧になる
+- 段取りは 9-L0〜9-L5（§4）。**9-L0（報告と、空の graph が strict を通る穴）は依存を足さずにすぐ直せる**。tree-sitter はネットワークを伴う依存の追加なので、ユーザーの確認（Q27）の後
 
 ```
 今
@@ -28,163 +29,255 @@
                （TS・Go・OpenAPI・SQL・IaC・Next）                 （それ以外は消える。報告にも出ない）
 
 目標
-  ファイル ──▶ 段 0: 入れ物の木・言語の判定・報告 ───────────────┐
-            ├─▶ 段 1: tree-sitter ＋ 言語ごとの問い合わせ（データ）──┤  同じ箱は上の段が勝つ
-            ├─▶ 段 2: LSP のクライアント ＋ 手元の言語サーバー ──────┤  （専用版 ＞ 段 2 ＞ 段 1 ＞ 段 0）
-            ├─▶ 専用版: ts-types・go-types ─────────────────────────┤
-            └─▶ レシピ（データ）: 受け口・呼び出し・構成ファイル ──────┤
-               契約・IaC・画面（今の抽出器）───────────────────────┴─▶ 合流 → join → 補い ─▶ graph.json
-                                                                         └─▶ 報告: 言語ごとの割合・未確定の一覧（エージェントの仕事）
+  数える範囲 ─▶ 段 0: 入れ物の木・言語の判定・報告 ──────────────────┐
+  （git が追跡 ├─▶ 専用版: ts-types・go-types（読んだファイルを申告）──────┤  同じファイルは
+   − 生成物）  ├─▶ 段 2: LSP のクライアント ＋ 手元の言語サーバー ─────────┤  専用版 ＞ 段 2 ＞ 段 1 ＞ 段 0
+              ├─▶ 段 1: tree-sitter ＋ 言語のデータ（専用版の残り）────────┤
+              └─▶ レシピ（データ）: 受け口・起動・構成ファイル・画面 ──────┤
+                  契約・IaC・画面（今の抽出器）─────────────────────────┴─▶ 合流 → join → 置き場 → 補い ─▶ graph.json
+                                                                              └─▶ 報告: 言語ごとの割合・推定の数・未確定（上位 n 件）
 ```
 
 ## 2. 全体像: どこまでが自動か
 
 | 段 | 必要なもの | 箱 | 口・項目 | 線 | 確かさ |
 |---|---|---|---|---|---|
-| 0 ファイル | なし | ソースのファイルごとに 1 つ（段 1 以上が何も出さなかったときだけ） | なし | なし | — |
-| 1 構文 | CLI に同梱する文法（WASM） | 関数・メソッド・型 | 引数・戻り値（書かれた型の文字列）。型の名前が同じ repo の定義に当たればフィールドを展開 | 呼び出し・戻り（名前の解決が 1 つに決まるものだけ） | `crude` |
-| 2 型 | 手元の言語サーバー | 段 1 と同じ（id も同じ） | 型を埋める（hover の型の名前、フィールドは定義の documentSymbol） | 呼び先を確定・未確定を解く | `exact` |
+| 0 ファイル | なし | 段 1 以上が何も出さなかったソースのファイルに 1 つ（kind `module`） | なし | なし | — |
+| 1 構文 | CLI に同梱する文法（WASM） | 関数・メソッド・型。関数の外の文は「台本の箱」（ファイルごとに 1 つ、kind `fn`） | 引数・戻り値（書かれた型の文字列）。型の名前が同じモジュールの定義に当たればフィールドを展開 | 呼び出し・戻り（§3.2 の規則で 1 つに決まるものだけ） | `crude` |
+| 2 型 | 手元の言語サーバー | 段 1 と同じ（id も同じ） | 型を埋める（型の定義の場所を取り、そこの documentSymbol で展開） | 呼び先を確定・未確定を解く | `exact` |
 | 専用版 | TS / Go のツール | 今のまま | 今のまま | 今のまま | 今のまま |
-| レシピ | データ | endpoint・trigger・host の枠・プロセス | 受け口のパス・引数 | 受け口 ↔ 呼び出し・起動のつながり | 出所 `recipe:<名前>`。明示のキーがあれば警告なし（D18） |
+| レシピ | データ | endpoint・trigger・host の枠（プロセス・コンテナ）・画面・部品 | 受け口のパス・引数 | 受け口 ↔ 呼び出し（join）・起動（直接の線）・描画 | 出所 `recipe:<名前>`。明示が無い当て方は `crude` |
 
-型の書かれない言語（Python の注釈なし・shell・Ruby など）は、段 1 で箱と線は出るが項目は出ないことが多い。そこは段 2（型を推論するサーバー: pyright など）か、エージェントの補いになる。**箱と線は、どの言語でも必ず出る**のが今との違い。
+型の書かれない言語（注釈の無い Python・shell・Ruby など）は、段 1 で箱は必ず出るが、線は受け手の分からない呼び出しが多いぶん減り、項目はほぼ出ない。そこは段 2（型を推論するサーバー: pyright など）か、エージェントの補いになる。**どの言語でも、箱と報告は必ず出る**のが今との違い。
 
 ## 3. 構造
 
-### 3.1 段 0: ファイル（`extractors/files` を広げる）
+### 3.1 段 0: 数える範囲・「読んだ」・報告・strict
 
-- **言語の判定**: 拡張子・ファイル名（`Dockerfile`・`Makefile`・`Package.swift`）・shebang の表（データ。GitHub の linguist の表の一部を写す）。種類を 4 つに分ける: `source`（プログラム）・`config`（設定と構成）・`doc`・`asset`。生成物・vendor・`.gitignore` されたものは今の walk の規則のまま外す
-- **入れ物**: repo・ディレクトリ・ファイル（docs/22 §2.1 の `containers` と同じ形。9-1a の前は、今のアダプタと同じく箱の `group` にディレクトリを入れる）
-- **ファイルの箱**: `source` のファイルで、ほかの段が箱を 1 つも出さなかったものだけ、kind `file` の箱を 1 つ（口なし）。`config` はレシピが読んだときだけ箱になり、それ以外は入れ物だけ
-- **報告**（`build --dry-run --json` と標準出力の要約）:
+**数える範囲**（言語の判定と割合の分母）:
+
+1. git の repo なら `git -c core.fsmonitor=false ls-files -z`（追跡されているファイルだけ。hooks は呼ばない）。git が無い・repo でないなら、内蔵の除外表 ＋ `.gitignore`
+2. そこから**生成物と依存の置き場**を除く（除いたものは件数だけ報告に出す）: `.gitattributes` の `linguist-generated`・`linguist-vendored`、先頭の印（`Code generated … DO NOT EDIT`・`@generated`）、既知のディレクトリ（`.build`・`DerivedData`・`Pods`・`Carthage`・`.venv`・`venv`・`node_modules`・`dist`・`build`・`.next`・`.svelte-kit`・`target`、screens・next の設定にある書き出し先）、縮めたファイル（1 行が 1,000 字を超える行が多い）、大きすぎるファイル（1MB 超）
+3. 種類を 4 つに分ける（拡張子・ファイル名・shebang の表。データ）: `source`・`config`・`doc`・`asset`
+
+**安全**（全ファイルに触る処理の規則。今の規約のまま）: walk はリンクを辿らない、`confineRepoPath` で repo の外を読まない、秘密のファイル（`isSecretFile`）は数えるが中を読まない、1 ファイルの大きさと件数の上限（越えたら報告に出す）。plist は DTD を読まない読み手、YAML は今の読み込みと同じ上限（別名の展開）。
+
+**「読んだ」の定義**: そのファイルを `file` に持つ箱・型・手書きの箱・補いの箱が 1 つでもある、**または**抽出器が「読んだ」と申告した。抽出器の契約（`PartialGraph`・`PartialGraphV2`）に `read?: string[]`（repo 相対のパス）を足す。型だけの TS ファイル・`go.mod`・`.tfvars` のように箱を出さないファイルのため（§3.8）。
+
+**読めた割合の数え方**: 言語ごとに**行数**で数える（ファイル数ではない）。tree-sitter が ERROR・MISSING にした行は読めていないとみなす。ERROR の行が半分を超えるファイルは「読めた」に数えない。
+
+**報告**（`build --dry-run --json` と標準出力の要約）。例は fixture-many の形（数は例）:
 
 ```jsonc
 "coverage": {
+  "scope": { "tracked": 120, "generated": 9, "vendored": 0, "secret": 1, "tooLarge": 0 },
   "languages": [
-    { "language": "swift", "files": 473, "lines": 77899, "read": { "type": 0, "syntax": 470, "file": 3 },
-      "boxes": 0, "wires": 0, "unresolved": 0, "server": { "found": "sourcekit-lsp", "used": false, "why": "run: true が無い" } },
-    …
+    { "language": "swift", "files": 14, "lines": 1630, "read": { "adapter": 0, "type": 0, "syntax": 1610, "none": 20 },
+      "errorLines": 20, "boxes": 52, "wires": { "exact": 0, "crude": 61 }, "unresolved": 18,
+      "server": { "found": "sourcekit-lsp", "used": false, "why": "実行の許可が無い（--allow-exec=swift）" } }
   ],
-  "unread": [ { "language": "…", "files": 12, "why": "文法が無い", "hint": "…" } ]
+  "formats": [ { "format": "plist", "files": 2, "readBy": ["recipe:launchd"] }, { "format": "pbxproj", "files": 1, "readBy": [] } ],
+  "unread": [ { "language": "…", "files": 3, "lines": 210, "why": "文法が無い" } ],
+  "unresolved": { "total": 18, "top": [ /* 並べ替えて上限 50 件。§3.2 */ ] }
 }
 ```
 
-- **strict**: 次のどれかで落ちる。① 箱が 0 ② `source` のファイルのうち段 1 以上で読めなかった割合が、言語ごとに 5% を超える（`coverage.allowUnread: [<言語>]` で外せる。外したことは報告に残る）。今の「エラー 0・警告 0 なら通る」に、この 2 つを足す
+**strict**:
+
+- **9-L0**: 箱 0 ならエラー。読めないソースは警告（言語ごとに 1 行）。今の 3 つの fixture の strict の数（0・0・3）は変わらない（`web/export/_next/static/chunks/*.js` は生成物として除き、`next.config.mjs`・fixture-gaps の `stats.php` は警告になる）
+- **9-L1 から**: 言語ごとに、ソースが 3 ファイル以上あり、読めない行が 5% を超えたらエラー。外すときは `coverage.allowUnread: [<言語>]`（外したことは報告に残る）
+- 段 1 の未確定は strict にしない（報告だけ）
 
 ### 3.2 段 1: 構文（新しい抽出器 `syntax`）
 
-- **文法**: web-tree-sitter（MIT）＋ 言語ごとの文法の WASM。公式の npm パッケージの多く（Python・Java・PHP・Ruby・Rust・C#・bash・Svelte など）は WASM を同梱している。Swift・Kotlin は同梱していないので、36 言語の WASM を集めた `tree-sitter-wasms`（Unlicense）を使うか、自前で作って同梱する（Q27）。文法の ABI が web-tree-sitter の版と合うことを、最初のスパイクで確かめる
-- **問い合わせ**（`extractors/syntax/queries/<言語>.scm`。データ）: 捕まえる名前を共通の語彙にする。エンジンは捕まえた名前だけを見て、箱・口・項目・線を作る（言語ごとのコードを持たない）
+**文法**: web-tree-sitter（MIT）＋ 言語ごとの文法の WASM。公式の npm パッケージの多く（Python・Java・PHP・Ruby・Rust・C#・bash・Svelte）は WASM を同梱しているが、Swift・Kotlin は同梱していない（2026-11-10 に npm の中身で確かめた）。**1 つの tree-sitter CLI の版で、使う文法をすべて WASM にする**スクリプトを置き（版とチェックサムを repo に固定）、できた WASM を CLI に同梱する。npm の文法パッケージの install スクリプトは走らせない。WASM はメモリの中だけで動き、ファイルも通信も使わない（安全の利点）。どの組で読み込めるかはスパイクで確かめる（§4）。
+
+**言語ごとのデータ（3 つ）**（`extractors/syntax/languages/<言語>/`）:
+
+| ファイル | 中身 |
+|---|---|
+| `queries.scm` | 問い合わせ。捕まえる名前は下の共通の語彙。多くの文法に付いている `tags.scm`（Swift・Python・PHP・Java・Ruby・Rust・C# にある。bash・Svelte・Kotlin には無い）を出発点にする |
+| `traits.yaml` | 言語の性質: 見える範囲の単位（ファイル / ディレクトリ / パッケージ / ターゲット）、import の解き方（エンジンが持つ方式から 1 つ: `path`（JS・Ruby の require_relative）・`module-root`（Python）・`package`（Java・Kotlin）・`target`（Swift: 同じターゲットは import なしで見える）・`namespace`（PHP・C#））、受け手の言葉（`self`・`this`・`cls`）、コンストラクタの規則（型名の呼び出し・`new`・`__init__`）、外の名前の表（標準ライブラリとよく使う枠組みのメンバー名。当たったら線にしない）、埋め込み（Svelte の `<script>`、HTML の `<script>`、ノートブックのセル） |
+| `types.yaml` | 書かれた型の名前 → `wireType`（`String` → string、`Int` → integer、`[T]` → array …） |
+
+1 言語あたりの見積り: 問い合わせ 80〜150 行、性質 30〜60 行、型 20〜40 行（データ）。方式の数を増やすときだけエンジンのコードが要る（方式は最初に 5 つ）。
+
+**捕まえる名前**（共通の語彙。エンジンはこれだけを見る）:
 
 | 捕まえる名前 | 意味 |
 |---|---|
-| `@def.function`・`@def.method`・`@def.type`・`@def.field` | 定義（名前は `@name`、型の中なら `Type.method`） |
+| `@def.function`・`@def.method`・`@def.type`・`@def.field`・`@def.property` | 定義。名前は `@name`。`@def.property` は計算プロパティ（SwiftUI の `var body`）で、中の呼び出しの持ち主になる |
+| `@def.extension` | 型の定義の続き（Swift の `extension Foo`）。型名で合わせる |
 | `@param`・`@param.label`・`@param.type`・`@return.type` | 引数（Swift のラベル・Python のキーワードも名前として）・戻り値 |
 | `@call`・`@call.name`・`@call.receiver`・`@call.arg`・`@call.arg.label` | 呼び出しと引数 |
-| `@import`・`@import.path`・`@import.name` | import（名前の解決に使う） |
-| `@string` | 文字列リテラル（レシピが受け口のパス・URL・コマンドを読むときに使う） |
+| `@import`・`@import.path`・`@import.name`・`@import.alias` | import |
+| `@string` | 文字列リテラル（レシピが受け口のパス・URL・コマンドを読む） |
+| `@injection.content`・`@injection.language` | 中を別の文法で読む所 |
 
-  多くの文法には GitHub が使う `tags.scm`（定義と参照）が付いている（Swift・Python・PHP・Java・Ruby・Rust・C# で確かめた。bash・Svelte・Kotlin には無い）。それを出発点にして、引数・戻り値・import を足す。1 言語あたり 100 行前後の見込み
-- **名前の解決**（線を引く規則。言語に依らない）: 呼び出しの名前を ① 同じ型の中 ② 同じファイル ③ import したモジュール・ファイル ④ repo の中で同じ名前の定義が 1 つだけ、の順に探す。1 つに決まれば線（`via: call` と戻りの `return`、`confidence: crude`、`meta.by: "syntax"`）。2 つ以上なら**線を引かず**、未確定の一覧に候補つきで出す（「段 2 を使えば決まる」「補いでこう書けば決まる」）。標準ライブラリ・外のパッケージの名前は線にしない
-- **項目の線**: 呼び出しの引数と呼び先の引数を、ラベル・キーワード名が書かれていれば名前で、無ければ位置で対応させる（`call_n.<名前> → 呼び先#in/<名前>`）。合わなければ口の単位（`/_`）に落とす（今のアダプタと同じ D41）
-- **型の対応表**（`extractors/syntax/types/<言語>.yaml`。データ）: 書かれた型の名前 → `wireType`（`String` → string、`Int` → integer、`[T]` → array …）。合流点の照合（D57）に使う
-- **runtime と host**: 段 1 は決めない（レシピと設定が決める。§3.5）
-- **速さの目標**: diiv-farm 全体（ソース約 600 ファイル・約 10 万行）で 10 秒以内（WASM の tree-sitter は 1 ファイル数 ms の見込み。スパイクで測る）
+関数の外の文（shell と Python の台本の大半）は、ファイルごとの**台本の箱**（kind `fn`、名前はファイル名）を持ち主にする。
+
+**箱の id（D181）**: 段 1 の箱は**いつも修飾する**: `fn:<repo 相対パス>~<型>.<名前>`（型の外なら `<名前>`、台本の箱は `fn:<パス>~(script)`）。オーバーロードは Swift のラベル（`load(from:)`）か引数の数（`load/2`）を足す。ほかのファイルに同じ名前を足しても変わらない（docs/22 D140「id は変えない」）。今のアダプタの id（`fn:<名前>`）と重ならない。段 2 は同じ id を使う。項目の id は schema の字（`^[A-Za-z0-9_$-]+$`）に写す（`*args` → `args`、使えない字は `u<16 進>`）。ファイルが段 1 から専用版へ移る（利用者が `ts.tsconfig` を書いた、など）と id が変わるので、報告に「この id はこう変わった」を出す（docs/22 §2.5 の `migrate` が読む）。
+
+**名前の解決（線を引く規則。D173）**:
+
+1. 呼び出しの持ち主の言語と同じ言語の定義だけを探す（shell の `build` が Python の `def build()` に当たらない）
+2. 探す範囲は**同じモジュール・ターゲットの中**（境は `traits.yaml` の見える範囲の単位と、レシピ `targets` が読む SwiftPM・pyproject・Gradle などのターゲット）と、そこから import したもの
+3. 受け手の無い呼び出し（`foo()`）か、受け手が `self`・`this`・型名・import の別名のときだけ解く。**受け手の型が分からないメソッド呼び出し（`items.append(x)`）は解かずに未確定へ**
+4. 範囲の中で、名前（とラベル・引数の数）が 1 つの定義に決まれば線（`via: call` と戻りの `return`、`confidence: crude`、`meta.by: "syntax"`）。2 つ以上なら線を引かず、候補つきで未確定へ
+5. 外の名前の表に当たったら線にしない
+
+docs/22 との関係: docs/22 が外す「1 つだけ」の当て方（Lambda に handler が 1 つだけ、など）は、**型でも名前でも関係の無いものを、数が 1 つだから結ぶ**当て方。こちらは「名前が書かれた呼び出しを、見える範囲の中の同じ名前の定義に結ぶ」で、コンパイラが行う名前の解決の粗い写し。後者だけを認める（docs/22 §2.3 にも同じ言い方で書く）。
+
+**未確定の一覧**: 並べ替えて上位 50 件を報告に出す（プロセスの境・HTTP・起動に関わるもの、呼ばれる回数の多いもの、が先）。残りは件数だけ。skill は上から読む。
+
+**項目の線**: 引数をラベル・キーワード名が書かれていれば名前で、無ければ位置で呼び先の引数に対応させる。合わなければ口の単位（`/_`）に落とす（D41）。
+
+**読めない所**: tree-sitter は文法に合わない所を ERROR にして残りを読む。報告に言語ごとの ERROR の行の割合と、割合の高いファイルを出す（§3.1）。1 ファイルの時間の上限を置き、木は使い終わったら必ず消す（WASM のメモリが戻らないため）。
+
+**速さの目標**: 段 1 だけで、合成の大きな fixture（§5。600 ファイル・10 万行）を 10 秒以内。
 
 ### 3.3 段 2: 型（新しい抽出器 `lsp`）
 
-- **クライアントは 1 つ**。JSON-RPC を標準入出力で話す（依存を足さず約 300 行）。使う要求は `initialize`・`textDocument/didOpen`・`textDocument/definition`・`textDocument/hover`・`textDocument/documentSymbol`（・あれば `callHierarchy/outgoingCalls`）だけ
-- **やること**: 段 1 の呼び出しの位置ごとに「定義へ飛ぶ」を引き、呼び先の箱を確定する（`crude` → `exact`、未確定 → 線）。引数・戻り値の型の名前を hover から取り、その型の定義の位置の documentSymbol の子からフィールドを取る（docs/15 §7: hover の文字列を割って型を展開するのは脆い。展開は documentSymbol でやる）
-- **サーバーの表**（データ）: 言語 → 試すコマンドの順。例: swift `sourcekit-lsp`／python `basedpyright-langserver --stdio`・`pyright-langserver --stdio`・`pylsp`／rust `rust-analyzer`／c・c++・objc `clangd`／java `jdtls`／kotlin `kotlin-language-server`／php `intelephense --stdio`・`phpactor language-server`／ruby `ruby-lsp`・`solargraph stdio`／c# `csharp-ls`。PATH にあるものだけを使う。無ければ段 1 のまま、報告に「これを入れれば型まで出る」と書く
-- **コードを実行するサーバー**（安全）: 言語サーバーの中には、対象のリポジトリのコードを実行するものがある（sourcekit-lsp の背景の索引は SwiftPM のマニフェストとプラグインを実行する、rust-analyzer は build script と手続きマクロ、jdtls は Gradle・Maven、gopls は `go list`）。依存を取りに通信するものもある。**表に「実行する／しない」を持ち、実行するものは設定 `types: { <言語>: { run: true } }` を書いたときだけ起動する**。起動は repo を cwd に、環境変数を絞り、時間の上限を付け、終わったら必ず止める。解析したコードを外に送るものではない（LSP は手元の標準入出力だけ）
+- **クライアントは 1 つ**。JSON-RPC を標準入出力で話す（依存を足さず約 400 行）。使う要求は `initialize`・`textDocument/didOpen`・`textDocument/definition`・`textDocument/typeDefinition`・`textDocument/documentSymbol`・`textDocument/hover`（表示用の文字列だけ）
+- **やること**: 段 1 の呼び出しの位置ごとに「定義へ飛ぶ」で呼び先の箱を確定する（`crude` → `exact`、未確定 → 線）。引数・戻り値は `typeDefinition` で型の定義の場所を取り、その場所の documentSymbol の子からフィールドを取る（hover の文字列は割らない。docs/15 §7）
+- **落とし穴の手当て**: `initialize` で `positionEncoding: utf-8` を求め、通らなければ UTF-16 の桁に変換する（日本語を含む fixture でテスト）。サーバーからの要求（`workspace/configuration` など）には既定の答えを返す。索引の終わり（`$/progress` の end）を時間の上限つきで待ち、間に合わなかったファイルは段 1 のまま報告に出す。要求の並列数と全体の時間の上限を置く。「同じ入力で 2 回 build して同じ graph.json」をテストにする
+- **定義の場所が repo の外**（site-packages・SDK・typeshed）なら使わない。線は未確定、型は名前だけ（repo の外を読まない規約）
+- **サーバーの表**（CLI に同梱のデータ。repo の設定ではコマンドもパスも変えられない）: 言語 → 試すサーバーと起動の設定（initializationOptions・環境変数）と、2 つの印「**対象のコードを実行しうる**」「**通信しうる**」。例: rust-analyzer は `cargo.buildScripts.enable=false`・`procMacro.enable=false`・`CARGO_NET_OFFLINE=true` で起動すれば両方なし（未確認。9-L3 で確かめる）、sourcekit-lsp は SwiftPM のパッケージを読む時点で `Package.swift` を評価する見込みなので「実行しうる」（未確認）、pyright は両方なし、ruby-lsp は `bundle install` を走らせるので両方あり。go-types の `helperEnv`（`GOPROXY=off`・`GOTOOLCHAIN=local`）と同じ形の守りを表に持つ
+- **実行の許可（D174）**: 印の付いたサーバーは、**repo が書けない場所**で許したときだけ起動する: CLI の引数（`--allow-exec=swift`）か、repo の外の利用者の設定（`~/.config/stack-atlas/allow-exec.yaml` に repo の絶対パスごと）。repo の設定（`stack-atlas.config.yaml`）に実行の許可が書いてあっても無視して警告する。skill には「書かない」と明記し、`harness.test.ts` で確かめる
+- **起動の守り**: PATH から repo の中と相対の項目を外して探す（repo に置いた偽のサーバーを起動しない）。cwd は repo、環境変数は絞る、プロセスグループごと起動し、終わったら（時間切れでも）グループごと止める（rust-analyzer・jdtls・sourcekit-lsp は子プロセスを作る）
 - **限界**: Xcode のプロジェクト（`.xcodeproj`）は、sourcekit-lsp がそのままでは読めない（ビルドサーバーが要る）。SwiftPM のパッケージだけ段 2、ほかは段 1 のまま。報告にそう書く
 
-### 3.4 レシピ: プロセスの境と構成ファイル
+### 3.4 レシピ: プロセスの境・構成ファイル・画面
 
-- **形**（`recipes/<名前>.yaml`。データ）: 対象（言語か、ファイルの形式とパスの glob）、読み方（tree-sitter の問い合わせ、または YAML・JSON・plist のキーのパス）、出すもの（endpoint の箱・呼び出しの線・trigger・host の枠・プロセスの箱と起動の線）、明示のキー（D18）
-- **例**（最初に入れる候補。fixture-many と diiv-farm で当たるものから選ぶ）
+**約束は 1 つ**（docs/22 D150 と同じ）: 名前がある・当たった箱と線に出所 `meta.by: "recipe:<名前>"`・明示できる設定のキーがある（明示が無い当て方は `crude`、警告は §3.7）・解けなければ線を引かず未確定へ。中身が「データ（問い合わせ・キーのパス）」か「アダプタの中のコード」（go-types の `recipes_http.go` など）かは実装の違いで、約束は同じ。9-L の間、レシピは CLI に同梱のものだけ（repo からは足せない）。レシピは専用版が読んだファイルを読まない。
+
+**出力の形**: 両側が別々に見つかるもの（HTTP の呼び出しと受け口）は、今の join の形（endpoint の箱に両側が線を引く）に合わせる。片側から相手が分かるもの（起動・定期実行・描画）は**直接の線**で、合流の段は要らない。event の合流は 9-L では作らない。
 
 | レシピ | 読むもの | 出すもの |
 |---|---|---|
-| `http-server-decorator` | Python の `@app.get("/x")`・`@router.post`（FastAPI・Flask） | endpoint（`GET /x`）← 関数 |
-| `http-server-call` | `app.get("/x", h)`（Express）・`router.get("x", use: h)`（Vapor）・`http.HandleFunc`（今の Go のレシピと同じ形） | 同上 |
-| `http-client` | `fetch(url)`・`URLSession…(url)`・`requests.get(url)`・`httpx`・`curl` | 呼び出し → endpoint（パスの文字列が読めるときだけ。読めなければ未確定） |
-| `process-exec` | shell の `exec`・`python3 x.py`・`swift run x`・Swift の `Process()`・Python の `subprocess` | プロセスの箱への起動の線（`via: event`） |
-| `launchd` | `*.plist` の `Label`・`ProgramArguments`・`StartInterval`・`StartCalendarInterval` | trigger（time）→ プロセス、host の枠 |
-| `container` | Dockerfile の `CMD`・`ENTRYPOINT`、compose の `services`・`depends_on`・`ports` | host の枠（コンテナ）と、載っている入口 |
-| `targets` | SwiftPM の `.executableTarget`・Xcode のアプリのターゲット・Gradle の `application`・`pyproject` の `scripts`・package.json の `bin` / `scripts` | プロセスの箱と runtime（§3.5） |
+| `http-server` | Python の `@app.get("/x")`・`@router.post`、`app.get("/x", h)`、Vapor の `app.get("x") { }`、`http.HandleFunc` と同じ形のもの | endpoint（`GET /x`）← 関数（join の形） |
+| `http-client` | `fetch(url)`・`URLSession`・`requests`・`httpx`・`curl` | 呼び出し → endpoint（パスの文字列が読めるときだけ） |
+| `process-exec` | shell の `exec`・`python3 x.py`・`swift run x`・Swift の `Process()`・Python の `subprocess` | 起動の線（`via: call`、`meta.process: true`）→ 起動される側の台本の箱か入口の関数（D182） |
+| `launchd` | `*.plist` の `Label`・`ProgramArguments`・`StartInterval`・`StartCalendarInterval`・`KeepAlive` | trigger（time）と、プロセスの枠（`infra`。host になれる）・載っている入口 |
+| `container` | Dockerfile の `CMD`・`ENTRYPOINT`、compose の `services`・`depends_on`・`ports` | コンテナの枠（`infra`）と載っている入口 |
+| `targets` | SwiftPM の `.executableTarget`・`.target`、Xcode のアプリのターゲット（pbxproj。小さな読み手を自前で書く）、Gradle の `application`、pyproject の `scripts`、package.json の `bin`・`scripts` | モジュール・ターゲットの境（§3.2）、プロセスの枠と runtime（§3.5） |
+| `ui-swiftui` | `View` に準拠する型、`@main` の `App`、`body` の中の型名の呼び出し | 部品（component）・画面（screen）・描画の線（`via: render`） |
+| `ui-svelte`・`ui-compose` | Svelte のファイル（埋め込みの script）、`@Composable` | 部品と描画の線 |
+| `sql-in-string`（候補） | 文字列の中の SQL（`SELECT … FROM t`） | table への線（docs/15 §4 の表にもある） |
 
-- レシピは当たった箱・線に出所 `meta.by: "recipe:<名前>"` を書く。当て方が推定なら警告に「推定」と明示のキー（今の規約）
+最初に入れるのは fixture-many と diiv-farm の件数で当たるものから。読めない形式（例: pbxproj を読む前）は報告の `formats` に `readBy: []` で出る。
 
-### 3.5 runtime と host
+### 3.5 runtime・host・group（地図の単位）
 
-- runtime の語彙に `client`（利用者の端末で動くネイティブのアプリ）と `unknown`（決まらない）を足す（graph.json の契約の変更。schema・types・docs/03・docs/16 を同時に。Q30）。配線図のレーンも 2 つ増える（`unknown` は右端に「未確定」）
-- 決め方（強い順）: ① 設定（`deploy`・`classify`） ② レシピ `targets`（Xcode の iOS / macOS アプリ → `client`、launchd・コンテナ・サーバーの入口 → `server`、ビルドの道具 → `build`） ③ 呼ばれ方の閉包（今の upgrade の配り方。入口から call でたどれる箱は入口の runtime） ④ どれでもなければ `unknown` と未確定の一覧
+- **runtime の語彙**に `client`（利用者の端末で動くネイティブのアプリ。iOS・macOS・Android・デスクトップ）と `unknown`（決まらない。配線図の右端に「未確定」のレーン）を足す（graph.json の契約の変更。§3.8、Q30）
+- **決め方**（強い順）: ① 設定（`deploy`・`classify`） ② レシピ `targets`・`launchd`・`container`（Xcode の iOS / macOS アプリ → `client`、コンテナ・サーバーの入口 → `server`、ビルドの道具 → `build`。利用者の Mac で動く常駐・定期の仕事のレーンは Q30） ③ 入口から call・render でたどれる箱は入口の runtime と host（**v2 の線の閉包**） ④ どれでもなければ `unknown`
+- ③ は今、v1 の `uses` の閉包（`upgrade.ts`）でしかしていない。v2 の線の閉包は docs/22 の置き場の段 `placeV2`（9-2c）で初めてできる。**9-L2 に `placeV2` の切り出し（v2 の線の閉包）を前倒しする**（D183）。9-L1 の間は ③ が無く、① ② で決まらない箱は `unknown`
+- 今の既定（v1 の箱を受け継げない v2 の箱は黙って `browser`。`merge-v2.ts:287`）を `unknown` に変える前に、3 つの fixture と damage-*（件数だけ）でこの既定に落ちている箱の数を測り、docs に書く。0 でなければ理由を調べてから変える
+- **group はファイル**（TS の group と同じ粒）。`groups[]` に名前・kind（`lib`）・`file` を出す。docs/22 の 9-1a でこれに `unit` が付き、地図の単位になる（段 1 の関数が 1 つずつ地図のノードにならない）。ディレクトリの段は木（`file` のパス）から来る
 
-### 3.6 段の重なり
+### 3.6 段の重なり（ファイルごと）
 
-- 同じファイルを複数の段が読むときは、**専用版 ＞ 段 2 ＞ 段 1 ＞ 段 0**。段 1 は、専用版が読むファイル（ts-types の tsconfig の中、go-types のモジュールの中）を読まない。だから今の 3 つの fixture の数は変わらない
+- 同じファイルは **専用版 ＞ 段 2 ＞ 段 1 ＞ 段 0**。外す単位はファイルで、専用版が申告した「読んだファイル」（§3.1 の `read`）を使う。だから今の 3 つの fixture と damage-* の数は変わらない（変わったら止まる）
+- 専用版が `skipped`・`failed`（toolchain が無い、など）なら、そのファイルは段 1 が読み、報告に「専用版の代わりに構文で読んだ」と出す（strict の skipped のエラーは今のまま）
+- tsconfig の外にある TS（設定のファイル・台本）は、数を測ってから「段 1 で読む」か「数える範囲から外す」を決める
 - 段 2 は段 1 と同じ id の箱を太らせる（id を変えない）。段 2 が落ちても段 1 の結果は残る
+
+### 3.7 推定の線の見え方
+
+- **契約**: `wires[].confidence`（`exact`・`crude`。省略は `exact`）を足す（§3.8）。補い（`meta.confidence`）・レシピ（docs/22 D150）も同じ欄を使う
+- **ビューア**: `crude` の線は破線。凡例に 1 行。上の帯に「推定の線を出す・隠す」の切り替え（既定は Q32）。たどる（光る・流れる・影響範囲）ときに推定の線を通るかは同じ切り替えに従う。地図の束は「束の中に推定が混ざるか」を持ち、混ざる束は破線
+- **警告（D18）**: 段 1 の線は 1 本ずつ警告しない。代わりに言語ごとに 1 行（「推定の線 n 本。段 2 か補いで確定できます」）。CLAUDE.md の規約（推定で線を引いたら warn に「推定」と明示のキー）の例外になるので、ユーザーに確認する（Q31）。レシピの推定は今の規約のまま 1 件ずつ
+
+### 3.8 同時に直す所（契約の変更）
+
+| 変更 | 直す所 |
+|---|---|
+| runtime に `client`・`unknown` | `packages/schema/graph-v2.schema.json`・`src/v2.ts`・docs/03・docs/16、wiring の `LANES`・レーンの色、`projectMap` の層（9-1b の後は `mapScene`）、ビューアの凡例、`harness/skill/references/model.md`（VERSION を上げる）、`merge-v2.ts` の既定 |
+| node の kind に `module`（段 0 のファイルの箱） | 同上の schema・型・docs、ビューアの kind の表 |
+| `wires[].confidence` | schema・型・docs/03・docs/16、ビューア（破線・凡例・切り替え）、wiring のたどる処理（切り替え） |
+| 抽出器の契約に `read?: string[]` | `packages/core/src/types.ts` と、ファイルを読む抽出器すべて（同じ PR） |
+| 報告に `coverage` | core の報告の型、`build --dry-run --json`、標準出力の要約、strict、docs/13・docs/19、skill の references |
+| 実行の許可（`--allow-exec`・repo の外の設定） | cli、docs/13、skill（「書かない」）、`harness.test.ts` |
 
 ## 4. 段取り
 
-Phase 9 の中に置く。**9-L0 は今すぐ**（依存なし）。9-L1 以降は 8-7・8-8b の後、docs/22 の 9-1a の前に置くのを推奨（Q28）。9-L は今のアダプタと同じ形（v2 の部分を直接出す。v1 の段を通らない）なので、docs/22 のモデルの整理を待たない。
+**推奨の順（Q28）**: 8-7 → 8-8b → 9-L0 → 9-L1〜9-L5 → docs/22 の 9-1a 以降。9-L0 は 8-7・8-8b と並べて今すぐ出せる。各段で、server・web・依存・ファイル・プロセスに触れるので `/security-review` を掛ける（9-L0 も全ファイルに触る新しい処理なので掛ける）。
 
 | 段 | 中身 | 依存 | 見積り |
 |---|---|---|---|
-| 9-L0 | 報告の `coverage`（言語の判定と言語ごとの数）、strict の 2 つの条件。空の graph が通る穴を塞ぐ | なし | +200 |
-| 9-L1 | スパイク → 段 1 のエンジン（`syntax`）。最初の言語は diiv-farm と fixture-many の分（Swift・Python・shell・Svelte・Kotlin・Java）。段 0 のファイルの箱 | Q27 | +900（エンジン 500・問い合わせ 6 言語 400） |
-| 9-L2 | レシピの形と最初の 7 つ（§3.4）。runtime の `client`・`unknown` | 9-L1・Q30 | +600 |
-| 9-L3 | 段 2（`lsp`）。最初は sourcekit-lsp（SwiftPM のみ・`run: true` のとき）と、手元にあれば pyright・rust-analyzer・clangd | 9-L1・Q29 | +500 |
-| 9-L4 | 残りの言語の問い合わせ（PHP・Ruby・Rust・C#・C/C++・Dart・Lua・Scala・Elixir …。文法がある言語は全部） | 9-L1 | 1 言語 約 100 行（データ） |
-| 9-L5 | 受け入れ: fixture-many、skill の更新（未確定の一覧を仕事の一覧に。`harness/skill/VERSION` を上げる）、diiv-farm にエージェントを当て直す（Q17） | 9-L1〜L3 | — |
+| 9-L0a | 数える範囲・言語の判定・報告の `coverage`（strict は変えない）。抽出器の契約の `read` | なし | +450 |
+| 9-L0b | strict: 箱 0 でエラー、読めないソースは警告。3 つの fixture の strict の数が変わらないテスト | 9-L0a | +100 |
+| 9-L1 | スパイク → 段 1 のエンジン（`syntax`）・方式 5 つ・WASM を作るスクリプト。最初の言語は Swift・Python・shell・Svelte・Kotlin・Java。段 0 のファイルの箱と kind `module`。`wires[].confidence` とビューアの破線・切り替え。strict の言語ごとの条件。fixture-many と合成の大きな fixture | Q27・Q31・Q32 | +1,800（エンジン 700・言語 6 つ 600・ビューア 200・fixture の生成 300） |
+| 9-L2 | レシピの約束と最初の 9 つ（§3.4）。runtime の `client`・`unknown`。`placeV2`（v2 の線の閉包）の前倒し | 9-L1・Q30 | +1,200 |
+| 9-L3 | 段 2（`lsp`）。サーバーの表と実行の許可。最初は pyright・rust-analyzer・clangd（実行しないもの）と、許したときの sourcekit-lsp（SwiftPM のみ） | 9-L1・Q29 | +700 |
+| 9-L4 | 残りの言語のデータ（PHP・Ruby・Rust・C#・C/C++・Dart・Lua・Scala・Elixir …。文法がある言語は全部） | 9-L1 | 1 言語 150〜250 行（データ） |
+| 9-L5 | skill の更新（未確定の一覧を仕事の一覧に。VERSION を上げる）、diiv-farm にエージェントを当て直す（Q33） | 9-L1〜L3 | — |
 
-**スパイク（9-L1 の最初。1 日以内）**で確かめること: ① web-tree-sitter と各文法の WASM が読み込める版の組 ② diiv-farm の Swift 473 ファイルを読む時間 ③ 定義・呼び出しの数と、名前の解決で 1 つに決まる割合 ④ Swift の問い合わせで取りこぼす書き方（extension・protocol・closure・property wrapper）。**名前の解決で決まる割合が 50% を下回ったら止まって相談する**（段 1 の線が役に立たないことになる）
+**スパイク（9-L1 の最初。1 日以内。依存は scratchpad にだけ置く）**で確かめること:
+
+1. 1 つの tree-sitter CLI の版で、6 言語の文法をすべて WASM にでき、web-tree-sitter で読み込めるか。WASM の大きさの合計
+2. diiv-farm の Swift（数える範囲の中）を読む時間とメモリ
+3. 定義・呼び出しの数、§3.2 の規則で線になる割合（分母は「同じ範囲に同じ名前の定義が 1 つ以上ある呼び出し」）
+4. **正しさ**: 線になったものから 50 本を抜き取って正誤を数える（diiv-farm は Q17 で読んでよい範囲。結果は件数だけ）。加えて、テストのときだけ段の重なりを外して、段 1 を fixture-poly・fixture-gaps の TS と Go に当て、ts-types・go-types の線（`exact`）を正解として適合率と再現率を出す。damage-* でも同じ比べ方を CLI で回し、件数だけ取る
+5. Swift の問い合わせで取りこぼす書き方（extension・protocol・closure・property wrapper・マクロ `#Preview`）と ERROR の行の割合
+
+**止まる条件**: ③ の割合が 50% を下回る、または ④ の誤りが 2% を超えたら、止まってユーザーに相談する（段 1 の線が役に立たないか、嘘をつくことになる）。
 
 ## 5. 受け入れ条件とテスト
 
-- **fixture-many**（新しい公開の合成 fixture。ワークスペース外）: 言語ごとに 1〜3 ファイルの小さな部品をつないだもの。Python の HTTP サーバー、Swift と Kotlin のクライアント、shell の起動、launchd の plist、Java・PHP・Ruby・Rust の小さな処理。**正解表（箱・線・未確定）をテストに置き**、言語ごとに再現率と誤った線の数を測る。合格: 箱は全部、名前で決まる線の再現率 90% 以上・誤った線 0、決まらない呼び出しは未確定に出る
-- **diiv-farm**（件数だけ。中身は公開リポジトリに入れない）: `source` のファイルの 95% 以上が関数・型の箱を持つ（ファイルの箱ではなく）。言語ごとの箱・線・未確定の数を記録。build は段 1 だけで 30 秒以内
-- 空の graph・読めない言語が 5% を超える graph で strict が落ちる。`allowUnread` で外せる
-- 今の 3 つの fixture（fixture-repo・fixture-poly・fixture-gaps）の数は変わらない（段 1 は TS・Go のファイルを読まない）。実リポジトリ（damage-*）は CLI で件数だけ確かめ、同じであること
-- 段 2: sourcekit-lsp・pyright が無い CI でも通る（段 2 のテストはサーバーがあるときだけ動き、無ければ skip を数える。go-types の `STACK_ATLAS_REQUIRE_GO` と同じ形）
-- 安全: `run: true` が無いとき、コードを実行するサーバーを起動しないテスト。サーバーのプロセスが残らないテスト
+- **fixture-many**（新しい公開の合成 fixture。ワークスペース外）: 言語ごとに数ファイルの小さな部品をつないだもの（Python の HTTP サーバー、Swift・Kotlin のクライアント、shell の起動、launchd の plist、SwiftUI の画面、Svelte の部品、Java・PHP・Ruby・Rust の処理）。**名前の重なりをわざと入れる**: 2 つの型の同名メソッド、オーバーロード、protocol を 2 つの型が実装、標準の名前（`append`・`print`・`map`）と同名の自作関数、shell と Python の同名、別ターゲットの同名。**正解表（箱・線・未確定）をテストに置き**、言語ごとに再現率と誤った線の数を測る。合格: 箱は全部、§3.2 で決まる線の再現率 90% 以上・誤った線 0、重なりはすべて未確定に出る
+- **合成の大きな fixture**（生成スクリプトで作る。600 ファイル・10 万行・数千の関数。公開のまま CI で回せる）: 段 1 だけで 10 秒以内、配線図の最初の切り口が出るまでと 1 つ開くまでの時間を測る
+- **適合率の基準**: §4 の ④ の比べ方（段 1 を TS・Go に当てて専用版と比べる）をテストに固定し、適合率 98% 以上
+- **strict**: 空の graph が落ちる。今の 3 つの fixture の strict の数（0・0・3）は 9-L0 の後も同じ（`_next/static/chunks/*.js`・`next.config.mjs`・`stats.php` を例にしたテスト）。9-L1 の後、読めない言語が 5% を超える graph が落ち、`allowUnread` で外せる
+- **今の数を変えない**: 3 つの fixture の箱・線の数は変わらない（段 1 は専用版の読んだファイルを読まない）。damage-* は CLI で件数だけ確かめる
+- **diiv-farm**（件数だけ。中身は公開リポジトリに入れない）: 数える範囲の `source` の行の 95% 以上が、関数・型・台本の箱（ファイルの箱ではなく）に入る。言語ごとの箱・線（`exact`・`crude`）・未確定の数を記録する。CI の合否にはしない（damage-* と同じ扱い）
+- **段 2**: サーバーの無い CI でも通る（あるときだけ動き、無ければ skip を数える。`STACK_ATLAS_REQUIRE_GO` と同じ形）。2 回の build で同じ graph.json。日本語を含むファイルで桁がずれない
+- **安全**: repo の設定に実行の許可を書いても実行するサーバーが起動しない。PATH の repo の中の偽のサーバーを起動しない。プロセスがグループごと残らない。定義が repo の外なら使わない。リンク・repo の外・秘密のファイル・巨大なファイル・plist の実体の展開を読まない
 
 ## 6. 決めたこと
 
 | # | 決定 | 理由 |
 |---|---|---|
 | D170 | 抽出は「ファイル・構文・型」の 3 段と、専用版・レシピ・契約。言語ごとの違いはデータに置き、言語ごとの抽出器のパッケージを増やさない | 要件 R9。言語の数だけコードを書くやり方では「全ての構成」に届かない |
-| D171 | 段 0 は全ファイルを必ず載せ、報告に言語ごとの割合を出し、読めないソースが残れば strict を落とす | 空の graph が「エラー 0・警告 0」で通った（Q17） |
-| D172 | 段 1 は tree-sitter（WASM）1 つ。問い合わせの捕まえる名前を共通の語彙にして、エンジンは言語を知らない | 文法がほぼ全言語にある。WASM なら手元で動き、ネイティブのビルドが要らない |
-| D173 | 名前の解決で 1 つに決まる線だけ引き（`crude`）、2 つ以上なら引かずに未確定へ | 誤った線は「この型を変えたら何が止まるか」を壊す。未確定はエージェントの仕事になる |
-| D174 | 段 2 は LSP のクライアント 1 つ。手元のサーバーだけ使い、コードを実行するサーバーは `run: true` のときだけ | 言語サーバーは言語の数だけあるが約束は 1 つ。対象のコードの実行は既定にしない |
-| D175 | 型の展開は documentSymbol、hover は型の名前だけ | docs/15 §7（hover の文字列を割るのは脆い） |
-| D176 | プロセスの境と構成ファイルはレシピ（データ） | 受け口・起動・コンテナはフレームワークと形式の規約で、型では決まらない |
-| D177 | runtime に `client`・`unknown` を足す。決まらない箱を `server` に入れない | ネイティブのアプリ（Swift の iOS / macOS）の居場所が無い。黙って入れると地図が嘘になる |
-| D178 | 段の重なりは 専用版 ＞ 段 2 ＞ 段 1 ＞ 段 0。段 1 は専用版のファイルを読まない | 今の 3 fixture と実リポジトリの数を変えない |
-| D179 | 9-L0 を最初に、依存なしで出す | 穴（strict が空で通る）は今日から直せる |
+| D171 | 段 0 は数える範囲（git が追跡 − 生成物・依存の置き場）を必ず載せ、言語ごとの行数の割合を報告する。箱 0 は strict のエラー、読めないソースは 9-L0 で警告・9-L1 からエラー | 空の graph が「エラー 0・警告 0」で通った（Q17）。今の fixture と CI を 9-L0 で落とさない |
+| D172 | 段 1 は tree-sitter（WASM）1 つ。エンジンは言語の名前を知らず、捕まえる名前の語彙と、数種類の方式（import の解き方・見える範囲）だけを知る。言語は問い合わせ・性質・型の 3 つのデータ | 文法がほぼ全言語にある。言語ごとの意味（import・見える範囲）は方式の選択で表せる |
+| D173 | 段 1 の線は「同じ言語・同じモジュールの中・受け手が分かる呼び出し・1 つの定義に決まる」ときだけ、`crude` で引く。それ以外は未確定 | 誤った線は「この型を変えたら何が止まるか」を壊す。受け手の型が分からない呼び出しを名前だけで結ぶと、`append` のような名前で誤りが量産される |
+| D174 | 段 2 は LSP のクライアント 1 つ。手元のサーバーだけ。対象のコードを実行しうる・通信しうるサーバーは、repo が書けない場所（CLI の引数・repo の外の設定）で許したときだけ起動する | repo の設定に許可を置くと、repo 自身（や注入に従ったエージェント）が実行を許せる |
+| D175 | 型の展開は typeDefinition ＋ documentSymbol。hover は表示用だけ | docs/15 §7（hover の文字列を割るのは脆い） |
+| D176 | プロセスの境・構成ファイル・画面はレシピ。約束は docs/22 D150 と 1 つ | 型では決まらない規約。約束を 2 つにしない |
+| D177 | runtime に `client`・`unknown` を足す。決まらない箱を既定のレーンに入れない | ネイティブのアプリの居場所が無い。黙って入れると地図が嘘になる（今の既定は `browser`） |
+| D178 | 段の重なりはファイルごと（専用版 ＞ 段 2 ＞ 段 1 ＞ 段 0）。専用版が申告した読んだファイルで外す。専用版が飛んだら段 1 が読む | 今の fixture と実リポジトリの数を変えない。toolchain の無い機械でも空にしない |
+| D179 | 9-L0 を最初に、依存なしで出す（報告と strict を 2 つの PR に分ける） | 穴（strict が空で通る）は今日から直せる |
+| D180 | 線に `confidence`（`exact`・`crude`）。ビューアは `crude` を破線で描き、出す・隠すを切り替えられる。たどる処理も切り替えに従う | 推定の線が事実の線と同じに見えると、正直な地図にならない |
+| D181 | 段 1 の箱の id はいつも修飾する（`fn:<パス>~<型>.<名前>`、オーバーロードはラベルか引数の数） | 衝突したときだけ修飾すると、ほかのファイルの変更で id が変わる（D140 に反する） |
+| D182 | プロセスの起動の線は `via: call`（`meta.process: true`） | 起動は呼び出しに近い。event の合流は無い |
+| D183 | 9-L2 に docs/22 の `placeV2`（v2 の線の閉包による runtime・host の配り）を前倒しする。group はファイル | 段 1 の箱は v1 の箱を受け継げず、runtime・host・地図の単位が決まらない |
 
 ## 7. ユーザーに確認すること
 
 | # | 確認すること | 推奨 |
 |---|---|---|
-| Q27 | tree-sitter を入れてよいか（npm の `web-tree-sitter` MIT 約 4.7MB ＋ 文法の WASM。Swift・Kotlin は `tree-sitter-wasms`（Unlicense、36 言語、約 52MB）か自前で作る）。ネットワークを伴う依存の追加 | **入れる**。使う言語の WASM だけを CLI に同梱し、版を固定する。解析は手元だけで、コードは外に出ない |
-| Q28 | 順番 | **8-7 → 8-8b → 9-L0〜9-L5 → docs/22 の 9-1a 以降**。9-L0 は今すぐ |
-| Q29 | コードを実行する言語サーバー（sourcekit-lsp の背景の索引など）を既定で使うか | **使わない**（`run: true` を書いたときだけ）。diiv-farm で使ってよいかは別に聞く |
-| Q30 | runtime に `client`・`unknown` を足すか（graph.json の契約の変更） | **足す** |
+| Q27 | tree-sitter を入れてよいか（npm の `web-tree-sitter` MIT 約 4.7MB ＋ 文法の WASM。Swift・Kotlin は npm に WASM が無いので、tree-sitter CLI で自前に作る）。ネットワークを伴う依存の追加 | **入れる**。文法は版を固定して自前で WASM にし、使う言語だけ CLI に同梱する。解析は手元だけで、コードは外に出ない |
+| Q28 | 順番 | **8-7 → 8-8b → 9-L0 → 9-L1〜9-L5 → docs/22 の 9-1a 以降**。9-L0 は今すぐ |
+| Q29 | 対象のコードを実行しうる言語サーバー（sourcekit-lsp など）の扱い | **既定で使わない**。許すのは CLI の `--allow-exec=<言語>` か repo の外の設定だけ |
+| Q30 | runtime に `client`・`unknown` を足すか（契約の変更）。利用者の Mac で動く常駐・定期の仕事（launchd）はどのレーンか。`client` のレーンの位置 | **足す**。launchd の仕事は `server`（常に動く処理）、iOS・macOS のアプリは `client`。`client` は `browser` の隣 |
+| Q31 | 段 1 の推定の線を 1 本ずつ警告せず、言語ごとに 1 行にまとめてよいか（CLAUDE.md の D18 の規約の例外） | **まとめる**（数千件の警告は読めない） |
+| Q32 | 推定の線を既定で見せるか | **見せる（破線）**。隠すと地図が空に近くなる |
+| Q33 | diiv-farm にエージェントを当て直すのはいつ・どの許可で・何手までか | **9-L1 の後**、前回と同じ許可（読むだけ・書くのは `~/diiv-farm-atlas` だけ）、上限 150 手 |
 
 ## 8. 危ない所
 
 | # | 危ない所 | 手当て |
 |---|---|---|
-| 1 | 文法の WASM の ABI が web-tree-sitter の版と合わない | スパイクの最初に確かめ、組を固定する。合わない言語は文法を自前で作る |
-| 2 | 名前の解決で誤った線を引く（同じ名前のメソッド・オーバーロード） | 1 つに決まるときだけ引く。fixture-many の正解表で誤りを 0 に固定。決まる割合が低ければ止まる（§4） |
-| 3 | 箱が数千になる（diiv-farm は Swift だけで数千の関数の見込み） | 配線図は 8-8 の畳み（初めの切り口は最大 24）が前提。全部開いたときの配置の時間を 9-L1 で測る |
-| 4 | 言語サーバーが対象のコードを実行する・通信する | 表に印を持ち、既定で起動しない（D174）。起動したときは時間の上限と後始末 |
-| 5 | 問い合わせのファイルの保守（文法の版が上がると捕まえ方が変わる） | fixture-many の正解表を CI で回す。文法の版は固定 |
-| 6 | 型の無い言語では項目が出ない | 箱と線は出る。項目は段 2 かエージェント。報告に「項目の型が決まった割合」を言語ごとに出す |
-| 7 | diiv-farm の中身が公開リポジトリに入る | 設定・出力は `~/diiv-farm-atlas/`（非公開の兄弟ディレクトリ）。docs には件数だけ |
+| 1 | 文法の WASM が web-tree-sitter の版と合わない・作れない | スパイクの最初に確かめ、CLI の版と文法の版を固定。作れない言語は報告の `unread` に出す |
+| 2 | 名前の解決で誤った線を引く | D173 の絞り方、fixture-many の重なり、専用版を正解にした適合率（98% 以上）、スパイクの止まる条件 |
+| 3 | 箱が数千になる（diiv-farm は Swift だけで数千の関数の見込み） | 配線図は 8-8 の畳み（最初の切り口は最大 24）が前提。合成の大きな fixture で時間を測る。1 つの入れ物に数百の箱があると、開いた瞬間に平らに並ぶ（D131）ので、ファイルの段（docs/22 Q26）が要るかを測る |
+| 4 | 言語サーバーが対象のコードを実行する・通信する | D174 と §3.3 の起動の守り |
+| 5 | 問い合わせの保守（文法の版が上がると捕まえ方が変わる） | fixture-many の正解表を CI で回す。版は固定 |
+| 6 | 型の無い言語では線も項目も少ない | 箱と報告は必ず出る。言語ごとの「項目の型が決まった割合」「推定の線の数」を報告に出す |
+| 7 | 9-L0 が今の CI（`build --strict`）を落とす | 9-L0 では読めないソースを警告にする（D171） |
+| 8 | 段 1 の id が専用版へ移ると変わる | 報告に id の変わり方を出し、`migrate` が読む |
+| 9 | diiv-farm の中身が公開リポジトリに入る | 設定・出力は `~/diiv-farm-atlas/`（非公開の兄弟ディレクトリ）。docs には件数だけ |
 
 ## 9. 採らなかった案
 
@@ -192,4 +285,28 @@ Phase 9 の中に置く。**9-L0 は今すぐ**（依存なし）。9-L1 以降�
 - **LSP だけ**: サーバーが入っていなければ 0 に戻る。型の展開が弱い（docs/15 §7）。段 2 としては使う
 - **universal-ctags**: 定義は取れるが呼び出しが取れない。外のバイナリが要る
 - **SCIP などの索引のツール**: 言語ごとに別のツール。Swift のものが無い
+- **名前で「repo の中で 1 つだけ」なら結ぶ**（最初の下書き）: 受け手の型が分からない呼び出しと言語をまたぐ呼び出しで、誤った線が量産される（§10 高-2）
 - **エージェントに全部読ませる**: 遅く高く、同じ結果にならない（diiv-farm の 1 回目は 5 分で TS の分しか進まなかった）。エージェントは段の後の補いに使う
+
+## 10. 設計レビューの記録（2026-11-10、実装前に 1 回）
+
+独立レビューの指摘は 22 件（高 6・中 9・低 7）。結論は「方向は正しい。実装前に高の 6 件を書き足す」。全部をこの版に反映した。
+
+| # | 指摘 | 反映した所 |
+|---|---|---|
+| 高-1 | 9-L0 の strict が今の 3 fixture と CI を落とす。「読んだ」「数える範囲」が無い。walk に生成物・.gitignore の規則は無い | §3.1（数える範囲・「読んだ」と契約の `read`・行数の割合・9-L0 は警告）、§5、D171 |
+| 高-2 | 名前の解決「repo で 1 つだけ」が誤った線を量産する。docs/22 の「1 つだけ」を外す考えと食い違う | §3.2 の規則（同じ言語・同じモジュール・受け手）、外の名前の表、適合率を専用版で測る、fixture-many の重なり、スパイクの止まる条件、D173 |
+| 高-3 | エンジンが言語を知らないのは無理（import・見える範囲・コンストラクタ・self・埋め込み）。id の付け方が無い | 言語の性質の表と方式、捕まえる名前の追加、台本の箱、D172・D181 |
+| 高-4 | 推定の線が事実と同じに見える（線に `confidence` が無い、ビューアが見分けない）。D18 の扱いが無い | §3.7、D180、Q31・Q32 |
+| 高-5 | 実行の許可を repo の設定に置くと repo が自分で許せる。PATH・子プロセス・repo の外 | §3.3、D174、§5 の安全のテスト |
+| 高-6 | 9-L を先にすると、段 1 の箱の runtime・host・地図の単位が決まらない（今の既定は `browser`） | §3.5、D183、docs/22 の基準の表と 9-1b の比べ方に fixture-many を入れる |
+| 中-1 | 契約の変更の一覧が足りない | §3.8 |
+| 中-2 | 「レシピ」が 3 つの意味。合流が足りない | §3.4 の約束と出力の形、D176・D182 |
+| 中-3 | 文法の WASM の用意の手間 | §3.2 の文法、スパイク ①、Q27 |
+| 中-4 | tree-sitter の ERROR で報告が良く見えすぎる | §3.1（ERROR の行は読めていない）、§3.2 の読めない所 |
+| 中-5 | LSP の落とし穴（hover・UTF-16・索引の終わり・非決定性） | §3.3 の落とし穴の手当て |
+| 中-6 | 受け入れの分母、CI で確かめられない目標 | §5（合成の大きな fixture、適合率、diiv-farm は記録だけ） |
+| 中-7 | UI の多い repo で画面と部品が出ない | §3.4 の `ui-*`・`targets`（pbxproj）・`sql-in-string` |
+| 中-8 | 段の重なりの範囲が食い違う。専用版が飛んだとき | §3.6、D178 |
+| 中-9 | 全ファイルを読む処理の安全 | §3.1 の安全、§5 |
+| 低-1〜7 | 小さな食い違い、未確定が数千件、Mac の常駐のレーン、起動の via、diiv-farm の当て直しの確認、9-L0 の見積り、例の数 | §3.2 の未確定の一覧、Q30・Q33、D182、§4 の見積り（9-L0 を 2 つに）、§3.1 の例 |
