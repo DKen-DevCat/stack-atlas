@@ -12,8 +12,8 @@
  * ハーネスの補い（Phase 8-4。docs/19 §2・§3、D67・D73）: 手書きの部分グラフ（`.stack-atlas/graph/*.v2.yaml`。言語アダプタ
  * hand）は抽出の後に v2 の部分グラフへ足す。overrides の `v2:` は 2 段で当てる（段 A: join の後・cleanupV2 の前に
  * wires・remove・nodes と retarget、段 B: cleanupV2 の後に items・variants・links・when）。その後 writeBroken →
- * views.yaml → validateGraphV2 → 最後の graph から数え直した報告（harness）と strict（strictIssues）。報告は
- * `project.generator.report` にも書く（validate --strict が読む）
+ * views.yaml → validateGraphV2 → 段 0 の報告（coverage。数える範囲・言語ごとの読めた行。docs/23 §3.1）→ 最後の graph から
+ * 数え直した報告（harness）と strict（strictIssues）。報告は `project.generator.report` にも書く（validate --strict が読む）
  *
  * 秘密らしいファイル（`.env*`・鍵・`*secret*`・認証情報など）と repo の外のファイル（`../`・絶対パス）を `file` に持つ箱は、
  * 抽出器と手書きの部分グラフの `code` を外す（箱は残す。graph.json はエージェントも人も読むので、中身の抜粋を載せない。
@@ -76,6 +76,7 @@ import {
   type StrictResult,
 } from './strict.js';
 import { applyViewsYaml } from './views-yaml.js';
+import { computeCoverage, coverageIssues, graphFilesOf } from './coverage.js';
 import type { UndeterminedWire } from './merge-v2.js';
 import { prefixRepoFiles, resolveRepos } from './repo.js';
 import { DEFAULT_RULES, runRules, type Rule } from './rules/index.js';
@@ -544,7 +545,18 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
                 }
               : {}),
           };
+    // 段 0 の報告（数える範囲・言語ごとの読めた行。docs/23 §3.1、Phase 9-L0）。読めていないソースは言語ごとに警告
+    const coverage = computeCoverage({
+      repos,
+      configDir,
+      config,
+      partials,
+      roles: new Map(opts.extractors.map((e) => [e.name, e.v2Role])),
+      graphFiles: graphFilesOf(graph.nodes, graphV2.nodes, graphV2.types, graphV2.groups),
+    });
+    issues.push(...coverageIssues(coverage));
     result.harness = computeHarnessReport({
+      coverage,
       graph: graphV2,
       ...(joinReport ? { join: joinReport } : {}),
       undetermined: undeterminedList,

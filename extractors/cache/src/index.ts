@@ -113,6 +113,8 @@ export const extractor: Extractor = {
       if (cache) out.push({ id, cache });
     };
     const fileText = (rel: string) => readText(ctx.resolve(rel));
+    /** 読んだ next.config（docs/23 §3.1 の read） */
+    const read = new Set<string>();
 
     // next.config は Lambda ごとに探す（apps/web と apps/admin が別の Lambda に載っていれば別の設定）。
     // 候補ディレクトリが同じなら結果を使い回す
@@ -141,6 +143,7 @@ export const extractor: Extractor = {
             continue;
           }
           const text = fileText(rel) ?? '';
+          read.add(rel);
           emit(n.id, lambdaNextCache(parseNextConfig(rel, text), rel));
         } else if ((n.id.startsWith('route:') || n.id.startsWith('layout:')) && n.file) {
           const text = fileText(n.file);
@@ -152,7 +155,7 @@ export const extractor: Extractor = {
       }
     }
     ctx.log.info(`cache: ${out.length} nodes`);
-    return { nodes: out, edges: [] };
+    return { nodes: out, edges: [], ...(read.size ? { read: [...read].sort() } : {}) };
   },
 };
 

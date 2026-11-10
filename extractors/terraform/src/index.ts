@@ -133,7 +133,7 @@ export const extractor: Extractor = {
     if (!rootDir) return { nodes: [], edges: [] };
     const stack = basename(rootDir);
     ctx.log.info(`terraform: root = ${relative(ctx.root, rootDir) || '.'}`);
-    const { modules, tfvars } = await loadModules(rootDir, ctx.log, ctx.root);
+    const { modules, tfvars, tfvarsFiles } = await loadModules(rootDir, ctx.log, ctx.root);
     const resolver = new Resolver(modules, tfvars);
 
     const docs: TfDocument[] = [];
@@ -173,7 +173,14 @@ export const extractor: Extractor = {
     ctx.log.info(
       `terraform: ${modules.size} module(s), ${g.resources.length} resources, ${g.nodes.length} nodes, ${g.edges.length} edges`,
     );
-    return { nodes: g.nodes, edges: g.edges };
+    // 読んだファイル（module の .tf と root の .tfvars。docs/23 §3.1）
+    const read = [
+      ...[...modules.values()].flatMap((m) => m.files.map((f) => f.abs)),
+      ...tfvarsFiles,
+    ]
+      .map((abs) => relative(ctx.root, abs).split('\\').join('/'))
+      .sort();
+    return { nodes: g.nodes, edges: g.edges, read: [...new Set(read)] };
   },
 };
 

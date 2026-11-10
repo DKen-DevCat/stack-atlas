@@ -63,7 +63,7 @@ export async function loadModules(
   rootDir: string,
   log: Logger,
   repoRoot: string,
-): Promise<{ modules: Map<string, ModuleInstance>; tfvars: JsonObject }> {
+): Promise<{ modules: Map<string, ModuleInstance>; tfvars: JsonObject; tfvarsFiles: string[] }> {
   const parse = await hclParse();
   const modules = new Map<string, ModuleInstance>();
 
@@ -142,13 +142,15 @@ export async function loadModules(
   } catch {
     /* ignore */
   }
+  const tfvarsFiles: string[] = [];
   for (const n of names.sort()) {
     try {
+      tfvarsFiles.push(join(rootDir, n));
       const j = await parse(n, readFileSync(join(rootDir, n), 'utf8'));
       if (isObject(j)) Object.assign(tfvars, j);
     } catch (e) {
       log.debug(`terraform: ${n} を読めません: ${String(e)}`);
     }
   }
-  return { modules, tfvars };
+  return { modules, tfvars, tfvarsFiles };
 }

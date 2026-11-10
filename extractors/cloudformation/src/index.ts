@@ -115,6 +115,8 @@ export const extractor: Extractor = {
   },
   async extract(ctx): Promise<PartialGraph> {
     const files = listTemplates(ctx);
+    /** 読めたテンプレート（docs/23 §3.1 の read） */
+    const read: string[] = [];
     const docs: TfDocument[] = [];
     const lines = new Map<string, string[]>();
     const cdkPaths = new Map<string, Record<string, string>>();
@@ -128,6 +130,7 @@ export const extractor: Extractor = {
         ctx.log.warn(`cloudformation: ${file} を読めません: ${String(e).split('\n')[0]}`);
         continue;
       }
+      read.push(toPosix(relative(ctx.root, ctx.resolve(file))));
       const stack = stackName(file);
       const conv = convertTemplate(tpl);
       lines.set(stack, text.split('\n'));
@@ -158,7 +161,7 @@ export const extractor: Extractor = {
     ctx.log.info(
       `cloudformation: ${docs.length} template(s), ${g.resources.length} resources, ${g.nodes.length} nodes, ${g.edges.length} edges`,
     );
-    return { nodes: g.nodes, edges: g.edges };
+    return { nodes: g.nodes, edges: g.edges, read: read.sort() };
   },
 };
 

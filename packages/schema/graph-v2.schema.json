@@ -85,6 +85,75 @@
           "type": "object",
           "description": "一覧の中身（文字列。1 つの一覧につき上限まで）",
           "additionalProperties": { "type": "array", "items": { "type": "string" } }
+        },
+        "coverage": { "$ref": "#/$defs/coverageSummary" }
+      }
+    },
+    "coverageSummary": {
+      "type": "object",
+      "required": ["scope", "languages"],
+      "additionalProperties": true,
+      "description": "段 0 の報告の数（docs/23 §3.1、Phase 9-L0）。数える範囲と、source の言語ごとの読めた行。ファイルの一覧は build --dry-run --json にだけ出す",
+      "properties": {
+        "scope": {
+          "type": "object",
+          "required": ["files", "tracked", "secret", "excluded", "methods"],
+          "additionalProperties": true,
+          "properties": {
+            "files": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "数える範囲のファイル（git が追跡 − 生成物・依存の置き場・秘密らしいファイル）"
+            },
+            "tracked": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "git の一覧（git でなければ walk で見つけた）ファイル"
+            },
+            "secret": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "秘密らしいファイル（数えるが中を読まない）"
+            },
+            "excluded": {
+              "type": "object",
+              "description": "除いた理由ごとの数（dir・output・generated・vendored・header・minified・tooLarge）",
+              "additionalProperties": { "type": "integer", "minimum": 0 }
+            },
+            "methods": {
+              "type": "array",
+              "description": "数え方。walk は git が使えず .gitignore を当てていない",
+              "items": { "enum": ["git", "walk"] }
+            }
+          }
+        },
+        "languages": {
+          "type": "array",
+          "description": "source の言語ごと（行数の多い順）",
+          "items": {
+            "type": "object",
+            "required": ["language", "files", "lines", "read", "unread"],
+            "additionalProperties": true,
+            "properties": {
+              "language": { "type": "string" },
+              "files": { "type": "integer", "minimum": 0 },
+              "lines": { "type": "integer", "minimum": 0 },
+              "read": {
+                "type": "object",
+                "description": "読めた行の段ごとの内訳（adapter・extractor・hand・none。9-L1 で syntax、9-L3 で type が足される）",
+                "additionalProperties": { "type": "integer", "minimum": 0 }
+              },
+              "unread": {
+                "type": "object",
+                "required": ["files", "lines"],
+                "additionalProperties": false,
+                "properties": {
+                  "files": { "type": "integer", "minimum": 0 },
+                  "lines": { "type": "integer", "minimum": 0 }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -351,13 +420,20 @@
       "additionalProperties": false,
       "description": "group の値（箱の group）と同じ id の、元の v1 の箱",
       "properties": {
-        "id": { "type": "string", "minLength": 1, "description": "group の値（v1 の箱の id。D56）" },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "group の値（v1 の箱の id。D56）"
+        },
         "name": { "type": "string", "description": "v1 の箱の名前" },
         "kind": {
           "type": "string",
           "description": "v1 の箱の kind（v1 の語彙: handler・lib・schema など。地図のノードの kind）"
         },
-        "file": { "type": "string", "description": "v1 の箱の file（リポジトリルートからの相対パス）" }
+        "file": {
+          "type": "string",
+          "description": "v1 の箱の file（リポジトリルートからの相対パス）"
+        }
       }
     },
     "view": {

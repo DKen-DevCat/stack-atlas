@@ -400,6 +400,11 @@ export const extractor: Extractor = {
       }
     }
 
+    // 読んだファイル（パッケージの .go と go.mod。箱はパッケージごとに 1 つで、file は最初のファイルだけ。docs/23 §3.1）
+    const read = [
+      ...a.packages.flatMap((p) => p.files.map((f) => f.rel)),
+      ...(existsSync(ctx.resolve('go.mod')) ? ['go.mod'] : []),
+    ];
     // --- deploy: 明示（config.deploy[*].go）と推定
     const entries = a.packages.filter((p) => p.entry);
     const upIds = new Set(upstream.nodes.map((n) => n.id));
@@ -439,7 +444,7 @@ export const extractor: Extractor = {
     ctx.log.info(
       `go: ${a.packages.length} packages, ${routes} routes, ${edges.size} edges（module ${a.module || '?'}）`,
     );
-    return { nodes, edges: [...edges.values()] };
+    return { nodes, edges: [...edges.values()], read };
   },
 };
 

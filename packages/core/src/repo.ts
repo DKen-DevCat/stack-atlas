@@ -53,7 +53,7 @@ export function fileInRepo(ctx: RepoInfo, file: string | undefined): string | un
 }
 
 /**
- * 抽出器の出力の `file` を `<repoName>/` で修飾する（複数 repo のときだけ）。v2 の部分グラフの箱と型の `file` も。
+ * 抽出器の出力の `file` を `<repoName>/` で修飾する（複数 repo のときだけ）。v2 の部分グラフの箱と型の `file`、`read` も。
  * すでに `<repoName>/` で始まり、かつ repo 相対パスとしては存在しないものは修飾済みとみなす。
  */
 export function prefixRepoFiles(
@@ -71,6 +71,8 @@ export function prefixRepoFiles(
     return { ...n, file: pre + f };
   };
   const out: PartialGraph = { ...part, nodes: part.nodes.map(qualify) };
+  // 抽出器が申告した読んだファイル（docs/23 §3.1）も同じ規則で
+  if (part.read) out.read = part.read.map((f) => qualify({ file: f }).file!);
   // v2 の部分グラフ（言語アダプタ）も同じ規則で修飾する。線は箱 id で書くのでそのまま
   if (part.v2) {
     out.v2 = { ...part.v2, nodes: part.v2.nodes.map(qualify) };

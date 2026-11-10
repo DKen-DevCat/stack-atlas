@@ -226,7 +226,7 @@ describe('build --dry-run --json（docs/19 §3.2）', () => {
     expect(logs).not.toHaveBeenCalled();
     expect(writes).toHaveLength(1);
     const json = JSON.parse(writes[0]!);
-    // §3.2 の表のキー（スナップショット）
+    // §3.2 の表のキー（スナップショット）。2026-11-10（Phase 9-L0。docs/23 §3.1）: 段 0 の報告 coverage を足した
     expect(Object.keys(json)).toEqual([
       'checked',
       'adapters',
@@ -237,6 +237,7 @@ describe('build --dry-run --json（docs/19 §3.2）', () => {
       'estimates',
       'screens',
       'supplements',
+      'coverage',
       'strict',
       'issues',
     ]);

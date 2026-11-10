@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import type { Cache, CacheRule, Edge } from '@stack-atlas/schema';
 import type { Extractor, PartialGraph, PartialNode, RepoContext } from '@stack-atlas/core';
 import { sectionFor } from '@stack-atlas/core';
-import { findNextDirs, listNextFiles, nextUrlToApiPath, readNextOutput } from './files.js';
+import { findNextDirs, listNextFiles, nextUrlToApiPath, readNextConfig } from './files.js';
 
 export { segmentToUrl, findAppDir, listRouteFiles, routeNodeId } from '@stack-atlas/core';
 export {
@@ -164,7 +164,8 @@ export const extractor: Extractor = {
     const { files, skipped } = listNextFiles(ctx.root, dirs);
     if (skipped.length > 0)
       ctx.log.info(`nextjs-app: 対象外のルート ${skipped.length} 件（${skipped.join(' / ')}）`);
-    const output = readNextOutput(ctx.root, dirs, (m) => ctx.log.warn(`nextjs-app: ${m}`));
+    const nextConfig = readNextConfig(ctx.root, dirs, (m) => ctx.log.warn(`nextjs-app: ${m}`));
+    const output = nextConfig?.output;
 
     const hosts = nextHosts(ctx, upstream, output);
     const hostNodes = upstream.nodes.filter((n) => hosts.includes(n.id));
@@ -219,7 +220,8 @@ export const extractor: Extractor = {
     ctx.log.info(
       `nextjs-app: ${[dirs.appDir, dirs.pagesDir].filter(Boolean).join(' + ')} から ${nodes.length} ノード${output ? `（output: ${output}）` : ''}`,
     );
-    return { nodes, edges };
+    // 読んだ next.config（output・trailingSlash を読む。docs/23 §3.1）
+    return { nodes, edges, ...(nextConfig ? { read: [nextConfig.file] } : {}) };
   },
 };
 

@@ -536,10 +536,16 @@ describe('build (fixture-poly)', () => {
       ['info', 'screens:/'],
       ['info', 'screens:/push'],
     ]);
+    // 2026-11-10（Phase 9-L0。docs/23 §3.1）: 段 0 の報告の警告 coverage が 1 件増えた（sql.migrations の glob
+    // `*.up.sql` に合わない down のマイグレーション 2 ファイルを、読めていないソースとして言語ごとに 1 件）
     expect(issues.filter((i) => i.level === 'warning').map((i) => i.path)).toEqual([
       'screens:/',
       'screens:_next/static/css/7f3a9c1d2e4b5a60.css',
+      'coverage',
     ]);
+    expect(issues.find((i) => i.path === 'coverage')!.message).toMatch(
+      /^読めていないソース: sql 2 ファイル（3 行）/,
+    );
   }, 60_000);
 });
 

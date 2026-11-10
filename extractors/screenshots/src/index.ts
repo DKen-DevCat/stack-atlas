@@ -154,14 +154,18 @@ export const NO_SANDBOX_ENV = 'STACK_ATLAS_CHROMIUM_NO_SANDBOX';
  * 黙って外さず、利用者が自分の環境で明示したときだけにする）
  */
 export function launchOptions(env: NodeJS.ProcessEnv = process.env): LaunchOptions {
-  return env[NO_SANDBOX_ENV] === '1' ? { ...LAUNCH_OPTIONS, chromiumSandbox: false } : { ...LAUNCH_OPTIONS };
+  return env[NO_SANDBOX_ENV] === '1'
+    ? { ...LAUNCH_OPTIONS, chromiumSandbox: false }
+    : { ...LAUNCH_OPTIONS };
 }
 
 async function launchBrowser(ctx: RepoContext): Promise<Browser> {
   const { chromium } = await import('playwright');
   const opts = launchOptions();
   if (opts.chromiumSandbox === false)
-    ctx.log.warn(`screenshots: ${NO_SANDBOX_ENV}=1 なので Chromium をサンドボックス無しで起動します`);
+    ctx.log.warn(
+      `screenshots: ${NO_SANDBOX_ENV}=1 なので Chromium をサンドボックス無しで起動します`,
+    );
   try {
     return await chromium.launch(opts);
   } catch (err) {

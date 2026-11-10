@@ -167,7 +167,11 @@ export const extractor: Extractor = {
     ctx.log.info(
       `cdktf: ${stacks.length} stack(s), ${g.nodes.length} nodes, ${g.edges.length} edges`,
     );
-    return { nodes: g.nodes, edges: g.edges };
+    // 読んだファイル（スタックの cdk.tf.json と、construct の場所を探した sourceDir の .ts。docs/23 §3.1）
+    const read = [...stacks.map((s) => relative(ctx.root, s.file)), ...src.files.map((f) => f.rel)]
+      .map((p) => p.split('\\').join('/'))
+      .sort();
+    return { nodes: g.nodes, edges: g.edges, read };
   },
 };
 

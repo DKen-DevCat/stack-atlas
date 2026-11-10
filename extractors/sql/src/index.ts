@@ -544,7 +544,15 @@ export const extractor: Extractor = {
     ctx.log.info(
       `sql: ${files.length} files, ${nodes.length} tables, ${[...edges.values()].filter((e) => e.kind === 'uses').length} uses`,
     );
-    const out: PartialGraph = { nodes, edges: [...edges.values()] };
+    // 読んだマイグレーション（テーブルを作らないファイルも。大きすぎて読まなかったものは除く。docs/23 §3.1）
+    const read = files.filter((rel) => {
+      try {
+        return statSync(join(ctx.root, rel)).size <= MAX_MIGRATION_BYTES;
+      } catch {
+        return false;
+      }
+    });
+    const out: PartialGraph = { nodes, edges: [...edges.values()], read };
     // v2: table の 3 つの口（key / write / read）とカラムの項目（docs/17 §7 #5）
     if (tables.size) {
       const list = [...tables.values()];

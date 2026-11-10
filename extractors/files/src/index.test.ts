@@ -103,7 +103,12 @@ kinds:
       'a/scripts/x.py': 'print(2)\n',
     });
     const res = await buildGraph({ root: join(ws, 'a'), extractors: [extractor], commit: false });
-    expect(res.issues).toEqual([]);
+    // 2026-11-10（Phase 9-L0。docs/23 §3.1）: 段 0 の報告が、規則の外（repo: platform だけ）の web/scripts/x.py を
+    // 読めていないソースとして警告する（以前は issues が空だった。platform の x.py は files が読んだ）
+    expect(res.issues.map((i) => [i.level, i.path, i.data])).toEqual([
+      ['warning', 'coverage', { language: 'python', files: 1, lines: 1 }],
+    ]);
+    expect(res.harness!.coverage.unread[0]!.examples).toEqual(['web/scripts/x.py']);
     expect(res.graph.nodes).toEqual([
       {
         id: 'job:scripts/x.py',
