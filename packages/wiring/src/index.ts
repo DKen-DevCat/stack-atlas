@@ -66,6 +66,19 @@ export {
   type Container,
   type Containment,
 } from './containment.js';
+export {
+  slicesOf,
+  initialCut,
+  normalizeCut,
+  openContainer,
+  closeContainer,
+  openTo,
+  innermostOpen,
+  hostSlice,
+  laneSlice,
+  type Cut,
+  type InitialCutOptions,
+} from './cut.js';
 export { viewSelection, applyView, findView } from './views.js';
 export {
   diffGraphsV2,

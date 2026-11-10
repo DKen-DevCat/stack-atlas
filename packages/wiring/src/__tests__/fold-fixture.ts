@@ -37,3 +37,31 @@ export function fbox(
     { ...(file === undefined ? {} : { file }), ...extra },
   );
 }
+
+/**
+ * 見えている単位を、木を箱ごとに根までたどって数える（foldView・initialCut とは別の数え方。突き合わせ用）。
+ * 返すのは単位のキー: 見えている箱は箱の id、畳んだ箱は `<入れ物の id>\n<置き場>`。木は直したもの（循環が無い）を渡す
+ */
+export function visibleUnits(
+  c: { containers: Map<string, { parent?: string }>; parentOfBox: Map<string, string> },
+  open: ReadonlySet<string>,
+  boxes: Iterable<string>,
+  slice: ReadonlyMap<string, string>,
+): string[] {
+  const out = new Set<string>();
+  for (const box of boxes) {
+    const chain: string[] = [];
+    for (let p = c.parentOfBox.get(box); p !== undefined; p = c.containers.get(p)?.parent)
+      chain.push(p);
+    // 根の側から見て、最初の閉じた入れ物
+    const closed = chain.reverse().find((id) => !open.has(id));
+    out.add(closed === undefined ? box : `${closed}\n${slice.get(box) ?? ''}`);
+  }
+  return [...out];
+}
+
+/** 箱（host の枠を除く）の id */
+export function boxIds(graph: GraphV2): string[] {
+  const hosts = new Set(graph.nodes.flatMap((n) => (n.host === undefined ? [] : [n.host])));
+  return graph.nodes.filter((n) => !hosts.has(n.id)).map((n) => n.id);
+}
