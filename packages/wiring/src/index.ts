@@ -79,6 +79,26 @@ export {
   type Cut,
   type InitialCutOptions,
 } from './cut.js';
+export {
+  foldView,
+  litOn,
+  segmentOn,
+  lineActive,
+  type FoldView,
+  type FoldUnit,
+  type HiddenBroken,
+} from './fold.js';
+export {
+  foldLengths,
+  flowOn,
+  foldWidthOf,
+  FOLD_WIDTH,
+  FOLD_HIDDEN,
+  type FoldBall,
+  type FoldPulse,
+  type FoldFlow,
+  type FoldLengthOptions,
+} from './fold-flow.js';
 export { viewSelection, applyView, findView } from './views.js';
 export {
   diffGraphsV2,
