@@ -92,3 +92,43 @@ export function wiresThroughBoxes(l: WiringLayout): string[] {
     for (const b of l.boxes.values()) if (crossesBox(r.points, b)) out.push(`${r.key} が ${b.id}`);
   return out;
 }
+
+/**
+ * 箱の縁から `margin` px 未満を通る線（docs/18 §11.4: 箱は全部線の上に描くので、縁の近くを通る光る線はそこだけ箱のクリックが勝つ）。
+ * ピンへの出入り（端の点が箱の左右の縁の上にある、最初・最後の横の区間）は、その箱については数えない。
+ * 切れている線は箱の手前（BROKEN_CUT）で終わるので、最後の区間も数える
+ */
+export function wiresNearBoxes(l: WiringLayout, margin = 6): string[] {
+  const out: string[] = [];
+  const boxes = [...l.boxes.values()];
+  const onSide = (p: Point, b: Rect) =>
+    (p.x === b.x || p.x === b.x + b.w) && p.y >= b.y && p.y <= b.y + b.h;
+  for (const r of allRoutes(l)) {
+    const pts = r.points;
+    const last = pts.length - 1;
+    for (const b of boxes) {
+      const x0 = b.x - margin;
+      const x1 = b.x + b.w + margin;
+      const y0 = b.y - margin;
+      const y1 = b.y + b.h + margin;
+      for (let i = 1; i <= last; i++) {
+        const p = pts[i - 1]!;
+        const q = pts[i]!;
+        // ピンへの出入り: 端の点が縁の上で、横に箱から離れていく区間
+        if (p.y === q.y) {
+          if (i === 1 && onSide(p, b) && (q.x <= b.x || q.x >= b.x + b.w)) continue;
+          if (i === last && onSide(q, b) && (p.x <= b.x || p.x >= b.x + b.w)) continue;
+        }
+        const sx0 = Math.min(p.x, q.x);
+        const sx1 = Math.max(p.x, q.x);
+        const sy0 = Math.min(p.y, q.y);
+        const sy1 = Math.max(p.y, q.y);
+        if (sx1 > x0 && sx0 < x1 && sy1 > y0 && sy0 < y1) {
+          out.push(`${r.key} が ${b.id}（区間 ${i}）`);
+          break;
+        }
+      }
+    }
+  }
+  return out;
+}

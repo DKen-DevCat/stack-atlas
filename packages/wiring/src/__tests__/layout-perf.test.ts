@@ -14,7 +14,7 @@ import type { Cfg, Chain, ChainPoint } from '../layout/model.js';
 import { placeX } from '../layout/route.js';
 import { I, N, P, W } from './fixture.js';
 import { countCrossings, boxOverlaps, hostOverlaps, wiresThroughBoxes } from './metrics.js';
-import { synthetic } from './synthetic.js';
+import { synthetic } from '../synthetic.js';
 
 const LIMIT_MS = 300;
 
