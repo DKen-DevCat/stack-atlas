@@ -1,6 +1,6 @@
 // 配線図のレイアウトの公開の型（docs/15 §3.6、docs/18 §3.1）。結果は Map を除けば JSON にできる
 import type { Runtime } from '@stack-atlas/schema';
-import type { IndexedNode } from '../graph-index.js';
+import type { IndexedNode, IndexedWire } from '../graph-index.js';
 
 export interface Point {
   x: number;
@@ -167,4 +167,9 @@ export interface LayoutOptions {
    * （`?prev=` が無いときと同じ所。docs/18 §10.6）
    */
   ghostItems?: ReadonlySet<string>;
+  /**
+   * 層（呼び出しの深さ）を決める線か。既定は `isForward`（戻り・deliver・参照を除く）。
+   * 畳んだ表示（docs/21 §11.4）は、束の中の線から決めた値を渡す（畳んだ箱の `out/_` は参照かどうかを口から読めない）
+   */
+  forward?: (wire: IndexedWire) => boolean;
 }

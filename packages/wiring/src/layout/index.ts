@@ -105,6 +105,7 @@ export function arrange(index: GraphIndex, options: LayoutOptions = {}) {
   ];
 
   // --- 層 ---
+  const forwardOf = options.forward ?? isForward;
   // 線は 1 回だけ見て、レーンごと・host ごとに分ける（レーン・host ごとに全部の線を見ると (L + H) × W になる）
   interface Layered<T> {
     edges: [T, T][];
@@ -118,7 +119,7 @@ export function arrange(index: GraphIndex, options: LayoutOptions = {}) {
   for (const w of m.wires) {
     const fb = boxOf.get(w.fromNode.id)!;
     const tb = boxOf.get(w.toNode.id)!;
-    const fwd = isForward(w);
+    const fwd = forwardOf(w);
     if (fb.lane === tb.lane && fb.unit !== tb.unit) {
       const l = laneWires[fb.lane]!;
       if (fwd) l.edges.push([fb.unit, tb.unit]);
