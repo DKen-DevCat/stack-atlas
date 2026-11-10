@@ -8,17 +8,26 @@
  * - `schema` エッジ: `sql.db` のノード（無ければ上流の RDS / Cloud SQL が 1 つなら推定して warn）→ 各テーブル
  * - `uses` エッジ: 上流のコードノード（file を持つ go / ts / py など）のファイルに
  *   `FROM|JOIN|INTO|UPDATE|TABLE <table>` があれば、そのノード → `schema:<table>`
+ * - v2（docs/17 §7 #5、8-2b）: `PartialGraph.v2` に table の 3 つの口（key / write / read）とカラムの項目を出す（v2.ts）。
+ *   カラムの型は CREATE TABLE の型（SQL の型 → wireType は v2.ts の sqlWireType）。go-types も readTables で同じ表を読む
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import type { Edge } from '@stack-atlas/schema';
 import type { Extractor, PartialGraph, PartialNode, RepoContext } from '@stack-atlas/core';
 import { globBase, globToRegExp, sectionFor } from '@stack-atlas/core';
+import { tableNodeV2, tableTypeV2 } from './v2.js';
+
+export { sqlWireType, tableNodeV2, tableTypeV2, columnItem } from './v2.js';
 
 export const NAME = 'sql';
 
 export const DEFAULT_MIGRATIONS = ['migrations/**/*.sql', 'db/migrations/**/*.sql'];
 const MAX_SCAN_BYTES = 200 * 1024;
+/** 読むマイグレーションの 1 ファイルの上限（超えるものは警告して読まない。8-2b レビュー S3） */
+export const MAX_MIGRATION_BYTES = 5 * 1024 * 1024;
+/** カラムの型の文字列の上限（それより長いものは切って `…`） */
+const MAX_TYPE_TEXT = 256;
 const MAX_CODE_LINES = 30;
 const CODE_EXT = /\.(go|[cm]?[jt]sx?|py|rb|java|kt|scala|rs|php|cs|ex|exs)$/;
 
@@ -138,7 +147,37 @@ function splitTopLevel(body: string): string[] {
   return out;
 }
 
-const lineAt = (src: string, index: number) => src.slice(0, index).split('\n').length;
+/** 位置 → 行番号（前から順に数える。表ごとに先頭から数え直すと O(n × 表の数) だった） */
+function lineCounter(src: string) {
+  let pos = 0;
+  let line = 1;
+  return (index: number) => {
+    if (index < pos) {
+      pos = 0;
+      line = 1;
+    }
+    for (let i = src.indexOf('\n', pos); i >= 0 && i < index; i = src.indexOf('\n', i + 1)) line++;
+    pos = index;
+    return line;
+  };
+}
+
+/**
+ * CREATE TABLE の正規表現の当たりを順に回す。表の本体の閉じ括弧の後から次を探す（閉じない `(` の中の CREATE TABLE を
+ * 何度も末尾まで読まない。2026-11-09 8-2b レビュー S3）
+ */
+function* createTables(
+  src: string,
+  re: RegExp,
+): Generator<{ m: RegExpExecArray; open: number; close: number }> {
+  re.lastIndex = 0;
+  for (let m = re.exec(src); m; m = re.exec(src)) {
+    const open = m.index + m[0].length - 1;
+    const close = closeParen(src, open);
+    yield { m, open, close };
+    re.lastIndex = Math.max(re.lastIndex, close + 1);
+  }
+}
 
 /** SQL 文字列から CREATE TABLE（と ALTER TABLE ADD COLUMN）を読む */
 export function parseSql(raw: string): {
@@ -151,9 +190,8 @@ export function parseSql(raw: string): {
     `\\bCREATE\\s+(?:OR\\s+REPLACE\\s+)?(?:(?:GLOBAL|LOCAL)\\s+)?(?:TEMP(?:ORARY)?\\s+|UNLOGGED\\s+)?TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(?:${IDENT}\\.)?${IDENT}\\s*\\(`,
     'gi',
   );
-  for (const m of src.matchAll(create)) {
-    const open = m.index + m[0].length - 1;
-    const close = closeParen(src, open);
+  const lineAt = lineCounter(raw);
+  for (const { m, open, close } of createTables(src, create)) {
     const semi = src.indexOf(';', close);
     const end = semi < 0 ? Math.min(src.length, close + 1) : semi + 1;
     const columns = splitTopLevel(src.slice(open + 1, close))
@@ -164,7 +202,7 @@ export function parseSql(raw: string): {
     const t: SqlTable = {
       table: m[2]!,
       columns,
-      line: lineAt(raw, m.index),
+      line: lineAt(m.index),
       code:
         lines.length > MAX_CODE_LINES
           ? [...lines.slice(0, MAX_CODE_LINES), '-- …'].join('\n')
@@ -188,6 +226,163 @@ export function parseSql(raw: string): {
     }
   }
   return { tables, added };
+}
+
+/** カラムの定義（v2 の項目に使う） */
+export interface SqlColumn {
+  name: string;
+  /** 書いたままの型（`TIMESTAMPTZ`・`VARCHAR(255)`）。無ければ "" */
+  type: string;
+  notNull: boolean;
+  primaryKey: boolean;
+  /** DEFAULT・serial・identity・AUTO_INCREMENT・GENERATED（INSERT で省ける） */
+  hasDefault: boolean;
+}
+
+const COLUMN_STOP =
+  /\b(NOT|NULL|PRIMARY|REFERENCES|DEFAULT|CHECK|UNIQUE|CONSTRAINT|COLLATE|GENERATED|AUTO_INCREMENT|AUTOINCREMENT|IDENTITY|COMMENT|ON)\b/i;
+
+/** `name TYPE [制約]` → カラムの定義 */
+export function parseColumnDef(item: string): SqlColumn | undefined {
+  const m = /^\s*([`"[]?[^\s`"\]]+[`"\]]?)\s*([\s\S]*)$/.exec(item);
+  if (!m) return undefined;
+  const name = unquote(m[1]!);
+  const rest = m[2]!;
+  const stop = COLUMN_STOP.exec(rest);
+  let type = (stop ? rest.slice(0, stop.index) : rest).trim().replace(/\s+/g, ' ');
+  if (type.length > MAX_TYPE_TEXT) type = `${type.slice(0, MAX_TYPE_TEXT)}…`;
+  const primaryKey = /\bPRIMARY\s+KEY\b/i.test(rest);
+  return {
+    name,
+    type,
+    notNull: primaryKey || /\bNOT\s+NULL\b/i.test(rest),
+    primaryKey,
+    hasDefault:
+      /\b(DEFAULT|GENERATED|AUTO_INCREMENT|AUTOINCREMENT|IDENTITY)\b/i.test(rest) ||
+      /^(small|big)?serial\d?$/i.test(type),
+  };
+}
+
+/** CREATE TABLE（と ALTER TABLE ADD COLUMN）のカラムの定義（テーブル名 → カラム）。表の PRIMARY KEY (a, b) も必須にする */
+export function parseColumnDefs(raw: string): Map<string, SqlColumn[]> {
+  const src = stripSqlComments(raw);
+  const out = new Map<string, SqlColumn[]>();
+  const create = new RegExp(
+    `\\bCREATE\\s+(?:OR\\s+REPLACE\\s+)?(?:(?:GLOBAL|LOCAL)\\s+)?(?:TEMP(?:ORARY)?\\s+|UNLOGGED\\s+)?TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(?:${IDENT}\\.)?${IDENT}\\s*\\(`,
+    'gi',
+  );
+  for (const { m, open, close } of createTables(src, create)) {
+    if (out.has(m[2]!)) continue;
+    const items = splitTopLevel(src.slice(open + 1, close)).map((i) => i.trim());
+    const cols = items
+      .filter((i) => i && !CONSTRAINT.test(i))
+      .map(parseColumnDef)
+      .filter((c): c is SqlColumn => !!c);
+    const byName = new Map(cols.map((c) => [c.name, c]));
+    for (const i of items) {
+      const pk = /^(?:CONSTRAINT\s+\S+\s+)?PRIMARY\s+KEY\s*\(([^)]*)\)/i.exec(i);
+      if (!pk) continue;
+      for (const n of pk[1]!.split(',').map((x) => unquote(x.trim()))) {
+        const c = byName.get(n);
+        if (c) c.notNull = c.primaryKey = true;
+      }
+    }
+    out.set(m[2]!, cols);
+  }
+  const alter = new RegExp(
+    `\\bALTER\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?(?:ONLY\\s+)?(?:${IDENT}\\.)?${IDENT}\\s+([^;]*)`,
+    'gi',
+  );
+  const addedNames = new Map<SqlColumn[], Set<string>>();
+  for (const m of src.matchAll(alter)) {
+    for (const part of splitTopLevel(m[3]!)) {
+      const a = /^\s*ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?([\s\S]*)$/i.exec(part);
+      if (!a || CONSTRAINT.test(a[1]!.trim())) continue;
+      const c = parseColumnDef(a[1]!);
+      if (!c) continue;
+      const list = out.get(m[2]!) ?? [];
+      let names = addedNames.get(list);
+      if (!names) addedNames.set(list, (names = new Set(list.map((x) => x.name))));
+      if (!names.has(c.name)) {
+        list.push(c);
+        names.add(c.name);
+      }
+      out.set(m[2]!, list);
+    }
+  }
+  return out;
+}
+
+/** マイグレーションのテーブル（最初に作ったもの。後のファイルの ADD COLUMN を足す）とカラムの定義 */
+export type SqlTableWithDefs = SqlTable & { file: string; defs: SqlColumn[] };
+
+/**
+ * マイグレーションのテーブル。warn は読まなかったファイル（MAX_MIGRATION_BYTES を超える）の警告。カラムの照合は
+ * 名前の表で（`defs.some` / `find` をカラムごとに回すと O(カラム²)。2026-11-09 8-2b レビュー S3: 4 万カラムで 20.9 秒）
+ */
+export function readTables(
+  root: string,
+  globs: string[],
+  warn?: (message: string) => void,
+): Map<string, SqlTableWithDefs> {
+  const tables = new Map<string, SqlTableWithDefs>();
+  /** テーブル → 列の名前・定義の名前の表 */
+  const colSet = new Map<SqlTableWithDefs, Set<string>>();
+  const defMap = new Map<SqlTableWithDefs, Map<string, SqlColumn>>();
+  for (const rel of migrationFiles(root, globs)) {
+    const abs = join(root, rel);
+    let size: number;
+    try {
+      size = statSync(abs).size;
+    } catch {
+      continue;
+    }
+    if (size > MAX_MIGRATION_BYTES) {
+      warn?.(
+        `sql: ${rel} は大きすぎるので読みません（${size} バイト。上限 ${MAX_MIGRATION_BYTES} バイト）`,
+      );
+      continue;
+    }
+    const raw = readFileSync(abs, 'utf8');
+    const { tables: ts, added } = parseSql(raw);
+    const defs = parseColumnDefs(raw);
+    for (const t of ts) {
+      if (tables.has(t.table)) continue;
+      const entry: SqlTableWithDefs = { ...t, file: rel, defs: [...(defs.get(t.table) ?? [])] };
+      tables.set(t.table, entry);
+      colSet.set(entry, new Set(entry.columns));
+      const dm = new Map<string, SqlColumn>();
+      for (const d of entry.defs) if (!dm.has(d.name)) dm.set(d.name, d);
+      defMap.set(entry, dm);
+    }
+    for (const a of added) {
+      const t = tables.get(a.table);
+      if (t && !colSet.get(t)!.has(a.column)) {
+        t.columns.push(a.column);
+        colSet.get(t)!.add(a.column);
+      }
+    }
+    // ADD COLUMN の型（CREATE と別のファイルにあるもの）
+    for (const [name, cols] of defs) {
+      const t = tables.get(name);
+      if (!t) continue;
+      const dm = defMap.get(t)!;
+      for (const c of cols)
+        if (!dm.has(c.name)) {
+          t.defs.push(c);
+          dm.set(c.name, c);
+        }
+    }
+  }
+  // CREATE の列に定義が無い（読めなかった）ものは型無しで足す。並びは列の順
+  for (const t of tables.values()) {
+    const dm = defMap.get(t)!;
+    t.defs = t.columns.map(
+      (c) =>
+        dm.get(c) ?? { name: c, type: '', notNull: false, primaryKey: false, hasDefault: false },
+    );
+  }
+  return tables;
 }
 
 /** infra ノードの Terraform 型（cdktf / terraform / cloudformation のどれでも） */
@@ -253,6 +448,8 @@ function readSmall(abs: string): string | undefined {
 
 export const extractor: Extractor = {
   name: NAME,
+  /** v2 の table は契約（合流点。言語アダプタではない。docs/17 §2） */
+  v2Role: 'contract',
   async detect(ctx) {
     if (ctx.config.sql?.repo && !sectionFor(ctx, ctx.config.sql)) return false;
     const globs = sectionFor(ctx, ctx.config.sql)?.migrations ?? DEFAULT_MIGRATIONS;
@@ -261,17 +458,9 @@ export const extractor: Extractor = {
   async extract(ctx, upstream): Promise<PartialGraph> {
     const cfg = sectionFor(ctx, ctx.config.sql) ?? {};
     const files = migrationFiles(ctx.root, cfg.migrations ?? DEFAULT_MIGRATIONS);
-    const tables = new Map<string, SqlTable & { file: string }>();
-    for (const rel of files) {
-      const { tables: ts, added } = parseSql(readFileSync(join(ctx.root, rel), 'utf8'));
-      for (const t of ts) {
-        if (!tables.has(t.table)) tables.set(t.table, { ...t, file: rel });
-      }
-      for (const a of added) {
-        const t = tables.get(a.table);
-        if (t && !t.columns.includes(a.column)) t.columns.push(a.column);
-      }
-    }
+    const tables = readTables(ctx.root, cfg.migrations ?? DEFAULT_MIGRATIONS, (m) =>
+      ctx.log.warn(m),
+    );
     const nodes: PartialNode[] = [...tables.values()].map((t) => {
       const sql: Record<string, unknown> = { table: t.table, columns: t.columns };
       if (t.schema) sql['schema'] = t.schema;
@@ -349,7 +538,13 @@ export const extractor: Extractor = {
     ctx.log.info(
       `sql: ${files.length} files, ${nodes.length} tables, ${[...edges.values()].filter((e) => e.kind === 'uses').length} uses`,
     );
-    return { nodes, edges: [...edges.values()] };
+    const out: PartialGraph = { nodes, edges: [...edges.values()] };
+    // v2: table の 3 つの口（key / write / read）とカラムの項目（docs/17 §7 #5）
+    if (tables.size) {
+      const list = [...tables.values()];
+      out.v2 = { nodes: list.map(tableNodeV2), wires: [], types: list.map(tableTypeV2) };
+    }
+    return out;
   },
 };
 

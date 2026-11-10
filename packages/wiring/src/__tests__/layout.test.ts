@@ -234,10 +234,11 @@ describe('layoutWiring: 例の v2 グラフ', () => {
 
   it('Lambda と Aurora は枠。S3 の静的サイトはエッジのレーンの箱（D42 改訂）で、画面は枠を持たない', () => {
     expect([...layout.hosts.keys()].sort()).toEqual(['infra:aurora/this', 'infra:lambda_api/api']);
+    // 2026-11-09 変更（8-2b）: InsertTransaction は cmd/api と cmd/gmail-webhook の両方の入口から届くので、規則
+    // （docs/17 §7 #11。複数の入口から使う関数は host を空にして meta.hosts）に合わせて例の host を外した。枠の中から抜ける
     expect(layout.hosts.get('infra:lambda_api/api')!.members.sort()).toEqual([
       'fn:internal/api.handleCreateTransaction',
       'fn:internal/api.handleToday',
-      'fn:internal/store.InsertTransaction',
       'fn:internal/store.ListByDate',
     ]);
     const lane = (id: string) => layout.lanes[layout.boxes.get(id)!.lane]!.id;

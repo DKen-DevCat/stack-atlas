@@ -33,6 +33,7 @@
     "@stack-atlas/extractor-cloudformation": "workspace:*",
     "@stack-atlas/extractor-files": "workspace:*",
     "@stack-atlas/extractor-go": "workspace:*",
+    "@stack-atlas/extractor-go-types": "workspace:*",
     "@stack-atlas/extractor-nextjs-app": "workspace:*",
     "@stack-atlas/extractor-openapi": "workspace:*",
     "@stack-atlas/extractor-screenshots": "workspace:*",

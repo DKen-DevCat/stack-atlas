@@ -95,7 +95,111 @@ export function mergePartialNodeV2(a: PartialNodeV2, b: PartialNodeV2): PartialN
   return out;
 }
 
-/** v2 の部分グラフの和（箱は id、線は (from, to)、型は id、groups はキーで、先に出たものを残す。refs は箱ごとの和） */
+/** 契約の出どころ（D65。言語アダプタの型より正） */
+const CONTRACT_SOURCES = new Set(['openapi', 'sql']);
+const isContractType = (t: NamedType) => CONTRACT_SOURCES.has(t.source ?? '');
+const locationOf = (t: NamedType) =>
+  t.file ? (t.line !== undefined ? `${t.file}:${t.line}` : t.file) : undefined;
+
+/**
+ * 同じ id の型 2 つから 1 つを選ぶ（D65。2026-11-09 8-2b の決定）: 契約（openapi・sql）が言語アダプタ（typescript・go）に
+ * 勝つ。同じ側どうしは先のもの。meta は勝った側が先の和（配列は連結）、負けた側の宣言の場所（`file:line`）は勝った側の
+ * `meta.copies` に足す（手で組んだ例の `type:Transaction` の copies と同じ。他言語の写しの場所）
+ */
+export function pickNamedType(first: NamedType, second: NamedType): NamedType {
+  const swap = isContractType(second) && !isContractType(first);
+  const win = swap ? second : first;
+  const lose = swap ? first : second;
+  const out: NamedType = clone(win);
+  if (lose.meta || win.meta)
+    out.meta = deepMerge(win.meta ?? {}, lose.meta ?? {}, { prefer: 'target' });
+  const loc = locationOf(lose);
+  if (loc && lose.file !== win.file) {
+    const copies = Array.isArray(out.meta?.copies) ? (out.meta.copies as unknown[]) : [];
+    if (!copies.includes(loc)) out.meta = { ...(out.meta ?? {}), copies: [...copies, loc] };
+  }
+  return out;
+}
+
+/** 型の並びの和（id で 1 つ。pickNamedType。順は先に出た位置） */
+export function mergeNamedTypes(a: readonly NamedType[], b: readonly NamedType[]): NamedType[] {
+  const out = a.map((t) => clone(t));
+  const at = new Map(out.map((t, i) => [t.id, i]));
+  for (const t of b) {
+    const i = at.get(t.id);
+    if (i === undefined) {
+      at.set(t.id, out.length);
+      out.push(clone(t));
+    } else out[i] = pickNamedType(out[i]!, t);
+  }
+  return out;
+}
+
+/** 言語アダプタの箱 id の衝突で付け替えたもの */
+export interface RenamedBoxV2 {
+  from: string;
+  to: string;
+  /** 先に同じ id を出した持ち主（`<抽出器>@<repo>`） */
+  other: string;
+}
+
+/**
+ * 言語アダプタの箱 id の衝突（2026-11-09 8-2b レビュー C6）: 先に別の持ち主（別の言語アダプタか、同じアダプタの別の
+ * repo）が出した箱と同じ id の箱を、後の方だけ `<種類>:<file>~<名前>`（TS の衝突の退避と同じ形。file が無ければ
+ * `~2` …）に付け替える。part の線・refs・groups の参照も付け替える。owners（箱 id → 持ち主）に part の箱を足す。
+ * 黙って mergePartialV2 で混ぜると、無関係な箱（TS の `fn:api.list` と Go の根のパッケージ api の list）の口が混ざる
+ */
+export function disambiguateV2(
+  part: PartialGraphV2,
+  owners: Map<string, string>,
+  owner: string,
+): { part: PartialGraphV2; renamed: RenamedBoxV2[] } {
+  const renamed: RenamedBoxV2[] = [];
+  const map = new Map<string, string>();
+  const taken = new Set([...owners.keys(), ...part.nodes.map((n) => n.id)]);
+  for (const n of part.nodes) {
+    const other = owners.get(n.id);
+    if (other === undefined || other === owner || map.has(n.id)) continue;
+    const colon = n.id.indexOf(':');
+    const kind = n.id.slice(0, colon + 1);
+    const rest = n.id.slice(colon + 1);
+    const base = n.file ? `${kind}${n.file}~${rest}` : `${kind}${rest}~2`;
+    let id = base;
+    for (let k = 2; taken.has(id); k++) id = `${base}_${k}`;
+    taken.add(id);
+    map.set(n.id, id);
+    renamed.push({ from: n.id, to: id, other });
+  }
+  let out = part;
+  if (map.size) {
+    const box = (ref: string) => {
+      const hash = ref.indexOf('#');
+      const b = hash < 0 ? ref : ref.slice(0, hash);
+      const to = map.get(b);
+      return to === undefined ? ref : to + ref.slice(b.length);
+    };
+    out = {
+      ...part,
+      nodes: part.nodes.map((n) => (map.has(n.id) ? { ...n, id: map.get(n.id)! } : n)),
+      wires: part.wires.map((w) => ({ ...w, from: box(w.from), to: box(w.to) })),
+    };
+    if (part.refs)
+      out.refs = Object.fromEntries(
+        Object.entries(part.refs).map(([k, list]) => [map.get(k) ?? k, list.map(box)]),
+      );
+    if (part.groups)
+      out.groups = Object.fromEntries(
+        Object.entries(part.groups).map(([k, v]) => [map.get(k) ?? k, v]),
+      );
+  }
+  for (const n of out.nodes) if (!owners.has(n.id)) owners.set(n.id, owner);
+  return { part: out, renamed };
+}
+
+/**
+ * v2 の部分グラフの和（箱は id、線は (from, to)、groups はキーで、先に出たものを残す。型は id で、契約が言語アダプタに
+ * 勝つ（D65）。refs は箱ごとの和）
+ */
 export function mergePartialV2(
   parts: ReadonlyArray<PartialGraphV2 | undefined>,
 ): PartialGraphV2 | undefined {
@@ -103,7 +207,7 @@ export function mergePartialV2(
   if (!present.length) return undefined;
   const nodes = new Map<string, PartialNodeV2>();
   const wires = new Map<string, WireV2>();
-  const types = new Map<string, NamedType>();
+  let types: NamedType[] = [];
   let groups: Record<string, string> | undefined;
   const refs = new Map<string, Set<string>>();
   for (const p of present) {
@@ -117,14 +221,14 @@ export function mergePartialV2(
       nodes.set(n.id, prev ? mergePartialNodeV2(prev, n) : clone(n));
     }
     for (const w of p.wires) if (!wires.has(wireKey(w))) wires.set(wireKey(w), clone(w));
-    for (const t of p.types ?? []) if (!types.has(t.id)) types.set(t.id, clone(t));
+    if (p.types?.length) types = mergeNamedTypes(types, p.types);
     for (const [k, v] of Object.entries(p.groups ?? {})) {
       groups ??= {};
       if (!(k in groups)) groups[k] = v;
     }
   }
   const out: PartialGraphV2 = { nodes: [...nodes.values()], wires: [...wires.values()] };
-  if (types.size) out.types = [...types.values()];
+  if (types.length) out.types = types;
   if (groups) out.groups = groups;
   if (refs.size) out.refs = Object.fromEntries([...refs].map(([k, v]) => [k, [...v]]));
   return out;

@@ -5,7 +5,8 @@
  * 結果は v1（`graph`。3D の地図と既存の呼び出し元）と v2（`graphV2`。配線図。`stack-atlas build` の graph.json）の両方。
  * 抽出器は v1 の部分グラフを出し続け、v2 は v1 を upgradeGraph で変換して作る（D38）。
  * 言語アダプタ（ts-types など）と契約（openapi）は v2 の部分グラフ（PartialGraph.v2）も出す。変換した v2 に
- * mergeV2 → join（合流）→ overrides の線の削除 → cleanupV2（細かい方が勝つ掃除）→ detectBroken の順で重ねる
+ * mergeV2 → join（合流。クライアント側・サーバー側・table）→ overrides の線の削除 → cleanupV2（細かい方が勝つ掃除）
+ * → detectBroken の順で重ねる
  * （docs/17 §2・§7 #4・#5、D50・D53）。overrides.yaml は 1 回だけ読み、v1 と v2 の両方に当てる
  *
  * 複数リポジトリ（config.repos、docs/12 §3.2）: 抽出器ごとに、repo を宣言順に回す
@@ -32,6 +33,7 @@ import { gitCommit, gitRemote } from './git.js';
 import { assignLayers } from './layers.js';
 import { silentLogger } from './logger.js';
 import { mergePartialGraphs } from './merge.js';
+import { disambiguateV2 } from './v2-parts.js';
 import {
   cleanupV2,
   coverageV2,
@@ -39,7 +41,7 @@ import {
   removeOverrideWiresV2,
   type CoverageV2,
 } from './merge-v2.js';
-import { joinEndpoints } from './join.js';
+import { joinAll, type JoinReport } from './join.js';
 import { writeBroken } from './broken-v2.js';
 import { addExtractorName } from './meta.js';
 import { completeNodes } from './nodes.js';
@@ -125,9 +127,15 @@ export interface V2AdapterReport {
   /** v2 を出した契約の抽出器（openapi・sql。Extractor.v2Role が contract） */
   contracts: string[];
   coverage: CoverageV2;
-  /** endpoint と照合できた / できなかった HTTP の呼び出し */
+  /** endpoint と照合できた（か、OpenAPI が無く handler と直接結んだ）/ できなかった HTTP の呼び出し */
   joined: number;
   unjoined: string[];
+  /**
+   * 合流の内訳（docs/17 §3.4。8-2b）: クライアント側（endpoint と結んだ呼び出し・handler と直接結んだもの・必須の役割の
+   * 欠け D59）、サーバー側（endpoint と handler の対・endpoint に無い handler のルート・handler の無い endpoint・login）、
+   * table（SQL の項目・テーブルの無いもの）
+   */
+  join: Pick<JoinReport, 'client' | 'server' | 'table'>;
   /** group にした v1 の箱 */
   groups: number;
   /** アダプタの線で置き換えた箱の単位の線 */
@@ -166,6 +174,8 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
 
   // 1. 抽出（抽出器の順 × repo の宣言順。後続は先行の結果を upstream で読める）
   let merged: PartialGraph = { nodes: [], edges: [] };
+  /** 言語アダプタの箱 id → 持ち主（`<抽出器>@<repo>`。衝突の検出） */
+  const v2Owners = new Map<string, string>();
   for (const ex of opts.extractors) {
     const report: ExtractorReport = {
       name: ex.name,
@@ -195,6 +205,16 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
           continue;
         }
         const part = prefixRepoFiles(await ex.extract(ctx, merged), ctx);
+        // 言語アダプタの箱 id の衝突（別のアダプタ・別の repo が先に出した id）は、後の方を file で修飾する（C6）
+        if (part.v2 && (ex.v2Role ?? 'language') === 'language') {
+          const d = disambiguateV2(part.v2, v2Owners, `${ex.name}@${ctx.repoName}`);
+          part.v2 = d.part;
+          for (const r of d.renamed) {
+            const message = `v2: 箱 id ${r.from} が ${r.other} と ${label} で重なったので、${label} の方を ${r.to} にしました`;
+            log.warn(message);
+            issues.push({ level: 'warning', path: `v2:node:${r.to}`, message });
+          }
+        }
         const stamped: PartialGraph = {
           ...part,
           nodes: part.nodes.map((n) => addExtractorName(clone(n), ex.name)),
@@ -313,18 +333,24 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
       const adapters = withV2.filter((n) => roleOf.get(n) !== 'contract');
       const contracts = withV2.filter((n) => roleOf.get(n) === 'contract');
       const state = mergeV2(graphV2, merged.v2, { overrides, removedNodes, adapters, contracts });
-      const joined = joinEndpoints(state.graph);
+      // endpoint を受け持つインフラ（v1 の deploy。handler が複数合うときに host で選ぶ。§7 #11）
+      const endpointHosts = new Map<string, string[]>();
+      for (const e of graph.edges)
+        if (e.kind === 'deploy')
+          endpointHosts.set(e.to, [...(endpointHosts.get(e.to) ?? []), e.from]);
+      const joined = joinAll(state.graph, { endpointHosts, skip: new Set(state.groups.keys()) });
       removeOverrideWiresV2(state, overrides);
-      const cleaned = cleanupV2(state);
+      const cleaned = cleanupV2(state, { pairs: joined.pairs });
       issues.push(...joined.issues, ...cleaned.issues);
       graphV2 = cleaned.graph;
-      const broken = writeBroken(graphV2);
+      const broken = writeBroken(graphV2, { fixed: joined.fixedBroken });
       result.v2Adapters = {
         adapters,
         contracts,
         coverage: coverageV2(graphV2),
-        joined: joined.matched,
-        unjoined: joined.unmatched,
+        joined: joined.client.matched + joined.client.direct,
+        unjoined: joined.client.unmatched,
+        join: { client: joined.client, server: joined.server, table: joined.table },
         groups: cleaned.groups,
         replaced: cleaned.replaced,
         undetermined: cleaned.undetermined,

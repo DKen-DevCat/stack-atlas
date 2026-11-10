@@ -120,17 +120,37 @@ export function formatBuildSummary(
 
 /**
  * 言語アダプタの自動率（docs/17 §4）: 項目（unknown）、線（項目の単位 / 箱の単位、うち呼び出しでない参照）、
- * links（exact / crude）と不透明な箱、合流と掃除の数
+ * links（exact / crude）と不透明な箱、合流（クライアント側・サーバー側・table と、結べないもの）と掃除の数
  */
 export function formatAdapterSummary(a: V2AdapterReport): string[] {
   const c = a.coverage;
+  const { client, server, table } = a.join;
+  /** 内訳（0 のものは書かない。全部 0 なら括弧ごと書かない） */
+  const detail = (parts: Array<[string, number]>) => {
+    const xs = parts.filter(([, n]) => n > 0).map(([what, n]) => `${what} ${n}`);
+    return xs.length ? `（${xs.join('、')}）` : '';
+  };
   const lines = [
     `言語アダプタ（${a.adapters.join(', ') || 'なし'}）${a.contracts.length ? `・契約（${a.contracts.join(', ')}）` : ''}: 項目 ${c.items}（unknown ${c.unknownItems}）、` +
       `線 ${c.wires}（項目 ${c.itemWires} / 箱の単位 ${c.boxWires}、うち呼び出しでない参照 ${c.refWires}）、` +
       `links ${c.links}（exact ${c.exactLinks} / crude ${c.crudeLinks}）・不透明な箱 ${c.opaqueBoxes}`,
-    `  合流: endpoint と結んだ HTTP の呼び出し ${a.joined}${a.unjoined.length ? `、結べない ${a.unjoined.length}` : ''}。` +
-      `group にした v1 の箱 ${a.groups}、項目の線で置き換えた箱の単位の線 ${a.replaced}` +
-      `${a.undetermined ? `、付け替え先を決められない線 ${a.undetermined}（group の中の全部へ）` : ''}、食い違いのある線 ${a.broken}`,
+    `  合流: クライアント側 ${client.matched + client.direct}` +
+      detail([
+        ['endpoint', client.direct ? client.matched : 0],
+        ['handler へ直接', client.direct],
+        ['結べない', client.unmatched.length],
+        ['必須の役割の欠け', client.missing],
+      ]) +
+      `、サーバー側 ${server.matched}` +
+      detail([
+        ['endpoint に無い handler のルート', server.unmatched.length],
+        ['handler の無い endpoint', server.withoutHandler.length],
+        ['login の分岐', server.login],
+      ]) +
+      `、table ${table.matched}` +
+      detail([['テーブルの無い SQL', table.unmatched.length]]),
+    `  掃除: group にした v1 の箱 ${a.groups}、項目の線で置き換えた箱の単位の線 ${a.replaced}` +
+      `、付け替え先を決められない線 ${a.undetermined}${a.undetermined ? '（group の中の全部へ）' : ''}、食い違いのある線 ${a.broken}`,
   ];
   return lines;
 }
