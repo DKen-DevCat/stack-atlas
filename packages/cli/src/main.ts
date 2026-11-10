@@ -9,20 +9,22 @@ import { runValidate } from './commands/validate.js';
 export const USAGE = `使い方: stack-atlas <コマンド> [オプション]
 
 コマンド:
-  build <repo> [-o <outDir>] [--with-viewer] [--no-screenshots] [--verbose]
-      リポジトリを解析して <outDir>（既定 <repo>/.stack-atlas/out）に graph.json・issues.json・memos.json を書く。
-      --with-viewer でビューアも同梱する。検証エラーがあれば終了コード 1
+  build <repo> [-o <outDir>] [--with-viewer] [--no-screenshots] [--v1] [--verbose]
+      リポジトリを解析して <outDir>（既定 <repo>/.stack-atlas/out）に graph.json（v2。配線図）・
+      graph.v1.json（v1。3D の地図）・issues.json・memos.json を書く。
+      --with-viewer でビューアも同梱する。--v1 は graph.json に v1 だけを書く（従来の出力）。検証エラーがあれば終了コード 1
   validate <graph.json...>
-      graph.json をスキーマと参照整合性で検証する
+      graph.json をスキーマと参照整合性で検証する（version 1 / 2 を見て検証器を選ぶ）
   serve <outDir> [--port 4173] [--host 127.0.0.1] [--repo <repo>] [--allowed-host <name>]...
       outDir を配信する（index.html が無ければワークスペースのビューアを使う）。
       --repo を付けると、ビューアからのメモ保存（POST /api/memos）を <repo>/.stack-atlas/memos.json に書き戻す。
       Host ヘッダが localhost / 127.0.0.1 / --host / --allowed-host 以外なら 403 にする
   diff <prev.json> <next.json>
-      2 つの graph.json の差分（追加・削除・変更）を表示する
+      2 つの graph.json の差分（追加・削除・変更）を表示する。どちらかが v2 なら箱・線・型・項目で比べる
+      （v1 の側は v2 に変換して比べる）
   init-flows <repo> [--out <file>] [--force]
       いまのグラフから flows.yaml（既定 <repo>/flows.yaml）の雛形（MISS / HIT / 無効化）を書き出す。
-      既存のファイルは --force が無ければ上書きしない
+      既存のファイルは --force が無ければ上書きしない。graph.json（v2）では各フローの最初の箱が views の始点になる
 `;
 
 function parse(
@@ -49,11 +51,12 @@ export async function main(argv: string[]): Promise<number> {
           out: { type: 'string', short: 'o' },
           'with-viewer': { type: 'boolean' },
           screenshots: { type: 'boolean', default: true },
+          v1: { type: 'boolean' },
           verbose: { type: 'boolean', short: 'v' },
         });
         if (positionals.length !== 1) {
           console.error(
-            '使い方: stack-atlas build <repo> [-o <outDir>] [--with-viewer] [--no-screenshots]',
+            '使い方: stack-atlas build <repo> [-o <outDir>] [--with-viewer] [--no-screenshots] [--v1]',
           );
           return 2;
         }
@@ -62,6 +65,7 @@ export async function main(argv: string[]): Promise<number> {
           outDir: values.out as string | undefined,
           withViewer: Boolean(values['with-viewer']),
           screenshots: values.screenshots !== false,
+          v1Only: Boolean(values.v1),
           log: createConsoleLogger({ level: values.verbose ? 'debug' : 'info' }),
         });
       }

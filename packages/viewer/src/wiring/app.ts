@@ -13,6 +13,7 @@ import {
   type VariantState,
   type WiringLayout,
 } from '@stack-atlas/wiring';
+import { createAltLink, type AltLink } from '../graph/altLink';
 import { h } from '../ui/dom';
 import { Player, type BallPosition } from './balls';
 import { createCanvas, type Canvas } from './canvas';
@@ -55,6 +56,11 @@ export interface WiringApp {
   readonly index: GraphIndex;
   readonly layout: WiringLayout;
   readonly debug: WiringDebug;
+  /**
+   * 左上の題名の横に、隣の graph（build の graph.v1.json = 3D の地図）を開く小さなリンクを出す。null で消す。
+   * 凡例やバッジは置かない（docs/15 §3.6 の表示の規則）。文字のリンク 1 つだけ
+   */
+  setAltLink(link: AltLink | null): void;
   dispose(): void;
 }
 
@@ -108,10 +114,11 @@ export function mountWiring(opts: WiringOptions): WiringApp {
   play.hidden = true;
   seek.hidden = true;
   const name = opts.graph.project?.name ?? opts.source;
+  const alt = createAltLink();
   const root = h(
     'div',
     { class: 'wv' },
-    h('div', { class: 'wv-top' }, 'Stack Atlas — 配線図', h('small', {}, name)),
+    h('div', { class: 'wv-top' }, 'Stack Atlas — 配線図', alt.el, h('small', {}, name)),
     stage,
     h('div', { class: 'wv-speed' }, play, seek, speed, speedLabel),
   );
@@ -228,6 +235,7 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     index,
     layout,
     debug,
+    setAltLink: (link) => alt.set(link),
     dispose() {
       offInteraction();
       player.dispose();

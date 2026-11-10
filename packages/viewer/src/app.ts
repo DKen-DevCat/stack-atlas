@@ -12,6 +12,7 @@ import {
   type DiffMarks,
   type GraphDiff,
 } from './graph/diff';
+import type { AltLink } from './graph/altLink';
 import type { GraphModel } from './graph/model';
 import { resolveAssetUrl, type LoadResult } from './graph/load';
 import { placeGhosts, plateWithGhosts } from './layout/ghosts';
@@ -315,6 +316,11 @@ export class Viewer {
       if (!this.disposed) this.screens.forEach((s) => s.screen.redraw());
     });
     this.raf = requestAnimationFrame(this.loop);
+  }
+
+  /** 題名の横の、隣の graph（build の graph.json = 配線図）へのリンク（main.ts が有無を確かめてから呼ぶ） */
+  setAltLink(link: AltLink | null): void {
+    this.topbar.setAltLink(link);
   }
 
   dispose(): void {

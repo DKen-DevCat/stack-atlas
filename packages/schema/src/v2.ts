@@ -97,7 +97,23 @@ export interface ProjectV2 {
   /** ISO 8601 date-time */
   generatedAt?: string;
   sources?: string[];
+  /**
+   * graph を作ったもの。`v2: "upgrade"` は core の upgradeGraph が v1 から変換した箱の単位の graph（docs/16 §10）。
+   * ビューアはこの印のある graph だけ、箱の単位で必ず出る警告を一覧から畳む
+   */
+  generator?: { v2?: string; [key: string]: unknown };
   [key: string]: unknown;
+}
+
+/** upgradeGraph が作った v2 の印（`project.generator.v2` の値） */
+export const UPGRADE_GENERATOR = 'upgrade';
+
+/** v2 の graph が upgradeGraph で v1 から作ったもの（箱の単位）か（`project.generator.v2 === "upgrade"`） */
+export function isUpgradedGraph(g: { project?: ProjectV2 } | undefined): boolean {
+  const gen: unknown = g?.project?.generator;
+  return (
+    typeof gen === 'object' && gen !== null && (gen as { v2?: unknown }).v2 === UPGRADE_GENERATOR
+  );
 }
 
 export interface NamedType {

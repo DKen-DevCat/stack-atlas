@@ -31,15 +31,21 @@ jobs:
       - run: pnpm build
       - run: pnpm validate examples/race-site.graph.json examples/fixture-poly.today.v2.json
 
-      # フィクスチャ（単一 repo / 2 repo）を実際にビルドして graph.json を検証する
+      # フィクスチャ（単一 repo / 2 repo）を実際にビルドして検証する。graph.json は v2（配線図）、
+      # graph.v1.json は v1（3D の地図）。validate は version を見て検証器を選ぶ（docs/16 §10）
       - run: pnpm atlas build examples/fixture-repo -o out/fixture-repo --no-screenshots
       - run: pnpm atlas build examples/fixture-poly -o out/fixture-poly --no-screenshots
-      - run: pnpm validate out/fixture-repo/graph.json out/fixture-poly/graph.json
+      - run: >-
+          pnpm validate
+          out/fixture-repo/graph.json out/fixture-repo/graph.v1.json
+          out/fixture-poly/graph.json out/fixture-poly/graph.v1.json
       - name: Upload graphs
         uses: actions/upload-artifact@v4
         with:
           name: graphs
-          path: out/**/graph.json
+          path: |
+            out/**/graph.json
+            out/**/graph.v1.json
 
       # ビューアのスモークテスト（ヘッドレス。WebGL は SwiftShader）
       - name: Viewer e2e

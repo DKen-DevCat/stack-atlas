@@ -3,6 +3,7 @@
  * ラベル（すべて／関連のみ／なし）、検索ボックス、差分のピル（?prev= があるとき）、孤立メモ（あるとき）
  */
 import type { Flow } from '@stack-atlas/schema';
+import { createAltLink, type AltLink } from '../graph/altLink';
 import type { LabelMode } from '../state';
 import { h } from './dom';
 
@@ -35,6 +36,8 @@ export interface Topbar {
   /** 孤立メモの件数（0 なら隠す） */
   setOrphanCount(n: number): void;
   setLabelMode(mode: LabelMode): void;
+  /** 題名の横に、隣の graph（build の graph.json = 配線図）を開く小さなリンクを出す。null で消す */
+  setAltLink(link: AltLink | null): void;
 }
 
 function segment(
@@ -62,7 +65,14 @@ function segment(
 }
 
 export function createTopbar(o: TopbarOptions): Topbar {
-  const title = h('h1', {}, 'Stack Atlas', o.projectName ? h('small', {}, o.projectName) : null);
+  const alt = createAltLink();
+  const title = h(
+    'h1',
+    {},
+    'Stack Atlas',
+    alt.el,
+    o.projectName ? h('small', {}, o.projectName) : null,
+  );
   const explode = segment(
     [
       { label: 'レイヤー展開', value: '1' },
@@ -217,5 +227,6 @@ export function createTopbar(o: TopbarOptions): Topbar {
       orphanBtn.textContent = `孤立メモ (${n})`;
     },
     setLabelMode: (m) => labels.set(m),
+    setAltLink: (link) => alt.set(link),
   };
 }

@@ -40,5 +40,8 @@
     "@stack-atlas/extractor-terraform": "workspace:*",
     "@stack-atlas/extractor-ts-imports": "workspace:*",
     "@stack-atlas/schema": "workspace:*"
+  },
+  "devDependencies": {
+    "@stack-atlas/wiring": "workspace:*"
   }
 }

@@ -3,10 +3,12 @@
  * ここにある関数は DOM 要素に触らない（fetch と File は使う）。画面への表示は ui/ 側。
  */
 import {
+  isUpgradedGraph,
   validateGraph,
   validateGraphV2,
   type Graph,
   type GraphV2,
+  type ItemV2,
   type ValidationIssue,
 } from '@stack-atlas/schema';
 
@@ -124,6 +126,43 @@ export async function loadGraphFromFile(file: Blob & { name?: string }): Promise
   } catch (e) {
     return fail(name, `ファイルを読めません（${name}）: ${errMsg(e)}`);
   }
+}
+
+/** 警告の path `/nodes/<i>/ports/<p>/items(<口>/<項目>)` */
+const ITEM_PATH = /^\/nodes\/(\d+)\/ports\/\d+\/items\(([^)]+)\)$/;
+
+/**
+ * 箱の単位の v2（v1 から変換した graph.json。docs/16 §10）なら必ず出る警告か: 口の単位の線・項目と、型の分からない
+ * 置き場の項目（type も wireType も unknown。変換が置く `_` や cache の key / value）の wireType unknown。
+ * 配線図はこれを一覧に出さない（全部の箱と線に出るので、読むべき警告が埋もれる）。`stack-atlas validate` では全部出る
+ */
+export function isBoxLevelWarning(issue: ValidationIssue, graph: GraphV2 | undefined): boolean {
+  if (issue.level !== 'warning') return false;
+  if (issue.message.includes('口の単位')) return true;
+  if (!graph || !issue.message.includes('wireType が unknown')) return false;
+  const m = ITEM_PATH.exec(issue.path);
+  const node = m ? graph.nodes[Number(m[1])] : undefined;
+  if (!m || !node) return false;
+  const local = m[2]!;
+  const slash = local.indexOf('/');
+  const port = node.ports.find((p) => p.id === local.slice(0, slash));
+  let items = port?.items;
+  let item: ItemV2 | undefined;
+  for (const id of local.slice(slash + 1).split('.')) {
+    item = items?.find((x) => x.id === id);
+    items = item?.children;
+  }
+  return item?.type === 'unknown';
+}
+
+/**
+ * 配線図の検証の一覧に出す問題。v1 から変換した箱の単位の graph（`project.generator.v2: "upgrade"`。build の
+ * graph.json）だけ、箱の単位で必ず出る警告（isBoxLevelWarning）を畳む。手書きや言語アダプタの v2 では、
+ * 口の単位の線や wireType unknown も読むべき警告なので全部出す
+ */
+export function wiringIssues(res: Pick<LoadResult, 'issues' | 'graphV2'>): ValidationIssue[] {
+  if (!isUpgradedGraph(res.graphV2)) return res.issues;
+  return res.issues.filter((i) => !isBoxLevelWarning(i, res.graphV2));
 }
 
 /** 検証結果の要約（件数） */

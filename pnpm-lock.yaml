@@ -251,6 +251,10 @@ importers:
       '@stack-atlas/schema':
         specifier: workspace:*
         version: link:../schema
+    devDependencies:
+      '@stack-atlas/wiring':
+        specifier: workspace:*
+        version: link:../wiring
 
   packages/core:
     dependencies:
