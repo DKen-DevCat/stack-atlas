@@ -1,0 +1,4 @@
+{
+  "infra:next": "メモリ1024MB / standaloneビルド。コールドスタートを要観察",
+  "type:RaceResult": "rank を number で統一したい（CMS側は string で来る）"
+}

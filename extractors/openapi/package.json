@@ -1,0 +1,31 @@
+{
+  "name": "@stack-atlas/extractor-openapi",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Stack Atlas の OpenAPI 抽出器（操作 → endpoint:、components.schemas → type:）",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "@stack-atlas/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@stack-atlas/core": "workspace:*",
+    "yaml": "^2.8.0"
+  },
+  "devDependencies": {
+    "@stack-atlas/schema": "workspace:*"
+  }
+}

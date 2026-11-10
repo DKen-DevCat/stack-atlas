@@ -1,0 +1,146 @@
+# Stack Atlas — 解析対象リポジトリ用の GitHub Actions テンプレート（docs/11-sharing.md）
+#
+# 使い方:
+#   1. このファイルを「解析対象」リポジトリの .github/workflows/stack-atlas.yml にコピーする
+#   2. 「★ 要変更」と書いた箇所（<...> のプレースホルダ）を自分の環境の値に置き換える
+#   3. AWS 側に GitHub OIDC 用の IAM ロールを作り、S3 への書き込みと CloudFront の無効化を許可する
+#
+# やること:
+#   checkout（対象リポジトリ + Stack Atlas 本体）→ Stack Atlas をビルド
+#   → `stack-atlas build . -o out --with-viewer`（graph.json・memos.json・スクショ・ビューアを out/ に出す）
+#   → 前回の graph.json を prev/ に退避（差分表示 ?prev= 用）→ out/ を S3 に同期 → CloudFront を無効化
+#
+# 外部 SaaS は使わない。ソースコードは Actions のランナーの中だけで解析し、出力（静的ファイル）だけを自前の S3 に置く。
+
+name: stack-atlas
+
+on:
+  push:
+    branches: [main] # ★ 要変更: マップを更新したいブランチ
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write # OIDC で AWS のロールを引き受けるために必要
+
+concurrency:
+  group: stack-atlas
+  cancel-in-progress: true
+
+env:
+  # ★ 要変更: Stack Atlas 本体のリポジトリと、使うタグ／コミット（固定を推奨）
+  STACK_ATLAS_REPO: <OWNER>/project-map
+  STACK_ATLAS_REF: <TAG_OR_COMMIT_SHA>
+  # ★ 要変更: 配信先
+  AWS_REGION: ap-northeast-1
+  AWS_ROLE_ARN: arn:aws:iam::<AWS_ACCOUNT_ID>:role/<STACK_ATLAS_DEPLOY_ROLE>
+  S3_BUCKET: <BUCKET_NAME>
+  S3_PREFIX: atlas # s3://<BUCKET_NAME>/atlas/ に置く（ルートに置くなら空文字）
+  CLOUDFRONT_DISTRIBUTION_ID: <DISTRIBUTION_ID>
+
+jobs:
+  atlas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # ---- 解析対象（このリポジトリ）----
+      - name: 対象リポジトリを checkout
+        uses: actions/checkout@v4
+        with:
+          path: target
+
+      # ---- Stack Atlas 本体 ----
+      # 方法 A（このテンプレートの既定）: 本体を別ディレクトリに checkout してビルドし、bin を直接呼ぶ。
+      #   本体リポジトリが private なら、読み取り権限のあるトークンを with.token に渡す。
+      #
+      # 方法 B: 対象リポジトリの devDependencies に git 依存として入れる。
+      #   pnpm add -D "github:<OWNER>/project-map#<TAG>&path:/packages/cli"
+      #   （ワークスペース内の依存 @stack-atlas/* も解決できる形で公開されている必要がある。
+      #    npm レジストリ／社内レジストリに公開したら `pnpm add -D @stack-atlas/cli` でよい）
+      #   その場合、下の「Stack Atlas を checkout / ビルド」を消し、build の行を
+      #   `pnpm --dir target exec stack-atlas build . -o ../out --with-viewer` にする。
+      #
+      # 方法 C: `pnpm dlx` で一時的に入れて実行する（レジストリに公開してある場合）。
+      #   pnpm dlx @stack-atlas/cli build target -o out --with-viewer
+      - name: Stack Atlas を checkout
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.STACK_ATLAS_REPO }}
+          ref: ${{ env.STACK_ATLAS_REF }}
+          path: stack-atlas
+          # token: ${{ secrets.STACK_ATLAS_READ_TOKEN }} # ★ 本体が private のとき
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: stack-atlas/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: stack-atlas/pnpm-lock.yaml
+
+      - name: Stack Atlas をビルド
+        working-directory: stack-atlas
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      # スクショ抽出器（screenshots）を使うときだけ。使わないなら build に --no-screenshots を付けてこのステップを消す
+      - name: Playwright の Chromium を入れる
+        working-directory: stack-atlas
+        run: pnpm --filter @stack-atlas/extractor-screenshots exec playwright install --with-deps chromium
+
+      # ---- 抽出 ----
+      # 対象アプリの依存が必要な抽出器（ts-imports の型解決など）があれば、先に target で install しておく:
+      #   - run: pnpm install --frozen-lockfile
+      #     working-directory: target
+      - name: graph.json を作る（ビューア同梱）
+        run: node stack-atlas/packages/cli/bin/stack-atlas.js build target -o out --with-viewer
+        # target/.stack-atlas/memos.json（Git で共有しているメモ）は out/memos.json にコピーされる
+
+      # ---- 配信（S3 + CloudFront）----
+      - name: AWS の認証（OIDC）
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # 今配信している graph.json を prev/graph.json として残す。
+      # ビューアを ?graph=graph.json&prev=prev/graph.json で開くと、前回からの追加・削除・変更が色分けされる
+      - name: 前回の graph.json を prev/ に退避
+        run: |
+          mkdir -p out/prev
+          aws s3 cp "s3://${S3_BUCKET}/${S3_PREFIX}/graph.json" out/prev/graph.json || echo "前回の graph.json はありません（初回）"
+
+      - name: S3 に同期
+        run: |
+          # graph.json / memos.json / index.html はキャッシュさせない（毎回更新されるため）
+          aws s3 sync out "s3://${S3_BUCKET}/${S3_PREFIX}/" --delete \
+            --exclude "graph.json" --exclude "memos.json" --exclude "index.html" --exclude "prev/*"
+          for f in graph.json memos.json index.html prev/graph.json; do
+            if [ -f "out/$f" ]; then
+              aws s3 cp "out/$f" "s3://${S3_BUCKET}/${S3_PREFIX}/$f" --cache-control "no-cache"
+            fi
+          done
+
+      - name: CloudFront を無効化
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
+            --paths "/${S3_PREFIX}/index.html" "/${S3_PREFIX}/graph.json" "/${S3_PREFIX}/memos.json" "/${S3_PREFIX}/prev/*"
+
+      - name: URL をサマリに出す
+        run: |
+          # ★ 要変更: CloudFront のドメイン（独自ドメインならそれ）
+          BASE="https://<CLOUDFRONT_DOMAIN>/${S3_PREFIX}"
+          {
+            echo "### Stack Atlas"
+            echo "- マップ: ${BASE}/index.html?graph=graph.json"
+            echo "- 前回との差分: ${BASE}/index.html?graph=graph.json&prev=prev/graph.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+# 補足:
+# - 社内だけに見せる場合は、CloudFront に署名付き Cookie / Lambda@Edge の認証 / WAF の IP 制限などを付ける。
+#   S3 バケットは公開せず、CloudFront の OAC からだけ読めるようにする。
+# - S3 を使わず社内サーバーで見せる場合は、out/ をそのサーバーに置いて
+#   `stack-atlas serve out --host 0.0.0.0 --port 4173` で配信できる（--repo を付けるとメモをリポジトリに書き戻せる）。

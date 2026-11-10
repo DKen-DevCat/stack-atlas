@@ -1,0 +1,141 @@
+openapi: 3.0.3
+info:
+  title: Expense Tracker API
+  version: 1.0.0
+paths:
+  /today:
+    get:
+      operationId: getToday
+      summary: 今日の合計と明細
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Today"
+  /days:
+    get:
+      operationId: getDays
+      summary: 月の日別合計
+      parameters:
+        - name: month
+          in: query
+          required: true
+          schema: { type: string, example: "2026-11" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: { type: integer, format: int64 }
+  /entries:
+    get:
+      operationId: getEntries
+      summary: 直近の明細
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Entry"
+  /transactions:
+    get:
+      operationId: listTransactions
+      summary: 支出の一覧
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Transaction"
+    post:
+      operationId: createTransaction
+      summary: 支出を追加
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Transaction"
+      responses:
+        "201":
+          description: Created
+  /transactions/{id}:
+    delete:
+      operationId: deleteTransaction
+      summary: 支出を削除
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: No Content
+  /push/subscriptions:
+    post:
+      operationId: subscribePush
+      summary: Web Push を購読
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushSubscription"
+      responses:
+        "201":
+          description: Created
+    delete:
+      operationId: unsubscribePush
+      summary: Web Push の購読解除
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushSubscription"
+      responses:
+        "204":
+          description: No Content
+components:
+  schemas:
+    Today:
+      type: object
+      required: [total, entries]
+      properties:
+        total: { type: integer, format: int64 }
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/Entry"
+    Entry:
+      type: object
+      required: [id, merchant, amount]
+      properties:
+        id: { type: string }
+        merchant: { type: string }
+        amount: { type: integer, format: int64 }
+    Transaction:
+      type: object
+      required: [id, merchant, amount, occurredAt]
+      properties:
+        id: { type: string }
+        merchant: { type: string }
+        amount: { type: integer, format: int64 }
+        occurredAt: { type: string, format: date-time }
+    PushSubscription:
+      type: object
+      required: [endpoint, p256dh, auth]
+      properties:
+        endpoint: { type: string }
+        p256dh: { type: string }
+        auth: { type: string }

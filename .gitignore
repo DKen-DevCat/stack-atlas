@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+*.tsbuildinfo
+.DS_Store
+packages/viewer/public/samples/
+packages/viewer/e2e/__screenshots__/
+out/

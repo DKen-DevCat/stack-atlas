@@ -1,0 +1,47 @@
+# データフロー定義。steps は [node, text] の配列（docs/09 §3.2）
+- id: miss
+  name: 閲覧 MISS
+  tone: default
+  steps:
+    - [actor:user, "/races/42 をリクエスト"]
+    - [infra:cdn, "MISS → オリジン（Lambda）へ"]
+    - [infra:next, "Next.js 起動（コールドスタートの可能性）"]
+    - ["route:/races/[id]", "ISRキャッシュなし → ページを再生成"]
+    - [lib:apiClient, 'api.getRace("42")（fetch cache 60s / tag race-42）']
+    - [infra:httpApi, "GET /races/42（HTTP API はキャッシュなし）"]
+    - [infra:api, "APIハンドラ Lambda 起動"]
+    - [handler:getRaces, "DynamoDB を Query"]
+    - [infra:racesTable, "RaceItem[] を返す"]
+    - [type:RaceResult, "RaceItem → RaceResult に変換（型の境界）"]
+    - [comp:ResultTable, "results: RaceResult[] として描画"]
+    - ["route:/races/[id]", "HTML完成 → ISRキャッシュ(/tmp)に保存"]
+    - [infra:cdn, "エッジに60秒キャッシュして返却"]
+    - [actor:user, "表示（次の人はHIT）"]
+
+- id: hit
+  name: 閲覧 HIT
+  tone: cache-hit
+  steps:
+    - [actor:user, "/races/42 をリクエスト"]
+    - [infra:cdn, "HIT（age 23s < s-maxage 60）→ エッジで即返却"]
+    - [actor:user, "表示（Lambda 起動ゼロ・DB アクセスゼロ）"]
+
+- id: entry
+  name: 入稿→反映
+  tone: default
+  steps:
+    - [actor:user, "管理者が /admin/entry を開く"]
+    - [infra:cdn, "/admin/* は CachingDisabled → 素通し"]
+    - [infra:authEdge, "viewer-request で JWT 検証（キャッシュ判定より前）"]
+    - [infra:admins, "JWKS で署名確認"]
+    - [infra:next, "認証OK → Next.js（dynamic SSR）"]
+    - [route:/admin/entry, "入稿画面を表示"]
+    - [comp:EntryForm, "入力 → zod で EntryInput 検証"]
+    - [lib:apiClient, "POST /results（no-store）"]
+    - [infra:httpApi, "ルーティング"]
+    - [infra:api, "APIハンドラ Lambda 起動"]
+    - [handler:postResult, "EntryInput → RaceItem に変換"]
+    - [infra:racesTable, "PutItem"]
+    - [route:/admin/entry, '保存成功 → revalidatePath("/races/42")']
+    - [infra:next, "ISRキャッシュ破棄（※このインスタンスだけ）"]
+    - [infra:cdn, "CreateInvalidation /races/42 → 次回はMISS"]

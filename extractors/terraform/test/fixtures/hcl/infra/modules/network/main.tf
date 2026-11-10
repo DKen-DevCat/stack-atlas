@@ -1,0 +1,12 @@
+resource "aws_vpc" "main" {
+  cidr_block = var.cidr
+}
+
+resource "aws_subnet" "private" {
+  vpc_id     = aws_vpc.main.id
+  cidr_block = cidrsubnet(var.cidr, 8, 1)
+}
+
+resource "aws_security_group" "lambda" {
+  vpc_id = aws_vpc.main.id
+}

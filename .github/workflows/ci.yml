@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable corepack (pnpm は package.json の packageManager で固定)
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Chromium は viewer の e2e と screenshots 抽出器のテストで使う（両方 Playwright 1.63）
+      - name: Install Playwright Chromium
+        run: pnpm --filter @stack-atlas/viewer exec playwright install --with-deps chromium
+
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm validate examples/race-site.graph.json
+
+      # フィクスチャ（単一 repo / 2 repo）を実際にビルドして graph.json を検証する
+      - run: pnpm atlas build examples/fixture-repo -o out/fixture-repo --no-screenshots
+      - run: pnpm atlas build examples/fixture-poly -o out/fixture-poly --no-screenshots
+      - run: pnpm validate out/fixture-repo/graph.json out/fixture-poly/graph.json
+      - name: Upload graphs
+        uses: actions/upload-artifact@v4
+        with:
+          name: graphs
+          path: out/**/graph.json
+
+      # ビューアのスモークテスト（ヘッドレス。WebGL は SwiftShader）
+      - name: Viewer e2e
+        run: pnpm --filter @stack-atlas/viewer e2e
+      - name: Upload e2e screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewer-e2e
+          path: |
+            packages/viewer/e2e/__screenshots__/
+            packages/viewer/test-results/
+          if-no-files-found: ignore

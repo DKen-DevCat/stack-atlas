@@ -1,0 +1,22 @@
+- id: today
+  name: 今日の合計を見る
+  tone: default
+  steps:
+    - [actor:user, "https://expenses.example.com/ を開く"]
+    - [infra:static_site/this, "CloudFront: / → CloudFront Function が /index.html を補完"]
+    - [infra:static_site/site, "S3 の静的ファイル（Next static export）を返す"]
+    - [lib:fetcher, "ブラウザで fetcher('/today') を実行（API_DOMAIN は Function URL）"]
+    - ["endpoint:GET /today", "OpenAPI の契約: Today を返す"]
+    - [handler:internal/api, "handleToday が store を呼ぶ"]
+    - [schema:transactions, "SELECT ... FROM transactions"]
+    - [infra:aurora/this, "Aurora PostgreSQL が行を返す"]
+
+- id: inbound
+  name: メール取り込み
+  tone: default
+  steps:
+    - [infra:lambda_api/gmail_webhook, "Gmail の push 通知を Function URL で受ける"]
+    - [handler:cmd/gmail-webhook, "入口（main）が inbound を起動"]
+    - [lib:internal/parser, "メール本文から金額・店名を取り出す"]
+    - [schema:internal/store, "InsertTransaction で保存"]
+    - [schema:transactions, "INSERT INTO transactions"]
