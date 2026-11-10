@@ -15,6 +15,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readSync,
   realpathSync,
   unlinkSync,
   writeFileSync,
@@ -102,6 +103,35 @@ export function readNoFollowResult(file: string, maxBytes: number): ReadResult {
     if (!st.isFile()) return { why: 'unreadable' };
     if (st.size > maxBytes) return { why: 'too-large', size: st.size };
     return { data: readFileSync(fd) };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * シンボリックリンクを辿らずに開いて、先頭の bytes バイトだけ読む（段 0 の報告が config・other の生成物の印と shebang を
+ * 見るのに使う。2026-11-11 Phase 9-L0 のレビュー）。開けない・普通のファイルでないなら undefined（例外を投げない）
+ */
+export function readHeadNoFollow(file: string, bytes: number): Buffer | undefined {
+  let fd: number;
+  try {
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  } catch {
+    return undefined;
+  }
+  try {
+    if (!fstatSync(fd).isFile()) return undefined;
+    const buf = Buffer.alloc(bytes);
+    let n = 0;
+    for (;;) {
+      const r = readSync(fd, buf, n, bytes - n, null);
+      if (r <= 0) break;
+      n += r;
+      if (n >= bytes) break;
+    }
+    return buf.subarray(0, n);
+  } catch {
+    return undefined;
   } finally {
     closeSync(fd);
   }

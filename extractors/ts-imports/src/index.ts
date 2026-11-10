@@ -562,7 +562,9 @@ export const extractor: Extractor = {
       },
     }));
     ctx.log.info(`ts-imports: ${files.size} files, ${out.length} nodes, ${edges.size} edges`);
-    return { nodes: out, edges: [...edges.values()] };
+    // 読んだファイル（tsconfig の program のソースすべて。export の無いファイルも。docs/23 §3.1）
+    const read = [...files.keys()].map((p) => toPosix(relative(root, p))).sort();
+    return { nodes: out, edges: [...edges.values()], read };
   },
 };
 

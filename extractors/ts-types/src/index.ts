@@ -88,7 +88,9 @@ export const extractor: Extractor = {
         `（exact ${links.filter((l) => l.confidence === 'exact').length} / crude ${links.filter((l) => l.confidence === 'crude').length}）` +
         `、${Math.round(performance.now() - started)}ms`,
     );
-    return { nodes: [], edges: [], v2 };
+    // 読んだファイル（TS の program のソースすべて。型だけのファイルも。docs/23 §3.1）
+    const read = [...a.files.keys()].map((p) => toPosix(relative(ctx.root, p))).sort();
+    return { nodes: [], edges: [], v2, read };
   },
 };
 

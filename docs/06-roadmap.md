@@ -159,10 +159,25 @@ Lambda → Go 入口の推定 5 件、DB の推定、Function URL の呼び先�
 
 **完了条件**: 実リポジトリで、画面をクリックすると項目の単位で流れが 1 本見え、契約と実装の食い違いが赤で出る。
 
+## Phase 9 — どの構成にもはめる・モデルを 1 つに（設計中）
+
+設計: **docs/23**（どのリポジトリ・どの構成にもはめる。9-L。D170〜D183、Q27〜Q33）と **docs/22**（モデルを 1 つに。9-1a〜9-4。D140〜D159、Q22〜Q26）。どちらも設計レビューを 1 回済ませ、ユーザーの確認を待っている。きっかけは Q17（2026-11-10、ユーザーの個人のリポジトリ diiv-farm: Swift が主で、抽出器 15 個がすべて該当なし・箱 0 のまま strict が通った）と、ユーザーの指摘「特定の言語のみ対応は要件を満たしていない」（要件 R9）。
+
+推奨の順: 8-7 → 8-8b → 9-L0 → 9-L1〜9-L5 → 9-1a 以降。
+
+- [x] 9-L0a 数える範囲・言語の判定・報告の `coverage`、抽出器の契約の `read`（依存なし）。2026-11-11: `core/coverage.ts`・`core/languages.ts`（言語の表はデータ）、11 の抽出器が `read` を申告、go-types の helper が読んだファイルを出す（docs/23 §11）
+- [x] 9-L0b strict: 箱 0 でエラー（`empty`）、読めないソースは言語ごとに警告（`unread`）。3 つの fixture の strict のエラーは 0・0・3 のまま（警告は 3→4・5→6・5→7。docs/23 §11）。実装レビューで、テストのファイルを別に数える・git の守り・読めないファイルで build を止めない、を足した
+- [ ] 9-L1 段 1（tree-sitter。Q27 の後）: エンジン・言語のデータ（Swift・Python・shell・Svelte・Kotlin・Java）・線の `confidence` と破線・fixture-many と合成の大きな fixture
+- [ ] 9-L2 レシピ（受け口・起動・launchd・コンテナ・ターゲット・SwiftUI / Svelte / Compose）・runtime の `client`・`unknown`・`placeV2` の前倒し
+- [ ] 9-L3 段 2（LSP のクライアント。手元のサーバーだけ。実行しうるサーバーは `--allow-exec` のときだけ）
+- [ ] 9-L4 残りの言語のデータ（文法がある言語は全部）
+- [ ] 9-L5 skill の更新、diiv-farm にエージェントを当て直す（Q33）
+- [ ] 9-1a 木を graph に持つ → 9-1b 地図を畳みの段から → 9-2a / 9-2b アダプタの自立 → 9-2c v1 の段と `upgrade.ts` を消す → 9-3 直す入力を 1 つの形に → 9-4 片付け（docs/22 §3）
+
 ## 後回し・アイデア
 
 - React fiber からの regions（`data-component` を付けられない場合）
-- Vite / Remix / Python / Java など他のスタック用の抽出器（Terraform / AWS CDK / SAM / Go は Phase 7 で実装済み。それ以外は `files` で載せられる）
+- （Phase 9-L に移した）他の言語・スタック。言語ごとの抽出器ではなく、ファイル・構文・型の 3 段とデータで読む（docs/23）
 - エディタ連携（ノードから VS Code を開く、`vscode://file/...`）
 - X-Ray / OpenTelemetry からのフロー自動生成
 - 規模が大きいときの折りたたみ・フィルタ（LOD・検索は Phase 7-6 で完了）

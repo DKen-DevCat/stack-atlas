@@ -142,3 +142,31 @@ export const toArray = (v: string | string[] | undefined): string[] =>
 export function toPosix(p: string): string {
   return p.replace(/\\/g, '/').replace(/^\.\//, '');
 }
+
+/**
+ * `/* … *\/` と、行頭（空白の後）が `//` の行を外す。前から 1 回だけ走査する（nextjs-app から core へ移した。2026-11-09（8-3b のレビュー）:
+ * 正規表現の `\/\*[\s\S]*?\*\/` は閉じていない `/*` があると位置ごとに末尾まで探し直して 2 乗だった。80 KB で 1.2 秒）。
+ * 閉じていない `/*` から後ろはそのまま残す（正規表現のときと同じ）
+ */
+export function stripJsComments(src: string): string {
+  let out = '';
+  let i = 0;
+  for (;;) {
+    const j = src.indexOf('/*', i);
+    if (j < 0) {
+      out += src.slice(i);
+      break;
+    }
+    out += src.slice(i, j);
+    const k = src.indexOf('*/', j + 2);
+    if (k < 0) {
+      out += src.slice(j);
+      break;
+    }
+    i = k + 2;
+  }
+  return out
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('//'))
+    .join('\n');
+}

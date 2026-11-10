@@ -167,7 +167,12 @@ export const extractor: Extractor = {
     ctx.log.info(
       `cdktf: ${stacks.length} stack(s), ${g.nodes.length} nodes, ${g.edges.length} edges`,
     );
-    return { nodes: g.nodes, edges: g.edges };
+    // 読んだファイル（スタックの cdk.tf.json。docs/23 §3.1）。sourceDir の .ts は construct id の文字列を探すだけで、
+    // TS として読んではいない（型も呼び出しも取らない）ので申告しない。construct が見つかったファイルは箱の file で
+    // 「読んだ」に数える。2026-11-11 Phase 9-L0 のレビュー: 以前は sourceDir の .ts を全部申告し、tsconfig の外の TS が
+    // 読めたように見えていた
+    const read = stacks.map((s) => relative(ctx.root, s.file).split('\\').join('/')).sort();
+    return { nodes: g.nodes, edges: g.edges, read };
   },
 };
 

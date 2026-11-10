@@ -161,10 +161,16 @@ describe('Chromium の起動', () => {
   it('サンドボックスを有効にする（chromiumSandbox: true）', () => {
     expect(LAUNCH_OPTIONS).toEqual({ headless: true, chromiumSandbox: true });
     expect(launchOptions({})).toEqual({ headless: true, chromiumSandbox: true });
-    expect(launchOptions({ [NO_SANDBOX_ENV]: '0' })).toEqual({ headless: true, chromiumSandbox: true });
+    expect(launchOptions({ [NO_SANDBOX_ENV]: '0' })).toEqual({
+      headless: true,
+      chromiumSandbox: true,
+    });
   });
 
   it('STACK_ATLAS_CHROMIUM_NO_SANDBOX=1 のときだけサンドボックスを外す（2026-11-10: CI の runner はサンドボックスが使えない）', () => {
-    expect(launchOptions({ [NO_SANDBOX_ENV]: '1' })).toEqual({ headless: true, chromiumSandbox: false });
+    expect(launchOptions({ [NO_SANDBOX_ENV]: '1' })).toEqual({
+      headless: true,
+      chromiumSandbox: false,
+    });
   });
 });

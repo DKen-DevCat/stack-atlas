@@ -1,4 +1,6 @@
-import { dirname, resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { PartialGraph, RepoContext, StackAtlasConfig } from '@stack-atlas/core';
@@ -175,5 +177,30 @@ describe('terraform extractor', async () => {
     ]) {
       expect(allTypes).not.toContain(t);
     }
+  });
+});
+
+describe('read の申告（docs/23 §3.1。2026-11-11 Phase 9-L0 のレビュー）', () => {
+  it('解析できた .tf と .tfvars だけを申告する（解析できない .tfvars・.tf は読んだことにしない）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stack-atlas-tfread-'));
+    mkdirSync(join(dir, 'infra'), { recursive: true });
+    writeFileSync(
+      join(dir, 'infra', 'main.tf'),
+      'resource "aws_s3_bucket" "b" {\n  bucket = var.name\n}\nvariable "name" {}\n',
+    );
+    writeFileSync(join(dir, 'infra', 'broken.tf'), 'resource "x" {{{\n');
+    writeFileSync(join(dir, 'infra', 'terraform.tfvars'), 'name = "a"\n');
+    writeFileSync(join(dir, 'infra', 'bad.auto.tfvars'), 'name = = =\n');
+    const ctx: RepoContext = {
+      root: dir,
+      config: { terraform: { root: 'infra' } },
+      repoName: 'r',
+      repos: { r: dir },
+      configDir: dir,
+      log: { debug() {}, info() {}, warn() {}, error() {} },
+      resolve: (...s) => resolve(dir, ...s),
+    };
+    const g = await extractor.extract(ctx, { nodes: [], edges: [] });
+    expect(g.read).toEqual(['infra/main.tf', 'infra/terraform.tfvars']);
   });
 });

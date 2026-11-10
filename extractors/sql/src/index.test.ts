@@ -7,6 +7,7 @@ import {
   extractor,
   migrationFiles,
   parseSql,
+  readTables,
   stripSqlComments,
   tablesReferenced,
 } from './index.js';
@@ -140,5 +141,18 @@ describe('sql extractor', async () => {
       true,
     );
     expect(warnings.some((w) => w.startsWith('推定'))).toBe(false);
+  });
+});
+
+describe('read の申告（docs/23 §3.1。2026-11-11 Phase 9-L0 のレビュー）', () => {
+  it('readTables が実際に読んだファイルを返し、抽出器はそれを申告する（glob に合わない down は入らない）', async () => {
+    const read: string[] = [];
+    readTables(root, ['migrations/*.up.sql'], undefined, read);
+    expect(read).toEqual(['migrations/000001_init.up.sql', 'migrations/000002_add_note.up.sql']);
+    const g = await extractor.extract(ctxOf({ sql: { migrations: ['migrations/*.up.sql'] } }), {
+      nodes: [],
+      edges: [],
+    });
+    expect(g.read).toEqual(read);
   });
 });

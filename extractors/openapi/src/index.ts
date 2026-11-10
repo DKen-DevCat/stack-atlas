@@ -340,6 +340,8 @@ export const extractor: Extractor = {
     const depth = ctx.config.adapters?.depth ?? 2;
     const maxItems = ctx.config.adapters?.maxItems ?? DEFAULT_MAX_ITEMS;
     let dup = 0;
+    /** 読めた契約のファイル（docs/23 §3.1 の read） */
+    const read: string[] = [];
     for (const rel of openapiFiles(ctx)) {
       let spec: OpenApiSpec;
       try {
@@ -348,6 +350,7 @@ export const extractor: Extractor = {
         ctx.log.warn(`openapi: ${rel} を読めません: ${String(e)}`);
         continue;
       }
+      read.push(rel);
       for (const s of spec.schemas) {
         const id = `type:${s.name}`;
         if (fromOpenapi.has(id) || nodes.has(id)) continue;
@@ -413,7 +416,7 @@ export const extractor: Extractor = {
     const out = [...edges.values()].filter((e) => known.has(e.to));
     const eps = [...nodes.values()].filter((n) => n.kind === 'endpoint').length;
     ctx.log.info(`openapi: ${eps} endpoints, ${nodes.size - eps} schemas, ${out.length} edges`);
-    const part: PartialGraph = { nodes: [...nodes.values()], edges: out };
+    const part: PartialGraph = { nodes: [...nodes.values()], edges: out, read };
     if (nodesV2.length || typesV2.length) part.v2 = { nodes: nodesV2, wires: [], types: typesV2 };
     return part;
   },
