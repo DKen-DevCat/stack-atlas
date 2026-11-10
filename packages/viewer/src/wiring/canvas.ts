@@ -1,8 +1,8 @@
 // 無限の平面（Figma と同じ）: ドラッグで移動、ホイール（トラックパッドの 2 本指）で移動、ctrl/⌘ ＋ ホイールとピンチで
-// 拡大縮小（カーソル中心、0.1〜4 倍）。スクロールバーは無い。開いた直後は読める倍率（docs/18 §3.2。view.ts）、
+// 拡大縮小（カーソル中心、0.1〜4 倍。全体が 0.1 倍で収まらない大きな図は、全体が収まる倍率まで縮められる）。スクロールバーは無い。開いた直後は読める倍率（docs/18 §3.2。view.ts）、
 // `F` キーで全体が収まる倍率
 import type { Rect } from '@stack-atlas/wiring';
-import { fitView, K_MAX, K_MIN, openingView, type View, type Viewport } from './view';
+import { fitView, K_MAX, K_MIN, minScale, openingView, type View, type Viewport } from './view';
 
 export type { View } from './view';
 
@@ -68,7 +68,10 @@ export function createCanvas(opts: CanvasOptions): Canvas {
       // ピンチは ctrlKey 付きの wheel で届く
       const cx = ev.clientX - r.left;
       const cy = ev.clientY - r.top;
-      const k = Math.min(K_MAX, Math.max(K_MIN, view.k * Math.exp(-ev.deltaY * 0.01)));
+      // 縮小の下限は図の大きさで変わる（大きな図は全体が収まる倍率まで縮める。view.ts の minScale）
+      const vp = viewport();
+      const kMin = vp ? minScale(vp, size) : K_MIN;
+      const k = Math.min(K_MAX, Math.max(kMin, view.k * Math.exp(-ev.deltaY * 0.01)));
       view.tx = cx - (cx - view.tx) * (k / view.k);
       view.ty = cy - (cy - view.ty) * (k / view.k);
       view.k = k;
