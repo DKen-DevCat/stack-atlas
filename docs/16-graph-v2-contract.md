@@ -32,7 +32,7 @@
 | 項目 `items[].id` | 口の中で一意。入れ子は親の中で一意 | `[A-Za-z0-9_$-]+`（**`.` は使えない**。表示名 `name` は自由） |
 | 項目の参照 | `<nodeId>#<portId>/<itemId>(.<itemId>)*` | 例 `comp:TodayIsland#in/entries.amount` |
 | 箱の中の参照（`links`） | `<portId>/<itemId>(.<itemId>)*` | 例 `in/rows.created_at` |
-| 型 `types[].id` | `type:<名前>` か `table:<名前>` | 項目の `typeRef` が指す |
+| 型 `types[].id` | `type:<名前>` か `table:<名前>`。TS の型は ts-imports が `type:` の箱にした宣言ならその id（衝突の退避は `~`）、それ以外（export していない型など）は `type:<repo 相対ファイル>~<名前>`（複数 repo なら `<repo>/` 付き）。OpenAPI は `type:<名前>`（2026-11-09、8-2a のレビュー） | 項目の `typeRef` が指す |
 | 分岐の参照（`when` のキー） | `<variantId>` または `<nodeId>#<variantId>`（`.` ではなく `#`。箱 id に `.` が入るため） | 例 `hit`、`screen:/today#login` |
 
 項目の `id` に `.` を禁じるので、`query.date` のような名前は `id: "query_date", name: "query.date"` になる。言語アダプタは `name` を言語どおり、`id` を `[^A-Za-z0-9_$-]` → `_` に置換して作る（衝突したら `_2` を付ける）。index signature や配列要素は、配列の項目の**子**として書き、`[]` の段は作らない（`entries` の子が `amount`）。
@@ -104,6 +104,18 @@
 **呼び出しの合成項目**（線の端点の規約を守るために要る。レビューで判明: 型 API のスパイクは `A#in/x → B#in/x` の in → in の線を出していた）: 箱 A が B を呼ぶとき、A の `out` 口に項目 `call_<n>`（name は `B()`）を作り、その子に渡す引数を B の引数名で置く。戻り値は A の `in` 口に `ret_<n>`（name は `B() の戻り`）。線は `A#out/call_1.x → B#in/x`（via call）と `B#out/ret → A#in/ret_1`（via return、reply）。A の引数から `call_1.x` への対応は `links`。部品が子部品に props を渡すのも同じ（`out/render_<n>` の子が props）。hook の戻りは `in/ret_<n>` の子。
 
 **endpoint（合流点）の 4 つの口**: OpenAPI の path / query / body のフィールドを `in`（クライアントから）と `req`（実装へ）の両方に同じ項目で置き、response を `res`（実装から）と `out`（クライアントへ）に置く。`links` は `in/x → req/x`、`res/y → out/y` の恒等（省略可。既定で生成）。
+
+endpoint の項目の決め方（8-2a の openapi 抽出器。2026-11-09）:
+
+| 対象 | 項目 |
+|---|---|
+| パスのパラメータ | `in/path`・`req/path` の子（`{date}` → `path.date`） |
+| クエリ | `in/query`・`req/query` の子 |
+| requestBody | `in/body`・`req/body`。`required` が無ければ optional（OpenAPI の既定） |
+| 2xx の応答 | JSON の schema があれば `res/body`・`out/body`、無ければ `res/status`・`out/status`（type は `201 Created` など、wireType は integer） |
+| 応答のコード | 箱の `meta.status`。戻りの線のラベル（`200 Today`）に使う |
+
+body の無い応答（`out/status`）から呼び出し元の `ret_n` への線は型を照合しない（fetch の戻りの `Response` と integer を比べると誤った error になる）。
 
 ## 6. 線（wire）と箱の中の対応（links）
 

@@ -6,10 +6,12 @@
  * - 層: 同じ id は最初の定義を使う。順番は出現順
  * - フロー: 同じ id は最初の定義を使う
  * - kinds: kind ごとにフィールド単位でマージ（先に出た値を残す）
+ * - v2（言語アダプタの部分グラフ。docs/17 §3.1）: 箱は id で口・項目を合わせ、線は (from, to)、型は id で重複排除
  */
 import type { Edge, Flow, Layer } from '@stack-atlas/schema';
 import type { KindDefinition, PartialGraph, PartialNode } from './types.js';
 import { clone, deepMerge } from './util.js';
+import { mergePartialV2 } from './v2-parts.js';
 
 export const edgeKey = (e: Pick<Edge, 'from' | 'to' | 'kind'>) =>
   `${e.from}\u0000${e.to}\u0000${e.kind}`;
@@ -56,5 +58,7 @@ export function mergePartialGraphs(parts: PartialGraph[]): PartialGraph {
   if (hasLayers) out.layers = [...layers.values()];
   if (hasFlows) out.flows = [...flows.values()];
   if (kinds) out.kinds = kinds;
+  const v2 = mergePartialV2(parts.map((p) => p.v2));
+  if (v2) out.v2 = v2;
   return out;
 }

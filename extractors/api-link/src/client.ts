@@ -103,9 +103,11 @@ export function toPath(pattern: string): string | undefined {
     }
     if (!p.startsWith('/')) return undefined;
   }
-  p = p.replace(/[?#].*$/, '');
-  // `/races{qs}` のように / の直後でない末尾のプレースホルダ（クエリ文字列の連結）を落とす
-  p = p.replace(/(?<=[^/])\{[^}]*\}$/, '');
+  const q = p.search(/[?#]/);
+  if (q >= 0) p = p.slice(0, q);
+  // `/races{qs}` のように / の直後でない末尾のプレースホルダ（クエリ文字列の連結）を落とす。
+  // 中身の文字クラスから `{` も除く（`{` が多くて `}` が無い入力で二次の走査にならない。2026-11-09 レビュー S2）
+  p = p.replace(/(?<=[^/])\{[^{}]*\}$/, '');
   return p === '' ? '/' : p;
 }
 
@@ -305,6 +307,79 @@ function resolveImport(fromFile: string, spec: string, root: string): string | u
   return undefined;
 }
 
+/** HTTP の呼び出しの情報（parseClientFiles と ts-types の共通の規則） */
+export interface HttpCallInfo {
+  method: string;
+  /** `/races/{id}` 形式（クエリ文字列は落とす） */
+  path: string;
+  /** パスの式を展開したもの（クエリ文字列を含む。`/days?month={month}`） */
+  pattern: string;
+  /** パスを渡している引数の位置 */
+  pathIndex: number;
+  /** 呼び先の名前（fetch・fetcher・get など） */
+  callee: string;
+}
+
+/**
+ * 呼び出しが HTTP の呼び出し（fetch・既知の動詞・検出したラッパー・api.callers）で、パスが読めるなら情報を返す。
+ * パスが読めない（動的すぎる）なら `{ unreadable }`、HTTP の呼び出しでなければ undefined。
+ * ラッパーの中で引数をそのまま渡す中継かどうかは呼ぶ側で判定する（passesParam）
+ */
+export function httpCallInfo(
+  n: CallExpression,
+  wrappers: ReadonlyMap<string, Wrapper>,
+  resolve?: ConstResolver,
+): HttpCallInfo | { unreadable: string } | undefined {
+  const fname = calleeName(n);
+  if (!fname) return undefined;
+  const w = wrappers.get(fname);
+  const builtin = Object.hasOwn(CALLEES, fname);
+  if (!w && !builtin) return undefined;
+  const pathIndex = w?.pathIndex ?? 0;
+  const args = n.getArguments();
+  const first = args[pathIndex];
+  if (!first) return undefined;
+  const pattern = exprToPattern(first, resolve);
+  const path = pattern === undefined ? undefined : toPath(pattern);
+  if (!path || pattern === undefined)
+    return { unreadable: `${fname}(${first.getText()}) @${n.getStartLineNumber()}` };
+  const rest = args.filter((_, i) => i !== pathIndex);
+  const verb = NAME_VERB.find(([re]) => re.test(fname))?.[1];
+  const method =
+    literalMethod(rest) ?? w?.method ?? (builtin ? CALLEES[fname] : undefined) ?? verb ?? 'GET';
+  return { method, path, pattern, pathIndex, callee: fname };
+}
+
+/**
+ * ファイルの文字列定数の解決（同じファイルと、import 先のファイルの export の文字列定数を 1 段）。
+ * load は import 先の絶対パス → SourceFile（無ければ undefined）。cache はファイルごとの定数の表
+ */
+export function constResolverFor(
+  sf: SourceFile,
+  load: (spec: string, from: SourceFile) => SourceFile | undefined,
+  cache: Map<SourceFile, Map<string, string>> = new Map(),
+): ConstResolver {
+  const fileConsts = (f: SourceFile) => {
+    let m = cache.get(f);
+    if (!m) {
+      m = stringConsts(f);
+      cache.set(f, m);
+    }
+    return m;
+  };
+  const local = new Map(fileConsts(sf));
+  for (const imp of sf.getImportDeclarations()) {
+    const tsf = load(imp.getModuleSpecifierValue(), sf);
+    if (!tsf) continue;
+    const tc = fileConsts(tsf);
+    for (const named of imp.getNamedImports()) {
+      const v = tc.get(named.getName());
+      if (v !== undefined) local.set(named.getAliasNode()?.getText() ?? named.getName(), v);
+    }
+  }
+  return (x) => (Node.isIdentifier(x) ? local.get(x.getText()) : undefined);
+}
+
 export interface ParseClientOptions {
   /** 第 1 引数がパスの関数名（api.callers） */
   callers?: string[];
@@ -334,32 +409,15 @@ export function parseClientFiles(
 
   // 定数: ファイルごと + import 先（クライアント以外も 1 段だけ読む）
   const constsOf = new Map<SourceFile, Map<string, string>>();
-  const fileConsts = (sf: SourceFile) => {
-    let m = constsOf.get(sf);
-    if (!m) {
-      m = stringConsts(sf);
-      constsOf.set(sf, m);
-    }
-    return m;
+  const load = (spec: string, from: SourceFile) => {
+    const target = resolveImport(from.getFilePath(), spec, root);
+    if (!target) return undefined;
+    return project.getSourceFile(target) ?? project.addSourceFileAtPath(target);
   };
   const calls: ApiCall[] = [];
   const unreadable: string[] = [];
   for (const sf of sfs) {
-    const local = new Map(fileConsts(sf));
-    for (const imp of sf.getImportDeclarations()) {
-      const target = resolveImport(sf.getFilePath(), imp.getModuleSpecifierValue(), root);
-      if (!target) continue;
-      const tsf = project.getSourceFile(target) ?? project.addSourceFileAtPath(target);
-      const tc = fileConsts(tsf);
-      for (const named of imp.getNamedImports()) {
-        const v = tc.get(named.getName());
-        if (v !== undefined) local.set(named.getAliasNode()?.getText() ?? named.getName(), v);
-      }
-    }
-    const resolve: ConstResolver = (n) => {
-      if (Node.isIdentifier(n)) return local.get(n.getText());
-      return undefined;
-    };
+    const resolve = constResolverFor(sf, load, constsOf);
     const ownFns = functionsOf(sf);
     sf.forEachDescendant((n) => {
       if (!Node.isCallExpression(n)) return;
@@ -379,22 +437,16 @@ export function parseClientFiles(
           f.params.some((p) => passesParam(first, p)),
       );
       if (inside) return;
-      const pattern = exprToPattern(first, resolve);
-      const path = pattern === undefined ? undefined : toPath(pattern);
-      if (!path) {
-        unreadable.push(`${fname}(${first.getText()}) @${n.getStartLineNumber()}`);
+      const info = httpCallInfo(n, wrappers, resolve);
+      if (!info) return;
+      if ('unreadable' in info) {
+        unreadable.push(info.unreadable);
         return;
       }
       const rest = args.filter((_, i) => i !== pathIndex);
-      const verb = NAME_VERB.find(([re]) => re.test(fname))?.[1];
       const call: ApiCall = {
-        method:
-          literalMethod(rest) ??
-          w?.method ??
-          (builtin ? CALLEES[fname] : undefined) ??
-          verb ??
-          'GET',
-        path,
+        method: info.method,
+        path: info.path,
         line: n.getStartLineNumber(),
         file: sf.getFilePath(),
       };

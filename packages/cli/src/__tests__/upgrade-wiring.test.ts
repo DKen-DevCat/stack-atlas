@@ -4,6 +4,8 @@
 // - たどり: 画面を選ぶと下流の helper・ハンドラ・テーブルが光り、関係ない画面は光らない（docs/15 §3.5）
 // - 見つかったこと（2026-11-09）: 共有の helper・ハンドラ・テーブルを選ぶと、ほぼ全部が光った。8-1 のレビューでたどりを直し、
 //   新しい光り方を下の describe に事実として固定した
+// - Phase 8-2a から build には言語アダプタ（ts-types・openapi の v2）が重なる。TS の側は項目の単位になり、Go の側は箱の単位のまま
+//   （8-2b）。変わった期待値はテストの中に何が変わったかを書いた
 import { buildGraph, createMemoryLogger, loadConfig, upgradeGraph } from '@stack-atlas/core';
 import { validateGraphV2, type Graph, type GraphV2 } from '@stack-atlas/schema';
 import {
@@ -142,10 +144,14 @@ describe('たどり: 画面を選ぶと下流が光り、関係ない画面は�
 
   it('route:/ は TodayIsland → getToday 系 → endpoint → ハンドラ → テーブルまで光り、他の画面は光らない', () => {
     const lit = litBoxes(poly(), 'route:/');
+    // Phase 8-2a で変更: ts-types の関数の箱が v1 のファイルの箱を置き換えたので、lib:web/src/feature/spend/request.ts
+    // ではなく fn:getToday・fn:toTodayView が光る。同じファイルの getEntries・createTransaction は光らず、
+    // その先の endpoint（GET /entries・POST /transactions）も光らなくなった（以前はファイルの単位なので光っていた）
     for (const id of [
       'comp:TodayIsland',
       'comp:TotalCard',
-      'lib:web/src/feature/spend/request.ts',
+      'fn:getToday',
+      'fn:toTodayView',
       'lib:fetcher',
       'endpoint:GET /today',
       'handler:internal/api',
@@ -161,8 +167,12 @@ describe('たどり: 画面を選ぶと下流が光り、関係ない画面は�
       ...ROUTES.filter((r) => r !== 'route:/'),
       'comp:CalendarIsland',
       'comp:PushToggle',
-      'lib:web/src/feature/days/request.ts',
+      'fn:getDays',
+      'fn:getEntries',
+      'fn:createTransaction',
       'endpoint:GET /days',
+      'endpoint:GET /entries',
+      'endpoint:POST /transactions',
       'handler:cmd/api',
       'handler:cmd/gmail-webhook',
     ])
@@ -249,17 +259,17 @@ describe('見つかったこと: 共有の箱から始めたときの光り方�
     const lit = litBoxes(graphs.get('fixture-poly')!, 'lib:fetcher', { downOnly: true });
     expect(lit.has('comp:PushToggle')).toBe(false);
     expect(lit.has('endpoint:POST /push/subscriptions')).toBe(false);
-    // fetcher を使う部品・endpoint は光る
-    for (const id of [
-      'comp:TodayIsland',
-      'comp:CalendarIsland',
-      'endpoint:GET /today',
-      'endpoint:GET /days',
-    ])
+    // fetcher を使う関数・部品は光る
+    for (const id of ['comp:TodayIsland', 'comp:CalendarIsland', 'fn:getToday', 'fn:getDays'])
       expect(lit.has(id), id).toBe(true);
+    // Phase 8-2a で変更: 以前は fetcher の下流に endpoint（GET /today・GET /days）とその先のハンドラ・テーブルが
+    // 入っていた（26 / 下流 21）。項目の単位では HTTP の線はパスのリテラルを持つ呼び出し元（getToday の call_1.url）から
+    // endpoint へ直接引き、fetcher は脇に置く（D45）ので、fetcher の下流は戻りを受ける呼び出し元とその先だけになった
+    for (const id of ['endpoint:GET /today', 'endpoint:GET /days', 'handler:internal/api'])
+      expect(lit.has(id), id).toBe(false);
     // 部品は画面へ戻りを返さない（render は片道）ので、下流に画面は入らない
     expect(lit.has('route:/push')).toBe(false);
-    expect(counts(graphs.get('fixture-poly')!, 'lib:fetcher')).toEqual([26, 21]);
+    expect(counts(graphs.get('fixture-poly')!, 'lib:fetcher')).toEqual([18, 13]);
   });
 
   it('fixture-repo: lib:apiClient の下流に、apiClient を使わない /login と Header は入らない', () => {
@@ -284,6 +294,12 @@ describe('見つかったこと: 共有の箱から始めたときの光り方�
   });
 
   it('fixture-poly: 全部の endpoint を受け持つ handler:internal/api は、呼び出し元の endpoint を全部光らせる（変わらない）', () => {
-    expect(counts(graphs.get('fixture-poly')!, 'handler:internal/api')).toEqual([35, 29]);
+    // Phase 8-2a で変更: 35 → 36。v1 のファイルの箱 4 つ（lib:web/src/feature/*/{request,transformer}.ts）が関数の箱 6 つ
+    // （fn:getToday など）になり、endpoint の戻りは呼び出し元へ直接返る（D45）ので lib:fetcher は入らなくなった（+6 −4 −1）
+    const g = graphs.get('fixture-poly')!;
+    expect(counts(g, 'handler:internal/api')).toEqual([36, 29]);
+    const lit = litBoxes(g, 'handler:internal/api');
+    expect(lit.has('fn:getToday')).toBe(true);
+    expect(lit.has('lib:fetcher')).toBe(false);
   });
 });

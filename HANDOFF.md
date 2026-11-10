@@ -11,6 +11,8 @@ Phase 0〜5 は **フィクスチャ（`examples/fixture-repo/`）に対して�
 
 **2026-11-08 追記（Phase 8）**: 実リポジトリの地図を見たユーザーの要望で、モデルを「箱・口・項目・線」に作り直すことになった（`docs/15-design-dataflow-model.md`、D27〜D35、承認済み）。配布（ハーネス）とビルド成果物の画面は `docs/14-design-harness.md`。モック `prototype/dataflow-mock.html`（6 版）で規則を検証した。次は `docs/06` の Phase 8（8-1 契約 → 8-2 抽出 → 8-3 配線図 → 8-4 ハーネス → 8-5 実リポジトリ → 8-6 地図）。
 
+**2026-11-09 追記（Phase 8 の進み）**: PR は積み重ね（#1 ← #2 設計 ← #3 8-0 ← #4 8-1 ← #5 8-2a）。8-0 は v2 の縦スライス、8-1 は v1 → v2 の変換（`build` の graph.json は v2、3D の地図は graph.v1.json）、8-2a は TS の言語アダプタ `ts-types` と合流（docs/17 §8）。次は 8-2b（Go の `go-types` と table）。
+
 ### フェーズごとに作ったもの
 
 | Phase | 成果物 |

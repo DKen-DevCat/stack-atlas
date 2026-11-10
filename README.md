@@ -15,7 +15,7 @@
 ## 全体像
 
 ```
- リポジトリ（repos: 1 つ以上）     抽出器（スタック固有、12 個）                 graph.json           ビューア（汎用）
+ リポジトリ（repos: 1 つ以上）     抽出器（スタック固有、13 個）                 graph.json           ビューア（汎用）
 ┌──────────────────┐   files / cdktf / terraform / cloudformation   ┌────────────┐  ?graph=  ┌──────────────────┐
 │ web/   platform/ │ ─ nextjs-app / ts-imports / go / openapi / sql ▶│ nodes      │ ────────▶│ 3D 表示・ハイライト │
 │ config / flows   │   api-link / cache / screenshots               │ edges      │           │ フロー・キャッシュ │

@@ -346,8 +346,12 @@ describe('loadExtractors', () => {
       ]),
     );
     expect(log.of('warn')).toHaveLength(1);
-    expect(EXTRACTOR_PACKAGES).toHaveLength(12);
+    // Phase 8-2a で変更: 言語アダプタ ts-types を ts-imports の直後に足したので 12 → 13
+    expect(EXTRACTOR_PACKAGES).toHaveLength(13);
     expect(EXTRACTOR_PACKAGES[0]).toBe('@stack-atlas/extractor-files');
+    expect(EXTRACTOR_PACKAGES.indexOf('@stack-atlas/extractor-ts-types')).toBe(
+      EXTRACTOR_PACKAGES.indexOf('@stack-atlas/extractor-ts-imports') + 1,
+    );
   });
 });
 
@@ -449,9 +453,35 @@ describe('build (fixture-poly)', () => {
     const v2 = JSON.parse(readFileSync(join(out, 'graph.json'), 'utf8'));
     expect(v2.version).toBe(2);
     expect(validateGraphV2(v2).errors).toEqual([]);
-    expect(v2.nodes.map((n: N) => n.id)).toEqual(
-      graph.nodes.filter((n) => !n.id.startsWith('type:')).map((n) => n.id),
+    // Phase 8-2a で変更: 言語アダプタ（ts-types）の関数の箱が v1 のファイルの箱（lib:<file>）を置き換える（D47・D53）。
+    // 置き換わった v1 の箱は group（関数の箱の group が v1 の箱 id）になり、箱としては消える。それ以外の箱 id は v1 のまま
+    const grouped = [
+      'lib:web/src/feature/days/request.ts',
+      'lib:web/src/feature/days/transformer.ts',
+      'lib:web/src/feature/spend/request.ts',
+      'lib:web/src/feature/spend/transformer.ts',
+    ];
+    const fnBoxes = [
+      'fn:getDays',
+      'fn:toCells',
+      'fn:getToday',
+      'fn:getEntries',
+      'fn:createTransaction',
+      'fn:toTodayView',
+    ];
+    expect([...v2.nodes.map((n: N) => n.id)].sort()).toEqual(
+      [
+        ...graph.nodes
+          .filter((n) => !n.id.startsWith('type:') && !grouped.includes(n.id))
+          .map((n) => n.id),
+        ...fnBoxes,
+      ].sort(),
     );
+    for (const id of fnBoxes)
+      expect(
+        grouped.includes(v2.nodes.find((n: N & { group?: string }) => n.id === id).group),
+        id,
+      ).toBe(true);
     expect(v2.types.map((t: N) => t.id)).toEqual(
       expect.arrayContaining(['type:Today', 'type:Entry', 'table:transactions']),
     );

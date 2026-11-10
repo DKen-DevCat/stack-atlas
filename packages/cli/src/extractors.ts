@@ -1,7 +1,8 @@
 /**
  * build で使う抽出器の一覧（docs/09 §3.2・docs/12 §2.2 の順番）:
  * files（ノードを作るだけ）→ インフラ（cdktf / terraform / cloudformation）→ 画面（nextjs-app）
- * → コード（ts-imports / go）→ 契約（openapi / sql）→ 結線（api-link）→ cache → screenshots。
+ * → コード（ts-imports / ts-types / go）→ 契約（openapi / sql）→ 結線（api-link）→ cache → screenshots。
+ * ts-types は言語アダプタ（v2 の部分グラフだけを出す。docs/17）で、ts-imports の分類と ID を共有するので ts-imports の後。
  * パイプラインは抽出器ごとに全 repo を回すので、後続は先行の全 repo 分の結果を upstream で読める。
  * 各パッケージは `export const extractor: Extractor`（と default export）を出す。
  * まだ無いパッケージもあるので、1 つずつ動的 import して、見つからなければスキップする。
@@ -15,6 +16,7 @@ export const EXTRACTOR_PACKAGES = [
   '@stack-atlas/extractor-cloudformation',
   '@stack-atlas/extractor-nextjs-app',
   '@stack-atlas/extractor-ts-imports',
+  '@stack-atlas/extractor-ts-types',
   '@stack-atlas/extractor-go',
   '@stack-atlas/extractor-openapi',
   '@stack-atlas/extractor-sql',

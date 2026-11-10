@@ -243,7 +243,7 @@
         {
           "from": "in/html",
           "to": "out/render_1",
-          "confidence": "exact"
+          "confidence": "crude"
         }
       ]
     },
@@ -732,9 +732,18 @@
                   "id": "url",
                   "name": "url",
                   "type": "string",
-                  "wireType": "string"
+                  "wireType": "string",
+                  "meta": {
+                    "http": "path"
+                  }
                 }
-              ]
+              ],
+              "meta": {
+                "http": {
+                  "method": "GET",
+                  "path": "/today"
+                }
+              }
             },
             {
               "id": "return",
@@ -789,22 +798,14 @@
         {
           "from": "in/call",
           "to": "out/call_1",
-          "confidence": "exact"
+          "confidence": "crude"
         },
         {
           "from": "in/ret_1",
           "to": "out/return",
           "confidence": "exact"
         }
-      ],
-      "meta": {
-        "http": [
-          {
-            "method": "GET",
-            "path": "/today"
-          }
-        ]
-      }
+      ]
     },
     {
       "id": "fn:toTodayView",
@@ -2099,7 +2100,10 @@
                   "id": "url",
                   "name": "url",
                   "type": "string",
-                  "wireType": "string"
+                  "wireType": "string",
+                  "meta": {
+                    "http": "path"
+                  }
                 },
                 {
                   "id": "body",
@@ -2129,9 +2133,18 @@
                       "wireType": "number",
                       "typeRef": "type:Entry"
                     }
-                  ]
+                  ],
+                  "meta": {
+                    "http": "body"
+                  }
                 }
-              ]
+              ],
+              "meta": {
+                "http": {
+                  "method": "POST",
+                  "path": "/transactions"
+                }
+              }
             },
             {
               "id": "return",
@@ -2152,15 +2165,7 @@
           "to": "out/return",
           "confidence": "exact"
         }
-      ],
-      "meta": {
-        "http": [
-          {
-            "method": "POST",
-            "path": "/transactions"
-          }
-        ]
-      }
+      ]
     }
   ],
   "wires": [

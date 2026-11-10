@@ -71,6 +71,18 @@ export {
 } from './diff.js';
 export { gitCommit, gitRemote } from './git.js';
 export {
+  apiPathMatches,
+  isRoutePathTooLong,
+  MAX_ROUTE_PATH,
+  methodMatches,
+  normalizeRoutePath,
+  rewriteRoutePath,
+  pathMatches,
+  pickMostSpecific,
+  routeSpecificity,
+  type RouteLike,
+} from './paths.js';
+export {
   deepMerge,
   globToRegExp,
   globBase,
@@ -86,7 +98,43 @@ export {
   type ExtractorReport,
   type ExtractorStatus,
   type RepoExtractorReport,
+  type V2AdapterReport,
 } from './pipeline.js';
+export {
+  mergeV2,
+  cleanupV2,
+  coverageV2,
+  removeOverrideWiresV2,
+  type MergeV2Options,
+  type MergedV2,
+  type CleanupV2Result,
+  type CoverageV2,
+} from './merge-v2.js';
+export {
+  mergePartialV2,
+  mergeItemLists,
+  mergePortLists,
+  mergeLinkLists,
+  mergePartialNodeV2,
+  mergeVariants,
+  itemId,
+  walkItems,
+  itemAt,
+  underscoreItem,
+  boxOf,
+  isUnderscoreRef,
+  wireKey,
+  UNDERSCORE,
+} from './v2-parts.js';
+export {
+  joinEndpoints,
+  endpointRoute,
+  httpCallOf,
+  HTTP_ROLES,
+  type HttpRole,
+  type JoinResult,
+} from './join.js';
+export { writeBroken, isJoinWire } from './broken-v2.js';
 export {
   upgradeGraph,
   infraProfileOf,

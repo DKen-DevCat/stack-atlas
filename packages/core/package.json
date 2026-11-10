@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@stack-atlas/schema": "workspace:*",
+    "@stack-atlas/wiring": "workspace:*",
     "yaml": "^2.8.0"
   }
 }

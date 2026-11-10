@@ -5,7 +5,16 @@
  * ★ この契約は core と各抽出器を並行して実装するための合意点。
  *    変更するときは両方を同時に直すこと。
  */
-import type { Edge, Flow, GraphNode, Layer } from '@stack-atlas/schema';
+import type {
+  Edge,
+  Flow,
+  GraphNode,
+  Layer,
+  NamedType,
+  NodeV2,
+  Runtime,
+  WireV2,
+} from '@stack-atlas/schema';
 
 /** 抽出器が出す部分ノード。id と kind と name 以外は省略可（マージで補完される） */
 export type PartialNode = Pick<GraphNode, 'id'> &
@@ -13,6 +22,32 @@ export type PartialNode = Pick<GraphNode, 'id'> &
     /** 省略時は config.layers / kind→layer の既定で割り当てる */
     layer?: string;
   };
+
+/**
+ * 言語アダプタ（8-2）が出す v2 の箱。runtime はアダプタが決められないとき省略してよい
+ * （マージで upgrade の箱 → 置き換える v1 の箱 → browser の順に補う。docs/17 §7 #4）
+ */
+export type PartialNodeV2 = Omit<NodeV2, 'runtime'> & { runtime?: Runtime };
+
+/**
+ * 言語アダプタの v2 の部分グラフ（docs/17 §3.1）。v1 の nodes / edges と同じ出力に並べてよい。
+ * - nodes: 関数の単位の箱（口・項目・links）。同じ id の upgrade の箱とは mergeV2 で合わせる（口・項目・links・runtime は
+ *   アダプタが勝ち、host・cache・screen は upgrade の値を残す）
+ * - wires: 同じ言語の中の線（呼び出し・戻り・render）。言語をまたぐ線（HTTP・SQL）は合流の段（join.ts）が引く
+ * - types: 項目の typeRef の宛先（同じ id が upgrade にあればそちらを残す）
+ * - groups: 関数の箱 id → 置き換える v1 の箱 id。アダプタが「この v1 の箱は自分の関数の箱で置き換わる」と明示するもの。
+ *   無くても mergeV2 が file と meta.go.pkg の被覆で判定する（D53）。明示したものは被覆に関係なく group にする
+ * - refs: 箱 id → その箱（の宣言）が参照する箱・v1 の箱の id（呼び出し・描画・呼び出しでない参照。型の参照も）。
+ *   graph.json には出さない。掃除で、group になった v1 の箱に残った箱の単位の線を、実際に参照している中の関数の箱へ
+ *   だけ付け替えるのに使う（2026-11-09 レビュー C6）
+ */
+export interface PartialGraphV2 {
+  nodes: PartialNodeV2[];
+  wires: WireV2[];
+  types?: NamedType[];
+  groups?: Record<string, string>;
+  refs?: Record<string, string[]>;
+}
 
 /** 抽出器 1 つの出力。マージで統合される */
 export interface PartialGraph {
@@ -22,6 +57,8 @@ export interface PartialGraph {
   flows?: Flow[];
   /** 追加 kind の表示定義（graph.json の kinds に出る。config.kinds が優先） */
   kinds?: Record<string, KindDefinition>;
+  /** 言語アダプタ（ts-types など）と openapi の v2 の部分グラフ（docs/17 §3.1） */
+  v2?: PartialGraphV2;
 }
 
 export interface Logger {
@@ -86,6 +123,11 @@ export interface StackAtlasConfig {
   }>;
   /** 抽出器の有効・無効（既定は detect() に従う） */
   extractors?: Record<string, boolean>;
+  /**
+   * 言語アダプタ（ts-types など。docs/17 §3.2）の上限。depth は型の展開の深さ（既定 2）、
+   * maxItems は 1 箱の項目の数（既定 200）。超えたら警告して打ち切る
+   */
+  adapters?: { depth?: number; maxItems?: number };
 }
 
 /** 設定セクションに `repo` を付けると、その repo でだけ有効になる（core の sectionFor で判定） */
@@ -153,6 +195,13 @@ export interface RepoContext {
 export interface Extractor {
   /** "cdktf" など。meta.extractors に記録される */
   name: string;
+  /**
+   * v2 の部分グラフ（PartialGraph.v2）を出す抽出器の役割（docs/17 §2）。省略時は language。
+   * - language: 言語アダプタ（ts-types・go-types）。関数の単位の箱と、同じ言語の中の線
+   * - contract: 契約（openapi・sql）。合流点の箱（endpoint・table）と項目
+   * build の要約と `project.generator.adapters` / `contracts` を分けるのに使う
+   */
+  v2Role?: 'language' | 'contract';
   detect(ctx: RepoContext): Promise<boolean>;
   /**
    * @param upstream 先行する抽出器の結果をマージしたもの（読み取り専用）。

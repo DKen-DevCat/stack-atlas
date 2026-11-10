@@ -31,6 +31,8 @@ ts-types / go-types（v2 の部分グラフ）───────────�
 - `PartialGraph` に `v2?: { nodes: NodeV2[]; wires: WireV2[]; types?: TypeV2[]; groups?: Record<string, string> }` を足す。v1 の `nodes` / `edges` と同じ出力に並べてよい
 - **mergeV2 の規則**: 同じ箱 id は、口を口 id で、項目を項目 id で合わせる。アダプタの項目があれば upgrade の `_` 項目を消す。`_` どうしの線（箱の単位の線）は、同じ 2 つの箱の間にアダプタの項目の線が 1 本でもあれば消す（細かい方が勝つ）
 - v1 の `lib:` / `handler:`（ファイル・パッケージの箱）の中に関数の箱が出たら、その v1 の箱は消えて `group` になる（D47）。v1 の箱に付いていた線は、group の中の関数の箱どうしの線で置き換わる
+- （8-2a のレビューで追加）`PartialGraphV2.refs`（箱 → 参照先。型の注釈も含む）は掃除の付け替え先を決めるためだけに使い、graph.json には出さない。抽出器に `v2Role`（`language` / `contract`。openapi・sql は contract）。要約と `project.generator` は言語アダプタ（`adapters`）と契約（`contracts`）を分け、付け替え先を決められない線の数（`undetermined`）を出す
+- （8-2a で確定）`v2.nodes` は `PartialNodeV2[]`（`runtime` を省略できる。決められないときは upgrade の値か group の値、無ければ `browser`）。`groups` は「関数の箱 id → 置き換える v1 の箱 id」。config に `adapters: { depth, maxItems }`（既定 2 / 200。docs/13 §4.1）
 
 ### 3.2 `ts-types`（TS / TSX）
 
@@ -123,7 +125,7 @@ ts-types / go-types（v2 の部分グラフ）───────────�
 | # | 内容 |
 |---|---|
 | 8-2a | 契約（`PartialGraph.v2`、merge と prefix が運ぶ）、パスの正規化を core へ、openapi が endpoint の 4 口と項目を出す、ts-types（画面・部品・hook・関数、呼び出し・render・戻り、起動の links、runtime と複製、HTTP の呼び出し）、join の endpoint（クライアント側）、mergeV2 の掃除（join の後）と group 化、detectBroken をパイプラインに、例の id と runtime を規則に合わせる、テスト（POST の 2 件が出る） |
-| 8-2b | go-types（helper、自前の importer、net/http・認証・SQL のレシピ、型の表）、sql が table の 3 口と項目を出す、join の endpoint（サーバー側）と table、受け入れ条件のテスト（§7 #6）、CI で go を必須に、サマリ |
+| 8-2b | go-types（helper、自前の importer、net/http・認証・SQL のレシピ、型の表）、sql が table の 3 口と項目を出す、join の endpoint（サーバー側）と table、受け入れ条件のテスト（§7 #6）、CI で go を必須に、サマリ。8-2a の残り（§8.3）: export したオブジェクトリテラルのメソッドを関数の箱にする（fixture-repo の `api.getRaces`）、役割ごとの欠け（必須の body を送っていない）を broken で表す |
 
 ## 6. 決めたこと
 
@@ -136,3 +138,57 @@ ts-types / go-types（v2 の部分グラフ）───────────�
 | D52 | 合流点（endpoint / table）の線は役割の対（path / query / body / response / status / row）ごとに必ず親 1 本。D41（名前で全部写るなら親 1 本）は言語の中の線だけ。子を宣言していない側の子は写ったとみなす | D41 を合流点に当てると、受ける側だけにある必須の子（`occurredAt`）の線が消え、食い違いが検出されない（§7 #1） |
 | D53 | 「細かい方が勝つ」（D50）の掃除は join の後。group にするのは接頭辞ではなく file と `meta.go.pkg` の被覆で判定。呼び出しでない参照（定数の import、コールバック渡し、overrides）は、向き付きの箱の対に項目の線が無ければ `_` の項目と線を残し、残った数をサマリに出す | 合流の前に掃除すると v1 の api-link の線が残って二重になる。classify で `schema:` / `type:` になった Go の箱を取りこぼす（§7 #4） |
 | D54 | 名前は手で組んだ例に合わせる（§7 #2 の表）。runtime は アダプタ ＞ upgrade。**画面の箱（page / layout）は静的エクスポートでも `browser`**（利用者が見ているもの。D42 改訂と 8-1 の実装に合わせる）。`build` に置くのは `'use client'` の無い部品（ビルド時に描画されるもの）だけ | 例は wiring のテストで固定済みで、アダプタの出力と比べる正。8-1 の実装で、画面を build に置くと D42 改訂（画面はブラウザで動く）と矛盾することが分かった |
+| D55 | 関数の箱の id は `fn:<名前>`。ただし、ファイルの export がその関数 1 つで、名前がファイルの lib 名と同じなら v1 の id（`lib:fetcher`、kind helper）のまま | 手で組んだ例（`lib:fetcher`）と D47（`fn:`）の両方を満たす規則。メモと差分のキーが変わらない |
+| D56 | 関数の箱の `group` は、置き換えた v1 の箱の id（ディレクトリではない）。v1 の箱を group にするのは、その export が**全部**関数の箱になったときだけ | メモ・差分・8-3 の畳みを v1 の id で引ける。定数の export を持つファイルの箱が消えない。例の `group`（ディレクトリ）は比べる対象外なので 8-3 で直す |
+| D57 | 型の照合（detectBroken）は endpoint・table に触れる線だけ。body の無い応答（`out/status`）→ `ret_n` は照合しない | docs/15 §3.5「切れるのは合流点」。言語の中の線は構造的部分型で、送る側にだけあるプロパティが error になる。fetch の `Response` と integer を比べて誤った error が出た |
+| D58 | 起動の links（`in/html` / `in/call` / `in/props` / `in/r` → `call_n` / `render_n` / データ由来の link が無い `out/return`）は `crude`。起動の項目が無い箱（引数を持つ関数）は引数の全部が起点。残った `_` は `in/_` → `out/_` と `in/_` → 全部の out を crude で足す。例の 2 本（`route:/`・`fn:getToday`）も crude に直した | §7 #3 の規則どおり。`_` の links が無いと fixture-repo の `route:/` から `schema:RaceItem` が光らない |
+| D59 | 合流点で、受ける側の**必須の役割**（requestBody が required など）を呼び出し元が丸ごと送っていないときは、呼び出し元の親の項目 `call_n` から `endpoint#in/<役割>` へ線を 1 本引き（via http）、`broken: [{ path: "", level: "error", reason: "送る側に無い（必須の body）" }]` を付ける | 役割ごとの欠けは子の照合（線の端どうし）では出ない。線が無いと赤くする場所が無い。path が空なら線そのものを指す（`detectBroken` の相対パスの規約どおり）。fixture-poly の PushToggle → POST /push/subscriptions で見つかった |
+
+## 8. 実装結果（Phase 8-2a。2026-11-09）
+
+### 8.1 できたもの
+
+- core: `paths.ts`（パスの正規化を api-link から移した。`[id]` / `[...slug]` も扱う）、`v2-parts.ts`、`merge-v2.ts`（mergeV2・cleanupV2・coverageV2）、`join.ts`（クライアント側の endpoint。D52 の役割ごとの親 1 本）、`broken-v2.ts`（detectBroken をパイプラインで。D57）。`buildGraph()` の結果に `v2Adapters`（サマリ）
+- `extractors/ts-types`（新規。ts-morph 内蔵の `ts`。依存は足していない）: 画面・部品・hook・関数の箱、呼び出し（`call_n` / `ret_n`）・render・戻り、起動の links、runtime と複製、HTTP の呼び出し。解析は ts-imports と共有（`analyzeTsRepo`、キャッシュ付き）。CLI の順は ts-imports の直後
+- openapi: `v2.ts`（endpoint の 4 口と項目。docs/16 §5 の表）
+- CLI: build のサマリに言語アダプタの自動率と合流の数（`formatAdapterSummary`）
+- 例 `examples/fixture-poly.today.v2.json`: `meta.http` を `call_1` の項目と子へ移した。起動の links 2 本を crude に（D58）
+
+### 8.2 数字（fixture-poly。テストで固定）
+
+| 項目 | 値 |
+|---|---|
+| 項目 | 292（unknown 70） |
+| 線 | 109（項目の単位 40 / 箱の単位 69、うち呼び出しでない参照 4） |
+| links | 92（exact 13 / crude 56）、不透明な箱 15 |
+| 合流 | endpoint と結んだ HTTP の呼び出し 5（結べないもの 0）、group にした v1 の箱 4、置き換えた箱の単位の線 28、broken のある線 1 |
+| 受け入れ（§7 #6、`adapters-acceptance.test.ts`） | 別名表は空。例の箱 10 個がすべてあり kind・runtime も一致。言語の中の線は (箱, 箱, via, reply) が一致、合流の線 5 本は項目の参照まで一致、例に無い余分な線 0（許可表も空）。validateGraphV2 のエラー 0 |
+| 食い違い | POST /transactions の body で `amount:warn`・`occurredAt:error`。全体は今 1 本（Go 側は 8-2b で増える） |
+| 性能 | build の中で ts-types 143ms。合成 150 ファイルで ts-imports ＋ ts-types 約 0.9 秒（テストの上限 5 秒 / 30 秒） |
+
+fixture-repo は 項目 132（unknown 56）、線 58（項目 26 / 箱 32、うち参照 14）、links 44（exact 3 / crude 38）、合流 0、group 1。
+docs/15 §7 の見積り（項目 90%・線 80%）との比較: 項目の型が決まった割合は 76%、線が項目の単位まで下がった割合は 37%。箱の単位の線の多くはアダプタの無い所（Terraform と Go。Go は 8-2b）。
+
+### 8.3 決めたこと（実装中。D55〜D58 のほか）
+
+1. HTTP の呼び出しの子: 呼び先が箱でない fetch は役割の子だけ（`call_1.input`）。ラッパーの init の項目は `body` に置き換え、`call_n.body → ラッパー#in/init`。`call_n.query` の言語の中の線は呼び先のパスの引数（`fetcher#in/url`）へ
+2. 呼び出しでない参照: ts-types が `_` の線を引く（相手は ts-imports と同じ。同じファイルの非 export の宣言も推移的にたどる）。upgrade の線のうち group になる v1 の箱に付いて残ったものは、相手がアダプタの箱でなければ中の関数の箱へ付け替え、アダプタの箱なら消す。配信の線は画面の `in/html` へ付け替える
+3. runtime: どの閉包にも入らないファイルはアダプタでは決めない。画面は自分は browser のまま、複製のどちらを描くかは server component の文脈（server / build）で選ぶ
+4. v2 の印: `project.generator.v2 = "upgrade"` を残し、`adapters: [...]` を足した。ビューアの警告を畳む動きは今のまま（8-3 で見直す）
+
+### 8.3b レビューの指摘で決めたこと（コードレビュー 10 件・セキュリティ 2 件＋1 件、2026-11-09）
+
+1. **掃除の規則の改訂**（D50・D53）: group になった v1 の箱に残った線は消さない。付け替え先は、実際に参照している中の関数の箱だけ（手がかりは `refs` → HTTP の `meta.http` が合うもの → 合流できなかった呼び出しを持つ箱の順）。決められなければ中の全部へ付け替えて `undetermined` に数える。「相手がアダプタの箱なら消す」は廃止（合流できなかった呼び出しや overrides の線が消えていた）。group に入れるのは v1 の箱の export になっている箱（と複製）だけ
+2. **overrides を v2 にも当てる**: docs/13 §3.5 に書いた。v1 の kind → v2 の via の読み替えは uses → call / return / render / props / sql、http → http / call / return、schema → sql、deploy → deliver / http、flow → http / event / deliver
+3. **上限**: openapi も `adapters.maxItems` を 1 操作あたり（request と response の合計。4 口への写しは数えない）で数え、超えたら警告して打ち切る。allOf のまとめは schema ごとに 1 回（菱形で倍々にならない）。ts-types は repo の外で宣言されたプロパティ（React の DOM の属性など）と上限で切ったプロパティを、子の無い不透明な項目 `props`（型は引数の型）にまとめる
+4. **HTTP の呼び出しの判定**（D45 の補足）: `fetch` と `api.callers` は名前で、自動検出したラッパーは宣言が repo の中にあるときだけ、get / post などの動詞は api-link のクライアントファイルの中だけ。パスより後ろの引数に関数を渡すもの（`app.get(path, handler)`）は呼び出しにしない
+5. **型の id**: docs/16 §3 の表（`type:<file>~<名前>`）
+6. **パスの正規化**: 正規表現を全部線形にした。2048 文字を超えるパスは正規化も照合もしない（1 回だけ警告）。合流はパスを 1 回ずつだけ正規化する
+7. **YAML の別名**: openapi の YAML の別名の展開は yaml の既定の上限（100）で止める（無制限だと別名を倍々に重ねた YAML で指数時間。範囲外で見つかったものを一緒に直した）
+8. 見つかったこと（直していない）: アダプタだけが出す id（`fn:…`）を overrides の `remove` に書くと、v1 の側は「削除しようとしたノードはありません」と警告するが、v2 では消える。警告が実態と合わない → 8-4（`validate --strict` と一緒に）
+
+### 8.4 残り（8-2b 以降）
+
+- App Router の `route.ts`、クラスの部品（未対応）
+- export したオブジェクトリテラルのメソッド（fixture-repo の `api.getRaces`）。fixture-repo の HTTP の呼び出しが項目の単位にならず、合流が 0 本 → 8-2b
+- 見つかったこと: PushToggle は body を送らないのに、POST /push/subscriptions は requestBody が必須。役割ごとの欠けは子の照合では出ないので 8-2a では出していない → D59 で表し方を決め、8-2b で実装する

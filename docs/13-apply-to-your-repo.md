@@ -240,6 +240,8 @@ deploy:
 
 動く例は `examples/fixture-poly/stack-atlas.overrides.yaml`。`api-link` が結べなかった呼び出しは `build` の警告に出る（該当 client の endpoint を overrides の `edges` に書く）。
 
+v2（配線図）にも同じ overrides が効く: `remove` の箱 id はその `@<runtime>` の複製と、group になるはずだった中の関数の箱も消す。`{ from, to, kind }` の削除は合流の後に当て、複製・group の中の箱・戻りの線まで広げる（kind は v2 の via に読み替える）。`nodes` の上書き（kind・name・file など）は言語アダプタの値に勝つ。
+
 ### 3.6 フロー（`flows.yaml`）
 
 ```sh
@@ -290,6 +292,7 @@ graph.json（v2）では flows は **views** に置き換わる（docs/15 §3.9�
 | `kinds` | `kind → { name, color, size, layer }`（graph.json の `kinds` に出る） | なし |
 | `screenshots.{baseUrl,viewport,routes,storageState,outDir,timeout,repo}` | スクショ設定（`docs/10`） | — |
 | `extractors` | `{ <name>: false }` で抽出器を無効化 | `detect()` に従う |
+| `adapters.{depth,maxItems}` | 言語アダプタ（v2。`ts-types` など）の上限。`depth` は型を項目に展開する深さ、`maxItems` は 1 箱の項目の数。超えたら警告して打ち切る（docs/17） | `2`、`200` |
 
 `deploy.<infra ID>` の値（複数指定可。キーの infra ノードが無いと**エラー**、`nodes` の ID が無いのも**エラー**）:
 

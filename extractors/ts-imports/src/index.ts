@@ -13,7 +13,14 @@
  */
 import { existsSync } from 'node:fs';
 import { basename, dirname, extname, relative, sep } from 'node:path';
-import { Node, Project, SyntaxKind, type ExportedDeclarations, type SourceFile } from 'ts-morph';
+import {
+  Node,
+  Project,
+  SyntaxKind,
+  ts,
+  type ExportedDeclarations,
+  type SourceFile,
+} from 'ts-morph';
 import type { Edge } from '@stack-atlas/schema';
 import type {
   ClassifyRule,
@@ -23,7 +30,12 @@ import type {
   RepoContext,
 } from '@stack-atlas/core';
 import { findClassifyRule, globToRegExp, sectionFor, toArray } from '@stack-atlas/core';
-import { findNextDirs, listNextFiles } from '@stack-atlas/extractor-nextjs-app';
+import {
+  findNextDirs,
+  listNextFiles,
+  type NextDirs,
+  type NextFile,
+} from '@stack-atlas/extractor-nextjs-app';
 
 export { segmentToUrl } from '@stack-atlas/core';
 
@@ -79,7 +91,7 @@ export function tsconfigPaths(ctx: RepoContext): string[] {
 
 const toPosix = (p: string) => p.split(sep).join('/');
 
-interface DeclInfo {
+export interface DeclInfo {
   exportName: string;
   decl: Node;
   category: Category;
@@ -89,32 +101,18 @@ interface DeclInfo {
   layer?: string;
 }
 
-interface NodeAcc {
-  id: string;
-  category: Category;
-  kind: string;
-  layer: string | undefined;
-  name: string;
-  file: string;
-  line: number;
-  code: string;
-  exportNames: string[];
-  symbolKind: SymbolKind;
-  decls: Node[];
-}
-
 const truncate = (text: string, lines = 20) => {
   const ls = text.split('\n');
   return ls.length > lines ? [...ls.slice(0, lines), '  // …'].join('\n') : text;
 };
 
 /** 宣言を含む文（VariableDeclaration なら VariableStatement） */
-function statementOf(decl: Node): Node {
+export function statementOf(decl: Node): Node {
   if (Node.isVariableDeclaration(decl)) return decl.getVariableStatement() ?? decl;
   return decl;
 }
 
-function hasJsx(n: Node): boolean {
+export function hasJsx(n: Node): boolean {
   return (
     n.getFirstDescendant(
       (d) => Node.isJsxElement(d) || Node.isJsxSelfClosingElement(d) || Node.isJsxFragment(d),
@@ -123,7 +121,7 @@ function hasJsx(n: Node): boolean {
 }
 
 /** 関数として扱える初期化子（arrow / function 式 / memo(() => …) など） */
-function functionInit(decl: Node): Node | undefined {
+export function functionInit(decl: Node): Node | undefined {
   if (Node.isFunctionDeclaration(decl)) return decl;
   if (!Node.isVariableDeclaration(decl)) return undefined;
   const init = decl.getInitializer();
@@ -177,7 +175,7 @@ export function classify(exportName: string, decl: Node, o: ClassifyOptions): De
 }
 
 /** 宣言の中で使われている識別子（同じファイルの非 export のトップレベル宣言は推移的にたどる） */
-function referencedNames(decls: Node[], locals: Map<string, Node[]>): Set<string> {
+export function referencedNames(decls: Node[], locals: Map<string, Node[]>): Set<string> {
   const seen = new Set<string>();
   const queue = [...decls];
   const visited = new Set<Node>();
@@ -197,7 +195,7 @@ function referencedNames(decls: Node[], locals: Map<string, Node[]>): Set<string
 }
 
 /** 非 export のトップレベル宣言: 名前 → 宣言 */
-function localDeclarations(sf: SourceFile): Map<string, Node[]> {
+export function localDeclarations(sf: SourceFile): Map<string, Node[]> {
   const m = new Map<string, Node[]>();
   const add = (name: string | undefined, n: Node) => {
     if (!name) return;
@@ -221,7 +219,256 @@ function localDeclarations(sf: SourceFile): Map<string, Node[]> {
   return m;
 }
 
-const declKey = (d: Node) => `${d.getSourceFile().getFilePath()}#${d.getStart()}`;
+/** 宣言の位置のキー（ファイルの絶対パス#開始位置）。Project をまたいで同じ宣言を指す */
+export const declKey = (d: Node) => `${d.getSourceFile().getFilePath()}#${d.getStart()}`;
+
+/** tsconfig ごとの Project（ts-imports と ts-types で共有する。docs/17 §7 #10） */
+export interface TsProject {
+  /** repo 相対の tsconfig のパス */
+  tsconfig: string;
+  project: Project;
+  /**
+   * 解けなかった `extends`（node_modules の共有設定など。paths が黙って消える。docs/17 §7 #10）。
+   * ts-morph が tsconfig を読んだときの診断から取る（読み直さない）
+   */
+  unresolvedExtends: string[];
+}
+
+/** ts-imports の分類と ID の結果（ts-types が同じ規則で箱を作るために共有する） */
+export interface TsRepoAnalysis {
+  /** repo の root（/ 区切り） */
+  root: string;
+  projects: TsProject[];
+  /** ソースファイル（絶対パス → SourceFile。最初の tsconfig のものを使う） */
+  files: Map<string, SourceFile>;
+  /** ファイル（絶対パス）→ そのファイルを持つ Project */
+  projectOf: Map<string, Project>;
+  /** Next の page / layout / route.ts（絶対パス → nextjs-app と同じ ID） */
+  routeIdOf: Map<string, string>;
+  /** Next の app / pages のディレクトリと、その中のファイル（ts-types が同じ走査の結果を使う） */
+  nextDirs: NextDirs;
+  nextFiles: NextFile[];
+  /** 分類した export（ファイルの絶対パスごと） */
+  perFile: Map<string, DeclInfo[]>;
+  /** 宣言（declKey）→ ノード ID */
+  nodeOfDecl: Map<string, string>;
+  /** ノード ID → ノード */
+  nodes: Map<string, TsNodeInfo>;
+  /** ファイル（絶対パス）→ そのファイルのノード */
+  nodesOfFile: Map<string, TsNodeInfo[]>;
+}
+
+/** 分類した 1 ノード（lib はファイル単位で export を束ねる） */
+export interface TsNodeInfo {
+  id: string;
+  category: Category;
+  kind: string;
+  layer: string | undefined;
+  name: string;
+  /** repo 相対パス */
+  file: string;
+  line: number;
+  code: string;
+  exportNames: string[];
+  symbolKind: SymbolKind;
+  decls: Node[];
+}
+
+/** ctx ごとの解析結果（同じ build の ts-imports と ts-types で 1 回だけ読む） */
+const analyses = new WeakMap<RepoContext, TsRepoAnalysis>();
+
+/**
+ * repo の TS を読み、export を分類して ID を決める（ts-imports の手順 1〜4）。同じ ctx では 1 回だけ読んで使い回す
+ * （ts-morph の Project を抽出器の間で共有する。docs/17 §7 #10）
+ */
+export function analyzeTsRepo(ctx: RepoContext, upstream: Readonly<PartialGraph>): TsRepoAnalysis {
+  const cached = analyses.get(ctx);
+  if (cached) return cached;
+  const a = analyze(ctx, upstream);
+  analyses.set(ctx, a);
+  return a;
+}
+
+function analyze(ctx: RepoContext, upstream: Readonly<PartialGraph>): TsRepoAnalysis {
+  const root = toPosix(ctx.root);
+  const inRepo = (abs: string) => {
+    const r = toPosix(relative(root, abs));
+    return !r.startsWith('..') && !r.split('/').includes('node_modules');
+  };
+
+  // 1) tsconfig ごとに Project を作り、ソースファイルをパスで一意にする
+  const files = new Map<string, SourceFile>();
+  const projects: TsProject[] = [];
+  const projectOf = new Map<string, Project>();
+  for (const tc of tsconfigPaths(ctx)) {
+    let project: Project;
+    try {
+      project = new Project({ tsConfigFilePath: ctx.resolve(tc) });
+    } catch (e) {
+      ctx.log.warn(`ts-imports: ${tc} を読めません: ${String(e)}`);
+      continue;
+    }
+    projects.push({
+      tsconfig: tc,
+      project,
+      unresolvedExtends: unresolvedExtends(ctx, tc, project),
+    });
+    for (const sf of project.getSourceFiles()) {
+      const p = sf.getFilePath();
+      if (sf.isDeclarationFile() || !SOURCE_EXT.test(p) || !inRepo(p) || files.has(p)) continue;
+      files.set(p, sf);
+      projectOf.set(p, project);
+    }
+  }
+
+  // 2) Next の page / layout / route.ts / pages（nextjs-app と同じ ID。ファイル単位）
+  const routeIdOf = new Map<string, string>();
+  const nextDirs = findNextDirs(ctx.root, sectionFor(ctx, ctx.config.next) ?? {});
+  const nextFiles = listNextFiles(ctx.root, nextDirs).files;
+  for (const f of nextFiles) routeIdOf.set(toPosix(f.abs), f.id);
+
+  const handlerGlobs = Object.values(ctx.config.deploy ?? {}).flatMap((d) =>
+    toArray(d.handlers).map(globToRegExp),
+  );
+
+  // 3) export の分類
+  const perFile = new Map<string, DeclInfo[]>();
+  for (const [p, sf] of files) {
+    if (routeIdOf.has(p)) continue;
+    const rel = toPosix(relative(root, p));
+    const infos: DeclInfo[] = [];
+    for (const [exportName, decls] of sf.getExportedDeclarations()) {
+      for (const decl of decls) {
+        if (decl.getSourceFile() !== sf) continue; // 再エクスポートは宣言元で数える
+        let name = exportName;
+        if (name === 'default') {
+          const own = (
+            decl as ExportedDeclarations & { getName?: () => string | undefined }
+          ).getName?.();
+          name = own ?? libName(rel);
+        }
+        infos.push(classify(name, decl, { rel, handlerGlobs }));
+      }
+    }
+    if (infos.length > 0) perFile.set(p, infos);
+  }
+
+  // 3.5) config.classify（glob → kind / layer）で上書き
+  for (const [p, infos] of perFile) {
+    const rel = toPosix(relative(root, p));
+    const rule = matchClassify(ctx.config.classify, ctx.repoName, rel);
+    if (!rule) continue;
+    for (const info of infos) {
+      if (rule.kind) info.kind = rule.kind;
+      if (rule.layer) info.layer = rule.layer;
+    }
+  }
+
+  // 4) ID を決める（衝突したらファイルパス付き。複数 repo なら他 repo の lib: とも衝突させない）
+  const multiRepo = Object.keys(ctx.repos ?? {}).length > 1;
+  const otherRepoIds = new Set(
+    multiRepo
+      ? upstream.nodes
+          .filter((n) => !(n.file ?? '').startsWith(`${ctx.repoName}/`))
+          .map((n) => n.id)
+      : [],
+  );
+  const prefixOf = (info: DeclInfo) =>
+    info.kind ? (KIND_PREFIX[info.kind] ?? info.kind) : info.category;
+  const isLib = (info: DeclInfo) => (info.kind ? info.kind === 'lib' : info.category === 'lib');
+  const candidate = (rel: string, info: DeclInfo) => {
+    if (!isLib(info)) return `${prefixOf(info)}:${info.exportName}`;
+    const id = `lib:${libName(rel)}`;
+    return otherRepoIds.has(id) ? `lib:${ctx.repoName}/${rel}` : id;
+  };
+  const filesById = new Map<string, Set<string>>();
+  for (const [p, infos] of perFile) {
+    const rel = toPosix(relative(root, p));
+    for (const info of infos) {
+      const id = candidate(rel, info);
+      filesById.set(id, (filesById.get(id) ?? new Set()).add(p));
+    }
+  }
+  const nodes = new Map<string, TsNodeInfo>();
+  const nodeOfDecl = new Map<string, string>();
+  const nodesOfFile = new Map<string, TsNodeInfo[]>();
+  for (const [p, infos] of perFile) {
+    const rel = toPosix(relative(root, p));
+    for (const info of infos) {
+      let id = candidate(rel, info);
+      if ((filesById.get(id)?.size ?? 0) > 1) {
+        const scoped = multiRepo ? `${ctx.repoName}/${rel}` : rel;
+        const fallback = isLib(info)
+          ? `lib:${scoped}`
+          : `${prefixOf(info)}:${scoped}#${info.exportName}`;
+        ctx.log.info(`ts-imports: ${id} が複数ファイルにあるので ${fallback} にします`);
+        id = fallback;
+      }
+      nodeOfDecl.set(declKey(info.decl), id);
+      const stmt = statementOf(info.decl);
+      const acc = nodes.get(id);
+      if (acc) {
+        acc.decls.push(info.decl);
+        if (!acc.exportNames.includes(info.exportName)) acc.exportNames.push(info.exportName);
+        if (info.symbolKind === 'zod') acc.symbolKind = 'zod';
+        continue;
+      }
+      const n: TsNodeInfo = {
+        id,
+        category: info.category,
+        kind: info.kind ?? KIND_OF[info.category],
+        layer: info.layer,
+        name: isLib(info) ? libName(rel) : info.exportName,
+        file: rel,
+        line: stmt.getStartLineNumber(),
+        code: truncate(stmt.getText()),
+        exportNames: [info.exportName],
+        symbolKind: info.symbolKind,
+        decls: [info.decl],
+      };
+      nodes.set(id, n);
+      nodesOfFile.set(p, [...(nodesOfFile.get(p) ?? []), n]);
+    }
+  }
+  // 同じ ID に型と zod の両方がある（EntryInput）など: コード片は宣言を並べる
+  for (const n of nodes.values()) {
+    if (n.decls.length > 1 && n.kind !== 'lib') {
+      const sorted = [...n.decls].sort((a, b) => a.getStart() - b.getStart());
+      n.code = truncate(sorted.map((d) => statementOf(d).getText()).join('\n'));
+      n.line = statementOf(sorted[0]!).getStartLineNumber();
+    }
+  }
+  return {
+    root,
+    projects,
+    files,
+    projectOf,
+    routeIdOf,
+    nextDirs,
+    nextFiles,
+    perFile,
+    nodeOfDecl,
+    nodes,
+    nodesOfFile,
+  };
+}
+
+/**
+ * tsconfig の `extends` のうち解けなかったもの。ts-morph が Project を作るときに読んだ診断（getConfigFileParsingDiagnostics）
+ * から取る。extends の値は tsconfig の生の JSON から（extends の連鎖は解き直さない）
+ */
+function unresolvedExtends(ctx: RepoContext, tc: string, project: Project): string[] {
+  const raw = ts.readConfigFile(ctx.resolve(tc), ts.sys.readFile);
+  const ext = (raw.config as { extends?: unknown } | undefined)?.extends;
+  const list = (typeof ext === 'string' ? [ext] : Array.isArray(ext) ? ext : []).filter(
+    (e): e is string => typeof e === 'string',
+  );
+  if (!list.length) return [];
+  const texts = project
+    .getConfigFileParsingDiagnostics()
+    .map((d) => ts.flattenDiagnosticMessageText(d.compilerObject.messageText, ' '));
+  return list.filter((e) => texts.some((t) => t.includes(e)));
+}
 
 export const extractor: Extractor = {
   name: NAME,
@@ -230,145 +477,7 @@ export const extractor: Extractor = {
     return tsconfigPaths(ctx).length > 0;
   },
   async extract(ctx, upstream): Promise<PartialGraph> {
-    const root = toPosix(ctx.root);
-    const inRepo = (abs: string) => {
-      const r = toPosix(relative(root, abs));
-      return !r.startsWith('..') && !r.split('/').includes('node_modules');
-    };
-
-    // 1) tsconfig ごとに Project を作り、ソースファイルをパスで一意にする
-    const files = new Map<string, SourceFile>();
-    for (const tc of tsconfigPaths(ctx)) {
-      let project: Project;
-      try {
-        project = new Project({ tsConfigFilePath: ctx.resolve(tc) });
-      } catch (e) {
-        ctx.log.warn(`ts-imports: ${tc} を読めません: ${String(e)}`);
-        continue;
-      }
-      for (const sf of project.getSourceFiles()) {
-        const p = sf.getFilePath();
-        if (sf.isDeclarationFile() || !SOURCE_EXT.test(p) || !inRepo(p) || files.has(p)) continue;
-        files.set(p, sf);
-      }
-    }
-
-    // 2) Next の page / layout / route.ts / pages（nextjs-app と同じ ID。ファイル単位）
-    const routeIdOf = new Map<string, string>();
-    const dirs = findNextDirs(ctx.root, sectionFor(ctx, ctx.config.next) ?? {});
-    for (const f of listNextFiles(ctx.root, dirs).files) routeIdOf.set(toPosix(f.abs), f.id);
-
-    const handlerGlobs = Object.values(ctx.config.deploy ?? {}).flatMap((d) =>
-      toArray(d.handlers).map(globToRegExp),
-    );
-
-    // 3) export の分類
-    const perFile = new Map<string, DeclInfo[]>();
-    for (const [p, sf] of files) {
-      if (routeIdOf.has(p)) continue;
-      const rel = toPosix(relative(root, p));
-      const infos: DeclInfo[] = [];
-      for (const [exportName, decls] of sf.getExportedDeclarations()) {
-        for (const decl of decls) {
-          if (decl.getSourceFile() !== sf) continue; // 再エクスポートは宣言元で数える
-          let name = exportName;
-          if (name === 'default') {
-            const own = (
-              decl as ExportedDeclarations & { getName?: () => string | undefined }
-            ).getName?.();
-            name = own ?? libName(rel);
-          }
-          infos.push(classify(name, decl, { rel, handlerGlobs }));
-        }
-      }
-      if (infos.length > 0) perFile.set(p, infos);
-    }
-
-    // 3.5) config.classify（glob → kind / layer）で上書き
-    for (const [p, infos] of perFile) {
-      const rel = toPosix(relative(root, p));
-      const rule = matchClassify(ctx.config.classify, ctx.repoName, rel);
-      if (!rule) continue;
-      for (const info of infos) {
-        if (rule.kind) info.kind = rule.kind;
-        if (rule.layer) info.layer = rule.layer;
-      }
-    }
-
-    // 4) ID を決める（衝突したらファイルパス付き。複数 repo なら他 repo の lib: とも衝突させない）
-    const multiRepo = Object.keys(ctx.repos ?? {}).length > 1;
-    const otherRepoIds = new Set(
-      multiRepo
-        ? upstream.nodes
-            .filter((n) => !(n.file ?? '').startsWith(`${ctx.repoName}/`))
-            .map((n) => n.id)
-        : [],
-    );
-    const prefixOf = (info: DeclInfo) =>
-      info.kind ? (KIND_PREFIX[info.kind] ?? info.kind) : info.category;
-    const isLib = (info: DeclInfo) => (info.kind ? info.kind === 'lib' : info.category === 'lib');
-    const candidate = (rel: string, info: DeclInfo) => {
-      if (!isLib(info)) return `${prefixOf(info)}:${info.exportName}`;
-      const id = `lib:${libName(rel)}`;
-      return otherRepoIds.has(id) ? `lib:${ctx.repoName}/${rel}` : id;
-    };
-    const filesById = new Map<string, Set<string>>();
-    for (const [p, infos] of perFile) {
-      const rel = toPosix(relative(root, p));
-      for (const info of infos) {
-        const id = candidate(rel, info);
-        filesById.set(id, (filesById.get(id) ?? new Set()).add(p));
-      }
-    }
-    const nodes = new Map<string, NodeAcc>();
-    const nodeOfDecl = new Map<string, string>();
-    const nodesOfFile = new Map<string, NodeAcc[]>();
-    for (const [p, infos] of perFile) {
-      const rel = toPosix(relative(root, p));
-      for (const info of infos) {
-        let id = candidate(rel, info);
-        if ((filesById.get(id)?.size ?? 0) > 1) {
-          const scoped = multiRepo ? `${ctx.repoName}/${rel}` : rel;
-          const fallback = isLib(info)
-            ? `lib:${scoped}`
-            : `${prefixOf(info)}:${scoped}#${info.exportName}`;
-          ctx.log.info(`ts-imports: ${id} が複数ファイルにあるので ${fallback} にします`);
-          id = fallback;
-        }
-        nodeOfDecl.set(declKey(info.decl), id);
-        const stmt = statementOf(info.decl);
-        const acc = nodes.get(id);
-        if (acc) {
-          acc.decls.push(info.decl);
-          if (!acc.exportNames.includes(info.exportName)) acc.exportNames.push(info.exportName);
-          if (info.symbolKind === 'zod') acc.symbolKind = 'zod';
-          continue;
-        }
-        const n: NodeAcc = {
-          id,
-          category: info.category,
-          kind: info.kind ?? KIND_OF[info.category],
-          layer: info.layer,
-          name: isLib(info) ? libName(rel) : info.exportName,
-          file: rel,
-          line: stmt.getStartLineNumber(),
-          code: truncate(stmt.getText()),
-          exportNames: [info.exportName],
-          symbolKind: info.symbolKind,
-          decls: [info.decl],
-        };
-        nodes.set(id, n);
-        nodesOfFile.set(p, [...(nodesOfFile.get(p) ?? []), n]);
-      }
-    }
-    // 同じ ID に型と zod の両方がある（EntryInput）など: コード片は宣言を並べる
-    for (const n of nodes.values()) {
-      if (n.decls.length > 1 && n.kind !== 'lib') {
-        const sorted = [...n.decls].sort((a, b) => a.getStart() - b.getStart());
-        n.code = truncate(sorted.map((d) => statementOf(d).getText()).join('\n'));
-        n.line = statementOf(sorted[0]!).getStartLineNumber();
-      }
-    }
+    const { root, files, routeIdOf, nodeOfDecl, nodes, nodesOfFile } = analyzeTsRepo(ctx, upstream);
 
     // 5) import → uses エッジ
     const edges = new Map<string, Edge>();
