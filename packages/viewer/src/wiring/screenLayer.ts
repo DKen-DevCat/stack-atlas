@@ -13,6 +13,7 @@ import { measureComponents, settle } from './measure';
 import {
   frameBox,
   layerTransform,
+  MAX_LIVE,
   placeholderText,
   planLive,
   screenOpacity,
@@ -41,9 +42,14 @@ interface Live {
   frame: HTMLIFrameElement;
 }
 
+/** 隠して残す iframe の上限（生かす iframe の上限と同じ。畳む・開くを繰り返しても増え続けない） */
+const PARKED_MAX = MAX_LIVE;
+
 /** e2e・デバッグ用 */
 export interface ScreenDebug {
   live: string[];
+  /** 配置に箱が無いので隠して残している iframe（箱が戻ったら読み直さずに置き直す） */
+  parked: string[];
   state: Record<string, ScreenState>;
   measured: Record<string, ScreenRegion[]>;
   regions: Record<string, ScreenRegion[]>;
@@ -55,6 +61,11 @@ export class ScreenLayer {
   specs: ScreenSpec[];
   private byId: Map<string, ScreenSpec>;
   private readonly live = new Map<string, Live>();
+  /**
+   * 配置から箱が消えた画面の iframe（畳んだ場面など。docs/18 §11.11、docs/21 §2.9）。壊さずに隠して残し、
+   * 箱が戻ったら読み直さずに置き直す。古い順に PARKED_MAX 個まで（超えた分は外す）
+   */
+  private readonly parked = new Map<string, Live>();
   private readonly state = new Map<string, ScreenState>();
   private readonly measured = new Map<string, ScreenRegion[]>();
   private readonly nodeIds: Set<string>;
@@ -74,24 +85,35 @@ export class ScreenLayer {
   }
 
   /**
-   * 配置が変わった（場面を差し替えた。docs/18 §11.3）。画面の領域を計算し直し、無くなった画面の iframe は外し、
-   * 生きている iframe は読み直さずに置き直す。測った領域は画面のビューポートの座標なので残す
+   * 配置が変わった（場面を差し替えた。docs/18 §11.3）。画面の領域を計算し直し、生きている iframe は読み直さずに置き直す。
+   * 配置に箱が無くなった画面の iframe は壊さずに隠して残し（parked）、箱が戻った画面の iframe は元の位置に戻す。
+   * 状態と測った領域は消さない（索引は変わらず、測った領域は画面のビューポートの座標なので、配置が変わっても使える）
    */
   setLayout(layout: WiringLayout) {
     this.specs = screenSpecs(this.opts.index, layout, this.opts.baseUrl, location.href);
     this.byId = new Map(this.specs.map((s) => [s.id, s]));
-    for (const id of [...this.state.keys()]) if (!this.byId.has(id)) this.state.delete(id);
-    for (const id of [...this.measured.keys()]) if (!this.byId.has(id)) this.measured.delete(id);
     for (const s of this.specs)
       if (!this.state.has(s.id)) this.state.set(s.id, s.refusal ?? 'idle');
     for (const [id, l] of [...this.live]) {
       const s = this.byId.get(id);
-      if (!s || !s.src) {
-        this.unmount(id);
+      if (s?.src) {
+        place(l, s);
         continue;
       }
-      place(l, s);
+      this.live.delete(id);
+      l.wrap.style.visibility = 'hidden';
+      this.parked.set(id, l);
     }
+    for (const [id, l] of [...this.parked]) {
+      const s = this.byId.get(id);
+      if (!s?.src) continue;
+      this.parked.delete(id);
+      place(l, s);
+      l.wrap.style.visibility = '';
+      l.wrap.style.opacity = String(screenOpacity(this.lit, id));
+      this.live.set(id, l);
+    }
+    for (const id of [...this.parked.keys()].slice(0, -PARKED_MAX)) this.unmount(id);
     this.setView(this.view);
   }
 
@@ -133,6 +155,7 @@ export class ScreenLayer {
       Object.fromEntries([...m].sort(([a], [b]) => (a < b ? -1 : 1)));
     return {
       live: [...this.live.keys()].sort(),
+      parked: [...this.parked.keys()].sort(),
       state: rec(this.state),
       measured: rec(this.measured),
       regions: rec(this.regions()),
@@ -142,7 +165,7 @@ export class ScreenLayer {
   dispose() {
     this.disposed = true;
     if (this.raf) cancelAnimationFrame(this.raf);
-    for (const id of [...this.live.keys()]) this.unmount(id);
+    for (const id of [...this.live.keys(), ...this.parked.keys()]) this.unmount(id);
     this.el.remove();
   }
 
@@ -200,15 +223,21 @@ export class ScreenLayer {
   }
 
   private unmount(id: string) {
-    const l = this.live.get(id);
+    const l = this.live.get(id) ?? this.parked.get(id);
     if (!l) return;
     this.live.delete(id);
+    this.parked.delete(id);
     l.wrap.remove();
     if (this.state.get(id) !== 'blocked') this.state.set(id, 'idle');
   }
 
+  /** まだ持っている iframe か（生きているか、隠して残している） */
+  private holds(id: string, live: Live) {
+    return this.live.get(id) === live || this.parked.get(id) === live;
+  }
+
   private async loaded(s: ScreenSpec, live: Live) {
-    if (this.live.get(s.id) !== live) return; // 外したあとに届いた
+    if (!this.holds(s.id, live)) return; // 外したあとに届いた
     const doc = readableDocument(live.frame);
     if (!doc) {
       // 別の origin（応答ヘッダの sandbox に allow-same-origin が無い、など）。プレースホルダと graph の regions で描く
@@ -221,7 +250,7 @@ export class ScreenLayer {
     this.state.set(s.id, 'ready');
     this.decorate();
     await settle(doc, SETTLE_MS);
-    if (this.disposed || this.live.get(s.id) !== live) return;
+    if (this.disposed || !this.holds(s.id, live)) return;
     this.measured.set(s.id, this.measure(doc, s));
     this.opts.onRegions();
   }

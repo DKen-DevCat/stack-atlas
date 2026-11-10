@@ -91,10 +91,11 @@ export interface WiringDebug {
   /** 今の g.view の markup（球の層の中身は除く）。付け替えたあとと作り直したあとの等価を確かめる */
   viewHtml(): string;
   /**
-   * 今の状態で場面を当て直す（全体を作り直す。選択・分岐・視点はそのまま、球は続きから）。boxWidth を渡すと
-   * 箱の幅を変えた配置で当て直す（配置の違う場面を当てる口の確かめ。折りたたみ = Q19 が使う継ぎ目）
+   * 今の状態で場面を当て直す（全体を作り直す。選択・分岐・視点はそのまま、球は続きから）。配置の違う場面を当てる口の
+   * 確かめ（折りたたみ = Q19 が使う継ぎ目）に、boxWidth で箱の幅を変えた配置、omit でその箱（と両端の線）を抜いた配置を
+   * 当てられる。どちらかを渡すと元の配置から作り直す（`omit: []` で抜いた箱が戻る）
    */
-  rebuild(opts?: { boxWidth?: number }): void;
+  rebuild(opts?: { boxWidth?: number; omit?: string[] }): void;
 }
 
 /** 球の時刻の正（Phase 8-6、D106）。2 面のとき 3D の地図はこれを写して同じ時刻に球を動かす */
@@ -179,6 +180,27 @@ const sortedSets = (s: { nodes: Set<string>; items: Set<string>; wires: Set<stri
   items: [...s.items].sort(),
   wires: [...s.wires].sort(),
 });
+
+/**
+ * 箱を抜いた配置（デバッグの rebuild の omit 用。索引はそのままなので線のキーは変わらない）。抜いた箱と、そこに
+ * つながる線・切れている線を配置から外す
+ */
+function withoutBoxes(index: GraphIndex, layout: WiringLayout, omit: ReadonlySet<string>) {
+  if (omit.size === 0) return layout;
+  const boxes = new Map([...layout.boxes].filter(([id]) => !omit.has(id)));
+  const gone = new Set(
+    index.wires
+      .filter((w) => omit.has(w.fromNode.node.id) || omit.has(w.toNode.node.id))
+      .map((w) => w.key),
+  );
+  const routes = new Map([...layout.routes].filter(([key]) => !gone.has(key)));
+  const plans = new Map([...layout.plans].filter(([key]) => !gone.has(key)));
+  const pins = new Map(
+    [...layout.pins].filter(([ref]) => !omit.has(index.items.get(ref)?.node.id ?? '')),
+  );
+  const broken = layout.broken.filter((b) => !gone.has(b.wire));
+  return { ...layout, boxes, pins, plans, routes, broken };
+}
 
 /** graph v2 を配線図として root に描く。参照が解けない graph は indexGraph が例外を投げる */
 export function mountWiring(opts: WiringOptions): WiringApp {
@@ -375,6 +397,8 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     memoUi?.show(selection);
   };
   const doSelect = (next: Selection | null, fromView = false) => {
+    // 何も選んでいないときの解除（Esc・空白のクリック）は何も変わらないので付け替えない
+    if (!next && !selection && !lit && choice.id === null) return;
     applySelection(next, fromView);
     paint();
     opts.onSelectionChange?.(selection, lit);
@@ -512,12 +536,14 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     ballPositions: () => player.positions(),
     viewHtml: () => view.viewHtml(),
     rebuild: (o) => {
-      if (!o?.boxWidth) return setScene({ ...scene });
-      const layout = layoutWiring(scene.index, {
-        ...(overlay ? { ghostItems: overlay.ghost.items } : {}),
-        boxWidth: o.boxWidth,
-      });
-      setScene({ ...scene, layout });
+      if (!o?.boxWidth && !o?.omit) return setScene({ ...scene });
+      const layout = o.boxWidth
+        ? layoutWiring(scene.index, {
+            ...(overlay ? { ghostItems: overlay.ghost.items } : {}),
+            boxWidth: o.boxWidth,
+          })
+        : plan.layout;
+      setScene({ ...scene, layout: withoutBoxes(scene.index, layout, new Set(o.omit ?? [])) });
     },
   };
 

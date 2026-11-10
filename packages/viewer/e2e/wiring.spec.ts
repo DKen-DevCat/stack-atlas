@@ -162,9 +162,16 @@ test('画面をクリック: /today の経路が光り POST は光らない。�
     expect(l.boxes, id).toContain(id);
   for (const id of POST) expect(l.boxes, id).not.toContain(id);
   await expect(page.locator('[data-box="route:/"]')).toHaveClass(/\bstart\b/);
-  await expect(page.locator('[data-box="endpoint:POST /transactions"]')).toHaveClass(/\bdim\b/);
-  // 光っている箱は手前の層
-  await expect(page.locator('g.lit-boxes [data-box="fn:internal/api.handleToday"]')).toHaveCount(1);
+  // 2026-11-10 変更（8-7。docs/18 §11.5）: 沈める側に class（dim）を付けない。根の has-sel と「lit が無い」で沈み、
+  // 箱は層を移さない（g.lit-boxes は無くなった）。沈んだ箱の面と縁は fill-opacity / stroke-opacity 0.15、光る箱は 1
+  await expect(page.locator('.wv')).toHaveClass(/\bhas-sel\b/);
+  const sunk = page.locator('[data-box="endpoint:POST /transactions"]');
+  await expect(sunk).not.toHaveClass(/\blit\b/);
+  await expect(sunk.locator('.shape')).toHaveCSS('fill-opacity', '0.15');
+  await expect(sunk.locator('.shape')).toHaveCSS('stroke-opacity', '0.15');
+  const shining = page.locator('g.boxes [data-box="fn:internal/api.handleToday"]');
+  await expect(shining).toHaveClass(/\blit\b/);
+  await expect(shining.locator('.shape')).toHaveCSS('fill-opacity', '1');
 
   // 選択中は hover が効かない
   await hoverBox(page, 'comp:TotalCard');
@@ -191,7 +198,10 @@ test('画面をクリック: /today の経路が光り POST は光らない。�
   await page.keyboard.press('Escape');
   expect(await selection(page)).toBeNull();
   expect(await lit(page)).toBeNull();
-  await expect(page.locator('.box.dim')).toHaveCount(0);
+  // 2026-11-10 変更（8-7）: 選択を解くと根の has-sel と箱の lit が外れる（.box.dim は無くなった）
+  await expect(page.locator('.wv.has-sel')).toHaveCount(0);
+  await expect(page.locator('.box.lit')).toHaveCount(0);
+  await expect(sunk.locator('.shape')).toHaveCSS('fill-opacity', '1');
   await expect(page.locator('.ball')).toHaveCount(0);
   await expect(page.locator('.wv-speed button.tl')).toBeHidden();
   expect(errors).toEqual([]);

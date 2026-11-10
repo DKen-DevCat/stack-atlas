@@ -85,6 +85,7 @@ interface SplitWin {
       time: number;
       paused: boolean;
       renders: number;
+      paints: number;
       select(sel: unknown): void;
       setPaused(p: boolean): void;
       seek(t: number): void;
@@ -299,9 +300,17 @@ test('Esc は最後に触った面が受けて両方を 1 回で解く。空白�
   const errors = collectErrors(page);
   await open(page, '&sel=route%3A%2F');
   expect(await wsel(page)).toEqual({ kind: 'box', id: 'route:/' });
+  // 2026-11-10 追加（8-7。docs/18 §11.3、D114）: 地図からの選択も配線図は付け替えるだけ（renders は変わらず paints が 1 増える）
+  const counts = () =>
+    page.evaluate(() => {
+      const w = (window as unknown as SplitWin).__stackAtlas.wiring!;
+      return { renders: w.renders, paints: w.paints };
+    });
+  const c1 = await counts();
   // 地図を触ってから Esc
   await clickMapNode(page, REQUEST);
   expect((await wsel(page))?.kind).toBe('group');
+  expect(await counts()).toEqual({ renders: c1.renders, paints: c1.paints + 1 });
   await page.keyboard.press('Escape');
   expect(await wsel(page)).toBeNull();
   expect((await split(page)).mapLit).toBeNull();
@@ -326,12 +335,11 @@ test('Esc は最後に触った面が受けて両方を 1 回で解く。空白�
   expect(await wsel(page)).toBeNull();
   expect((await split(page)).mapLit).toBeNull();
   // 選んでいないときの空白のクリック・Esc は配線図に渡さない（描き直さない。2026-11-10 追加。8-6 のレビュー）
-  const renders = () =>
-    page.evaluate(() => (window as unknown as SplitWin).__stackAtlas.wiring!.renders);
-  const r0 = await renders();
+  // 2026-11-10 変更（8-7）: 選択では renders が増えなくなったので、付け替え（paints）も増えないことを見る
+  const c0 = await counts();
   await page.mouse.click(24, 880);
   await page.keyboard.press('Escape');
-  expect(await renders()).toBe(r0);
+  expect(await counts()).toEqual(c0);
   // 選択が無いときの地図の hover は効く（つながる線を明るくするだけ）
   await page.evaluate(() => (window as unknown as SplitWin).__stackAtlas.viewer!.hover('route:/'));
   expect((await mapInfo(page)).highlight).toBe('route:/');
@@ -457,6 +465,70 @@ test.describe('狭い画面（1000px）', () => {
     expect(errors).toEqual([]);
   });
 });
+
+// 半分の幅（docs/18 §11.9、D121。Phase 8-7）: 配線図の部品の大きさは面の幅で決める（.wv がコンテナ）。窓 1100・1280・1440 と、
+// 境目を寄せて面を 480px にしたとき: 部品の右端が面の中、上の帯は 1 行（高さ 44px 以下）、再生バーとメモの札が重ならない、
+// 警告の一覧の右端が面の中、プロジェクト名は 600px 未満の面で隠し、それ以上では省略記号で切る
+for (const c of [
+  { name: '窓 1100（面 544px）', width: 1100, ratio: 50 },
+  { name: '窓 1280（面 634px）', width: 1280, ratio: 50 },
+  { name: '窓 1440（面 714px）', width: 1440, ratio: 50 },
+  { name: '窓 1100・境目を寄せて面 480px', width: 1100, ratio: 56 },
+]) {
+  test.describe(`半分の幅: ${c.name}`, () => {
+    test.use({ viewport: { width: c.width, height: 900 } });
+
+    test('部品は面の中、上の帯は 1 行、再生バーとメモの札は重ならない、警告の一覧は面の中', async ({
+      page,
+    }) => {
+      const errors = collectErrors(page);
+      await page.addInitScript(
+        (r) => localStorage.setItem('stack-atlas-split', String(r)),
+        c.ratio,
+      );
+      // 解けない ?sel= は警告の一覧に 1 件出る（一覧の幅を確かめる）
+      await open(page, '&sel=fn%3Anope');
+      expect((await split(page)).narrow).toBe(false);
+      const pane = (await page.locator('.split-wiring').boundingBox())!;
+      if (c.ratio !== 50) expect(Math.abs(pane.width - 480)).toBeLessThan(12);
+      type Box = { x: number; y: number; width: number; height: number };
+      const inside = (b: Box, label: string) => {
+        expect(b.x, `${label} の左端`).toBeGreaterThanOrEqual(pane.x - 0.5);
+        expect(b.x + b.width, `${label} の右端`).toBeLessThanOrEqual(pane.x + pane.width + 0.5);
+      };
+      const overlap = (a: Box, b: Box) =>
+        a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+
+      await page.evaluate(() =>
+        (window as unknown as SplitWin).__stackAtlas.wiring!.select({ kind: 'box', id: 'route:/' }),
+      );
+      const top = (await page.locator('.split-wiring .wv-top').boundingBox())!;
+      expect(top.height, '上の帯の高さ').toBeLessThanOrEqual(44);
+      inside(top, '上の帯');
+      const name = page.locator('.split-wiring .wv-top small');
+      if (pane.width < 600) await expect(name).toBeHidden();
+      else inside((await name.boundingBox())!, 'プロジェクト名');
+      const speed = page.locator('.split-wiring .wv-speed');
+      const memo = page.locator('.split-wiring .wv-memo');
+      await expect(speed).toBeVisible();
+      await expect(memo).toBeVisible();
+      const sb = (await speed.boundingBox())!;
+      const mb = (await memo.boundingBox())!;
+      inside(sb, '再生バー');
+      inside(mb, 'メモの札');
+      expect(overlap(sb, mb), '再生バーとメモの札が重ならない').toBe(false);
+      // シークと速度は縮んでも最小の幅は残る
+      expect(
+        (await page.locator('.split-wiring .wv-speed .seek').boundingBox())!.width,
+      ).toBeGreaterThanOrEqual(79);
+      await page.locator('.split-wiring .wv-top [data-issues]').click();
+      const issues = page.locator('.split-wiring .wv-issues');
+      await expect(issues).toContainText('fn:nope');
+      inside((await issues.boundingBox())!, '警告の一覧');
+      expect(errors).toEqual([]);
+    });
+  });
+}
 
 test('v1 の graph は今までどおり 3D の地図だけ（2 面にしない）', async ({ page }) => {
   const errors = collectErrors(page);

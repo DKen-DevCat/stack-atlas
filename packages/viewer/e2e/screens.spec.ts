@@ -35,13 +35,19 @@ interface Region {
 }
 interface ScreensDbg {
   live: string[];
+  parked: string[];
   state: Record<string, string>;
   measured: Record<string, Region[]>;
   regions: Record<string, Region[]>;
 }
 type Win = {
   __stackAtlas: {
-    wiring: { screens: ScreensDbg; select(sel: unknown): void; view: { k: number } } | null;
+    wiring: {
+      screens: ScreensDbg;
+      select(sel: unknown): void;
+      view: { k: number };
+      rebuild(opts?: { omit?: string[] }): void;
+    } | null;
   };
   __ran?: number;
 };
@@ -237,6 +243,7 @@ test('fixture-poly: route:/ を選ぶと TodayIsland の領域の枠（SVG）が
   expect(Math.abs(got.height - want.h)).toBeLessThanOrEqual(3);
   // 選んだ画面は不透明、経路に入らない画面（/calendar）は箱と同じ 0.15。
   // 当てた値（style）で見る: 計算値は CSS の transition の途中の値で、ヘッドレスで並列に走らせるとフレームが進まず止まることがある
+  // （2026-11-10 追記。8-7: transition はやめた（docs/18 §11.5、D117）が、当てた値で見るのはそのまま）
   const opacity = (id: string) =>
     page
       .locator(`.wv-screen[data-screen="${id}"]`)
@@ -251,6 +258,63 @@ test('fixture-poly: route:/ を選ぶと TodayIsland の領域の枠（SVG）が
   await page.keyboard.press('Escape');
   await expect(outline).toHaveCount(0);
   await expect.poll(() => opacity('route:/calendar')).toBe('1');
+  expect(errors).toEqual([]);
+});
+
+test('場面を差し替えて画面の箱が配置から消えても iframe は壊さずに隠して残し、戻すと読み直さずに元の所へ（docs/21 §2.9 の継ぎ目）', async ({
+  page,
+}) => {
+  // 2026-11-10 追加（8-7）: 折りたたみ（8-8）は画面の箱を配置から外して戻す。ScreenLayer は外れた画面の iframe を隠して
+  // 残し（parked）、状態と測った領域も消さない。debug の rebuild({ omit }) で「箱を抜いた配置」を当てて確かめる
+  const errors = collectErrors(page);
+  await openBuilt(page, 'fixture-poly');
+  await expect.poll(async () => (await screens(page)).measured['route:/']?.length ?? 0).toBe(1);
+  const frame = frameOf(page, 'route:/');
+  const box0 = (await frame.boundingBox())!;
+  // 読んだ文書に印を付け、iframe の要素を覚える（読み直すと印は消え、壊すと別の要素になる）
+  await frame.evaluate((f: HTMLIFrameElement) => {
+    f.contentDocument!.documentElement.dataset.mark = 'kept';
+    (window as unknown as { __frame?: Element }).__frame = f;
+  });
+  const rebuild = (omit: string[]) =>
+    page.evaluate(
+      (o) => (window as unknown as Win).__stackAtlas.wiring!.rebuild({ omit: o }),
+      omit,
+    );
+
+  await rebuild(['route:/']);
+  await expect(page.locator('[data-box="route:/"]')).toHaveCount(0);
+  let s = await screens(page);
+  expect(s.parked).toEqual(['route:/']);
+  expect(s.live).not.toContain('route:/');
+  expect(s.state['route:/']).toBe('ready');
+  expect(s.measured['route:/']).toHaveLength(1);
+  await expect(page.locator('.wv-screen[data-screen="route:/"]')).toHaveCSS('visibility', 'hidden');
+  // 隠している間も選択・解除はできる（ほかの画面の不透明度は変わる）
+  await select(page, { kind: 'box', id: 'route:/calendar' });
+  await page.keyboard.press('Escape');
+
+  await rebuild([]);
+  await expect(page.locator('[data-box="route:/"]')).toHaveCount(1);
+  s = await screens(page);
+  expect(s.parked).toEqual([]);
+  expect(s.live).toContain('route:/');
+  expect(s.state['route:/']).toBe('ready');
+  await expect(page.locator('.wv-screen[data-screen="route:/"]')).toHaveCSS(
+    'visibility',
+    'visible',
+  );
+  const same = await page.evaluate(() => {
+    const f = document.querySelector<HTMLIFrameElement>('.wv-screen[data-screen="route:/"] iframe');
+    return {
+      element: f === (window as unknown as { __frame?: Element }).__frame,
+      mark: f?.contentDocument?.documentElement.dataset.mark ?? null,
+    };
+  });
+  expect(same).toEqual({ element: true, mark: 'kept' });
+  const box1 = (await frame.boundingBox())!;
+  expect(Math.abs(box1.x - box0.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(box1.y - box0.y)).toBeLessThanOrEqual(1);
   expect(errors).toEqual([]);
 });
 

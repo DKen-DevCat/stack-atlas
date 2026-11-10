@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs';
 import { defineConfig, devices } from '@playwright/test';
 
-const PORT = 4179;
+// 並べて動かす作業ツリーがぶつからないよう、ポートは環境変数で替えられる
+const PORT = Number(process.env.STACK_ATLAS_E2E_PORT ?? 4179);
 // ローカル環境に同梱の Chromium があればそれを使う（CI では `playwright install` したものを使う）
 const bundled = '/opt/pw-browsers/chromium';
 
