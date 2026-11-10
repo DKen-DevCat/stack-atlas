@@ -11,6 +11,9 @@
 //   --width 1440          窓の幅（高さは 900）              --ids a,b         押す箱の id（無ければ見えている箱から 3 つ）
 //   --chrome              手元の Chrome（GPU）。既定は Playwright の Chromium（SwiftShader）
 //   --anon                箱の id を出さない（実リポジトリの graph では必ず付ける。出るのは件数と時間だけ）
+//   --this-viewer         --url と一緒に: ビューアはこの worktree の dist を配り、graph.json・screens/ などは --url から中継する
+//                         （serve が古いビューアを配っていても、今の実装で測れる。graph はディスクに書かない）
+//   --rebuild             選んだ状態で「全体を作り直す」（debug の rebuild()）も測る（新しい CSS ＋ 全体を作る、の比べ）
 //
 // 測るもの（1 回の操作ごと）:
 //   handler      click / keydown のハンドラの中（捕まえた時 → 泡の終わり）
@@ -36,7 +39,7 @@ if (flag('--help') || flag('-h') || !(flag('--synthetic') || opt('--graph') || o
   console.log(
     'usage: measure-paint.mjs (--synthetic | --graph <graph.json> | --url <http://host:port>)\n' +
       '       [--pane wiring|split] [--view open|fit] [--dpr 1,2] [--repeat 5] [--width 1440]\n' +
-      '       [--ids a,b,c] [--chrome] [--anon]',
+      '       [--ids a,b,c] [--chrome] [--anon] [--rebuild] [--this-viewer]',
   );
   process.exit(flag('--help') || flag('-h') ? 0 : 1);
 }
@@ -47,6 +50,7 @@ const repeat = Math.max(2, Number(opt('--repeat', '5')));
 const width = Number(opt('--width', '1440'));
 const ids = opt('--ids')?.split(',');
 const anon = flag('--anon');
+const withRebuild = flag('--rebuild');
 
 /** 合成の graph（wiring の dist。`pnpm build` で出来る）か、--graph のファイル */
 async function graphJson() {
@@ -67,13 +71,31 @@ const TYPES = {
   '.png': 'image/png',
 };
 
-/** ビューアの dist と graph.json を 127.0.0.1 の空いているポートで配る（dist の外は読まない） */
-async function serveDist(graph) {
+/**
+ * ビューアの dist と graph.json を 127.0.0.1 の空いているポートで配る（dist の外は読まない）。upstream があれば、
+ * index.html と assets/ だけを dist から配り、ほか（graph.json・graph.v1.json・screens/・memos.json など）は upstream から
+ * GET で中継する（応答ヘッダの content-type と CSP は写す）
+ */
+async function serveDist(graph, upstream) {
   const dist = resolve(here, '../dist');
   if (!existsSync(join(dist, 'index.html')))
     throw new Error('packages/viewer/dist が無い。先に `pnpm build` を実行する');
   const server = createServer(async (req, res) => {
     const path = decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname);
+    if (upstream && path !== '/' && path !== '/index.html' && !path.startsWith('/assets/')) {
+      try {
+        const r = await fetch(new URL(req.url ?? '/', upstream));
+        const headers = {};
+        for (const h of ['content-type', 'content-security-policy', 'x-content-type-options']) {
+          const v = r.headers.get(h);
+          if (v) headers[h] = v;
+        }
+        res.writeHead(r.status, headers).end(Buffer.from(await r.arrayBuffer()));
+      } catch {
+        res.writeHead(502).end();
+      }
+      return;
+    }
     if (path === '/graph.json') {
       res.writeHead(200, { 'content-type': TYPES['.json'] }).end(graph);
       return;
@@ -147,6 +169,8 @@ async function measure(browser, base, dpr) {
   if (view === 'fit') {
     await page.mouse.click(blank.x, blank.y);
     await page.keyboard.press('f');
+    // 開いた直後の倍率では「空白」が箱に当たることがある。選択を解いてから測る（1 回目が選択中のクリックにならない）
+    await page.keyboard.press('Escape');
     await page.waitForTimeout(800);
   }
   const info = await page.evaluate(() => ({
@@ -200,6 +224,36 @@ async function measure(browser, base, dpr) {
 
   const rows = [];
   let skipped = 0;
+  /** 今の状態のまま全体を作り直す（入力ではないので →paint は無い。handler = rebuild() の中、→frame = 次のフレームの終わり） */
+  const rebuildOnce = async () => {
+    const r = await page.evaluate(
+      () =>
+        new Promise((res) => {
+          const w = window.__stackAtlas.wiring;
+          const before = { renders: w.renders, paints: w.paints };
+          const t0 = performance.now();
+          w.rebuild();
+          const t1 = performance.now();
+          requestAnimationFrame(() => {
+            const ch = new MessageChannel();
+            ch.port1.onmessage = () =>
+              res({
+                handler: t1 - t0,
+                frame: performance.now() - t0,
+                paint: null,
+                renders: w.renders - before.renders,
+                paints: w.paints - before.paints,
+                lit: w.lit
+                  ? `${w.lit.boxes.length}/${w.lit.wires.length}/${w.lit.items.length}`
+                  : '-',
+              });
+            ch.port2.postMessage(0);
+          });
+        }),
+    );
+    await page.waitForTimeout(200);
+    return r;
+  };
   const once = async (name, round, act) => {
     const before = await page.evaluate(() => ({
       marks: window.__measure.marks.length,
@@ -244,6 +298,7 @@ async function measure(browser, base, dpr) {
       }
       await once(anon ? `選ぶ ${i + 1}` : `選ぶ ${t.id}`, round, () => page.mouse.click(t.x, t.y));
       await page.mouse.move(blank.x, blank.y);
+      if (withRebuild) rows.push({ ...(await rebuildOnce()), name: `作り直す ${i + 1}`, round });
     }
     await once('解除（Esc）', round, () => page.keyboard.press('Escape'));
   }
@@ -259,8 +314,13 @@ const ms = (x) => (x === null ? '-' : x.toFixed(0));
 const stat = (a) =>
   `${ms(median(a))}（最大 ${ms(a.some((x) => x !== null) ? Math.max(...a.filter((x) => x !== null)) : null)}）`;
 
-const own = opt('--url') ? null : await serveDist(await graphJson());
-const base = (opt('--url') ?? own.url).replace(/\/$/, '');
+const own =
+  opt('--url') && flag('--this-viewer')
+    ? await serveDist('', opt('--url'))
+    : opt('--url')
+      ? null
+      : await serveDist(await graphJson());
+const base = (own?.url ?? opt('--url')).replace(/\/$/, '');
 const browser = await chromium.launch({
   headless: true,
   ...(flag('--chrome')
