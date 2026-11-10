@@ -69,7 +69,7 @@ export {
   type WireRef,
   type WireChange,
 } from './diff.js';
-export { gitCommit, gitRemote } from './git.js';
+export { checkGitRepo, gitCommit, gitEnv, gitRemote, runGit, GIT_SAFE_CONFIG } from './git.js';
 // data-component の名前 → 箱 id（screenshots・screens 抽出器とビューアが同じ規則を使う。正本は wiring。docs/18 §3.3）
 export { resolveRegionRef } from '@stack-atlas/wiring';
 export {
@@ -89,6 +89,7 @@ export {
   globToRegExp,
   globBase,
   pathWithin,
+  stripJsComments,
   toArray,
   toPosix,
   type DeepMergeOptions,
@@ -196,6 +197,7 @@ export {
 } from './hand-graph.js';
 export {
   isSecretFile,
+  isSecretContentFile,
   stripSecretCode,
   repoPathProblem,
   confineRepoPath,
@@ -205,7 +207,51 @@ export {
 } from './secrets.js';
 export { applyViewsYaml, VIEWS_FILES, VIEWS_LIMITS, type ViewsYamlResult } from './views-yaml.js';
 export {
+  computeCoverage,
+  countLines,
+  emptyCoverage,
+  safeComputeCoverage,
+  emptyGraphText,
+  formatCoverage,
+  gitTrackedFiles,
+  graphFilesOf,
+  hasGeneratedHeader,
+  isMinified,
+  parseGitattributes,
+  attributesFor,
+  scanRepoScope,
+  unreadText,
+  COVERAGE_LIMITS,
+  GENERATED_DIRS,
+  type AttrRule,
+  type CoverageFormat,
+  type CoverageInput,
+  type CoverageLanguage,
+  type CoverageLimits,
+  type CoverageReadTiers,
+  type CoverageReport,
+  type CoverageUnread,
+  type ExcludeReason,
+  type RepoScope,
+  type ScopeCategory,
+  type ScopeFile,
+} from './coverage.js';
+export {
+  detectLanguage,
+  extOf,
+  isTestFile,
+  knownLanguages,
+  TEST_DIRS,
+  languageHint,
+  shebangInterpreter,
+  LANGUAGE_TABLE,
+  type DetectedLanguage,
+  type FileCategory,
+  type LanguageEntry,
+} from './languages.js';
+export {
   computeHarnessReport,
+  coverageSummary,
   strictIssues,
   toGraphReport,
   REPORT_LIST_MAX,

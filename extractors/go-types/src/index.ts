@@ -83,6 +83,8 @@ export interface HelperOutput {
     auth?: string;
   }>;
   warnings: Array<{ level: 'warn' | 'info'; message: string }>;
+  /** 読んだ module のパッケージのファイル（root 相対。docs/23 §3.1 の read。古い helper には無い） */
+  files?: string[];
   stats: {
     packages: number;
     files: number;
@@ -442,7 +444,9 @@ export function createGoTypesExtractor(opts: GoTypesOptions = {}): Extractor {
         ctx.log.debug(
           `go-types: 型の検査のエラー ${out.stats.typeErrors} 件（外部のモジュールの型など）`,
         );
-      return { nodes: [], edges: [], v2 };
+      // 読んだファイル（パッケージの .go と go.mod。docs/23 §3.1）
+      const read = [...(out.files ?? []), ...(existsSync(ctx.resolve('go.mod')) ? ['go.mod'] : [])];
+      return { nodes: [], edges: [], v2, read };
     },
   };
 }

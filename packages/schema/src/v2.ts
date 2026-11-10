@@ -128,7 +128,36 @@ export interface HarnessReportV2 {
   counts: Record<string, number>;
   /** 一覧の中身（1 つの一覧につき上限まで） */
   lists?: Record<string, string[]>;
+  /** 段 0 の報告の数（数える範囲・言語ごとの読めた行。docs/23 §3.1、Phase 9-L0） */
+  coverage?: CoverageSummaryV2;
   [key: string]: unknown;
+}
+
+/**
+ * build の報告の coverage（graph.json には数だけ。ファイルの一覧は build --dry-run --json にだけ出す）。
+ * read は読めた行の段ごとの内訳（adapter・extractor・hand・none。9-L1 で syntax、9-L3 で type が足される）
+ */
+export interface CoverageSummaryV2 {
+  scope: {
+    /** 数える範囲のファイル（git が追跡 − 生成物・依存の置き場・秘密らしいファイル） */
+    files: number;
+    /** git の一覧（git でなければ walk で見つけた）ファイル */
+    tracked: number;
+    /** 秘密らしいファイル（数えるが中を読まない） */
+    secret: number;
+    /** 除いた理由ごとの数（unreadable・dir・output・generated・vendored・header・minified・tooLarge） */
+    excluded: Record<string, number>;
+    /** 数え方（git・walk）。walk は .gitignore を当てていない */
+    methods: Array<'git' | 'walk'>;
+  };
+  /** source の言語ごと（行数の多い順） */
+  languages: Array<{
+    language: string;
+    files: number;
+    lines: number;
+    read: Record<string, number>;
+    unread: { files: number; lines: number };
+  }>;
 }
 
 /** upgradeGraph が作った v2 の印（`project.generator.v2` の値） */

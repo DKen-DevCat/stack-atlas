@@ -38,6 +38,30 @@ export function isSecretFile(file: string): boolean {
   return SECRET_NAME.test(base);
 }
 
+/** 中身が秘密の dotfile（環境変数・パッケージの認証・接続の認証） */
+const SECRET_DOTFILES =
+  /^\.(env(\..*)?|npmrc|yarnrc(\.yml)?|netrc|pgpass|pypirc|htpasswd|git-credentials|dockercfg|s3cfg|boto|my\.cnf|vault-token|terraformrc)$/i;
+
+/**
+ * 段 0 の報告（coverage）が「数えるが中を読まない」ファイル（2026-11-11 Phase 9-L0 のレビュー）。isSecretFile より狭い:
+ * dotfile は全部ではなく、中身が秘密のもの（.env*・.npmrc・.netrc など）だけ（`.eslintrc.js` は JS のソース、
+ * `.gitignore` は数える）。ソースのファイル（sourceCode）は名前（`*secret*`・`*credential*`）だけでは外さない
+ * （`secrets.ts` は秘密を扱うコードで、秘密そのものではない）。repo の外・秘密の置き場の下・鍵の拡張子・ssh の鍵は外す
+ */
+export function isSecretContentFile(file: string, opts: { sourceCode?: boolean } = {}): boolean {
+  const norm = file.replace(/\\/g, '/');
+  if (isAbsolute(file) || /^[A-Za-z]:\//.test(norm) || norm.startsWith('~')) return true;
+  const segs = norm.split('/').filter((x) => x && x !== '.');
+  if (segs.includes('..')) return true;
+  if (segs.slice(0, -1).some((d) => SECRET_DIRS.has(d.toLowerCase()))) return true;
+  const base = segs[segs.length - 1] ?? '';
+  if (!base) return false;
+  if (base.startsWith('.')) return SECRET_DOTFILES.test(base) || SECRET_EXT.test(base);
+  if (/^id_(rsa|dsa|ecdsa|ed25519)(_sk)?(\.pub)?$/i.test(base)) return true;
+  if (SECRET_EXT.test(base)) return true;
+  return !opts.sourceCode && SECRET_NAME.test(base);
+}
+
 /** 秘密らしいファイル・repo の外のファイルの箱の code を外す（書き換える）。外した箱 id を返す */
 export function stripSecretCode(
   nodes: Array<{ id: string; file?: string; code?: string }>,

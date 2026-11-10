@@ -331,6 +331,8 @@ export function readTables(
   root: string,
   globs: string[],
   warn?: (message: string) => void,
+  /** 実際に読んだファイル（repo 相対）を足す先（docs/23 §3.1 の read。大きすぎて読まなかったものは入らない） */
+  readFiles?: string[],
 ): Map<string, SqlTableWithDefs> {
   const tables = new Map<string, SqlTableWithDefs>();
   /** テーブル → 列の名前・定義の名前の表 */
@@ -351,6 +353,7 @@ export function readTables(
       continue;
     }
     const raw = readFileSync(abs, 'utf8');
+    readFiles?.push(rel);
     const { tables: ts, added } = parseSql(raw);
     const defs = parseColumnDefs(raw);
     for (const t of ts) {
@@ -466,7 +469,9 @@ export const extractor: Extractor = {
     const cfg = sectionFor(ctx, ctx.config.sql) ?? {};
     const globs = repoGlobs(ctx, cfg.migrations ?? DEFAULT_MIGRATIONS, 'sql.migrations');
     const files = migrationFiles(ctx.root, globs);
-    const tables = readTables(ctx.root, globs, (m) => ctx.log.warn(m));
+    /** 読んだマイグレーション（テーブルを作らないファイルも。docs/23 §3.1） */
+    const read: string[] = [];
+    const tables = readTables(ctx.root, globs, (m) => ctx.log.warn(m), read);
     const nodes: PartialNode[] = [...tables.values()].map((t) => {
       const sql: Record<string, unknown> = { table: t.table, columns: t.columns };
       if (t.schema) sql['schema'] = t.schema;
@@ -544,7 +549,7 @@ export const extractor: Extractor = {
     ctx.log.info(
       `sql: ${files.length} files, ${nodes.length} tables, ${[...edges.values()].filter((e) => e.kind === 'uses').length} uses`,
     );
-    const out: PartialGraph = { nodes, edges: [...edges.values()] };
+    const out: PartialGraph = { nodes, edges: [...edges.values()], read };
     // v2: table の 3 つの口（key / write / read）とカラムの項目（docs/17 §7 #5）
     if (tables.size) {
       const list = [...tables.values()];

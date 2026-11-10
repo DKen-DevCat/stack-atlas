@@ -33,7 +33,7 @@
 
 ## 現在の状態と次のタスク
 
-テストは `pnpm test` で 1357 件（skip 2。`STACK_ATLAS_REQUIRE_GO=1` で go の側も）、viewer の e2e は 58 件（3D の地図の spec は手元のヘッドレスで止まる・遅いことがある。CI で実行。配線図だけを確かめる spec は `&pane=wiring`）。`examples/fixture-poly/`（2 repo の合成）は 56 ノード / 95 エッジ / 2 フロー / エラー 0。
+テストは `pnpm test` で 1399 件（skip 2。`STACK_ATLAS_REQUIRE_GO=1` で go の側も）、viewer の e2e は 58 件（3D の地図の spec は手元のヘッドレスで止まる・遅いことがある。CI で実行。配線図だけを確かめる spec は `&pane=wiring`）。`examples/fixture-poly/`（2 repo の合成）は 56 ノード / 95 エッジ / 2 フロー / エラー 0。
 実リポジトリでは設定を**この公開リポジトリの外**（兄弟ディレクトリ。`repos: { web: ../damage-web, platform: ../damage-platform }`）に置いて build し、149 / 330 / エラー 0 / 警告 0 を確認した（内訳は `HANDOFF.md` §0）。
 
 次にやること: ユーザーの判断待ち（Q17 エージェントを実リポジトリに当てるか、Q19 配線図の折りたたみ）。8-6 の残り（合成 300 箱でクリックから光るまで 50ms。配線図の描き直しを差分に）は docs/20 §7.6。Phase 6 の残り:
@@ -58,7 +58,7 @@
 
 - 解析対象は業務コードになりうる。**ソースコードを外部 SaaS に送らない**。抽出もビューアもローカル／自前ホスティングで完結させる。
 - **実リポジトリ（`damage-web` / `damage-platform`）の中身はこの公開リポジトリに入れない**: コード、リソース名、ルート、テーブル名、環境変数名、graph.json、スクショ、issues.json のいずれも。名前と件数だけ書いてよい。実リポジトリ用の config / overrides / flows は実リポジトリ側か非公開の兄弟ディレクトリに置く。
-- 抽出器を書くときの規約: 設定のパス・glob を読む前に `repoPath` / `confineRepoPath` / `globInRepo`（core。repo の外・外へ出るリンクを読まない）、walk はシンボリックリンクを辿らない（docs/19 §12、D102）。設定セクションは `sectionFor(ctx, config.xxx)` で自分の repo かを判定する。kind は `classifyKind(ctx, file, defaultKind)` で決めてから ID の接頭辞を付ける（`applyClassify` は ID を変えないため）。`file` は repo 相対パスで返す（複数 repo の `<repo>/` はパイプラインが付ける。自分で付けるなら `repoFile()`）。推定で線を引いたら必ず warn に `推定` と「明示できるキー」を書く（D18）。
+- 抽出器を書くときの規約: 設定のパス・glob を読む前に `repoPath` / `confineRepoPath` / `globInRepo`（core。repo の外・外へ出るリンクを読まない）、walk はシンボリックリンクを辿らない（docs/19 §12、D102）。設定セクションは `sectionFor(ctx, config.xxx)` で自分の repo かを判定する。kind は `classifyKind(ctx, file, defaultKind)` で決めてから ID の接頭辞を付ける（`applyClassify` は ID を変えないため）。`file` は repo 相対パスで返す（複数 repo の `<repo>/` はパイプラインが付ける。自分で付けるなら `repoFile()`）。推定で線を引いたら必ず warn に `推定` と「明示できるキー」を書く（D18）。箱・型の `file` に出ないのに読んだファイル（型だけの TS・go.mod・.tfvars・next.config など）は `PartialGraph.read` で申告する（段 0 の報告が「読んだ」に数える。docs/23 §3.1・§11）。
 - ビューアは graph.json だけを入力にし、特定プロジェクトの知識をハードコードしない。**ビューアは `@stack-atlas/core` に依存しない**（依存してよいのは `@stack-atlas/schema` と `@stack-atlas/wiring` だけ。たどる規則・球の時刻・レイアウト前処理は wiring に置く。D44）。
 - スタック固有の処理はすべて抽出器（extractor）側に閉じ込める。
 - 抽出器の契約は `packages/core/src/types.ts`。変えるときは core 側と各抽出器の両方を直す。

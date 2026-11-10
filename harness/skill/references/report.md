@@ -23,10 +23,11 @@ stack-atlas build . --strict --no-screenshots   # 埋められる隙間があれ
 | `estimates` | `推定` の警告（明示できるキー付き） | 当たっていれば文中のキーを設定に書いて固定する（`deploy`・`sql.db`・`api.targets` など） |
 | `screens` | `configured`、route ごとの `html` の有無と `coverage`（`reachable`・`dom`・`yaml`）、`dropped`（消毒で落としたもの） | `html: false` は **strict のエラー**（`screens.md`）。カバー率は警告 |
 | `supplements` | 補いごとの結果 `{ kind, index, status, target?, message?, reason? }`。`status` は `applied`（効いた）/ `unresolved`（解けない）/ `mismatch`（指紋が合わない）、`noReason` は reason の欠け。`hand` は手書きのファイル、`view` は views.yaml | `applied` 以外と `noReason` は **strict のエラー**。`message` を読んで直す（§3） |
+| `coverage` | 数える範囲（`scope`: git が追跡するファイルから生成物・依存の置き場を除いた数と、除いた理由ごとの数。`repos[].note` が walk なら .gitignore は当たっていない）、source の言語ごとの行数と読めた行（`languages[].read`: `adapter`・`extractor`・`hand`・`none`、`readBy`）、config の形式と読んだ抽出器（`formats`）、読めていないソース（`unread[]`: `language`・`files`・`lines`・`why`・`examples`）、テストのファイル（`tests`。読めていなくても警告しない） | `unread` は strict の**警告**（言語ごとに 1 件）。`why` に設定のヒントがある言語（`ts.tsconfig`・`sql.migrations` など）は設定を直す。ヒントの無い言語は、今は読む抽出器が無い: 中身の要る所だけ手書きの部分グラフで箱を置き（`hand-graph.md`）、残りは DECISIONS.md の「提案」に件数を書く。箱が 0 の graph は strict の**エラー**（`empty`） |
 | `strict` | `{ errors, warnings }`。1 件は `{ rule, path, message }` | `errors` を 0 にするのが完了の条件 |
 | `issues` | build の issues（`level`・`path`・`message`） | `v2:join` の警告に結べなかったものの一覧、`supplements:*` に補いの失敗、`hand:*` に手書きのファイルの問題 |
 
-`strict.errors[].rule` の一覧: `unjoined`・`undetermined`・`screens`・`supplements`・`views`・`remove`（overrides の remove が v1 にも v2 にも無い id）・`skipped`（言語アダプタを飛ばした）。警告の rule: `endpoint-without-handler`・`box-wires`・`opaque`・`unknown`・`type-ref`・`coverage`・`broken`・`added-box`。
+`strict.errors[].rule` の一覧: `unjoined`・`undetermined`・`screens`・`supplements`・`views`・`remove`（overrides の remove が v1 にも v2 にも無い id）・`skipped`（言語アダプタを飛ばした）・`failed`（抽出器が失敗した）・`empty`（箱が 0。どの抽出器も何も読めなかった）。警告の rule: `endpoint-without-handler`・`box-wires`・`opaque`・`unknown`・`type-ref`・`coverage`（画面のカバー率 0）・`broken`・`added-box`・`unread`（読めていないソースの言語。path は `coverage`）。
 
 `issues` の `v2:join` の警告（「endpoint（OpenAPI）に無い handler のルート」など）は合流の時点の一覧で、補いで埋めたものも残る。埋まったかは `unjoined` と `strict` で見る。
 

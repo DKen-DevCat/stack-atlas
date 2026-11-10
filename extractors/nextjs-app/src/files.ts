@@ -9,7 +9,13 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
-import { confineRepoPath, findAppDir, listRouteFiles, segmentToUrl } from '@stack-atlas/core';
+import {
+  confineRepoPath,
+  findAppDir,
+  listRouteFiles,
+  segmentToUrl,
+  stripJsComments,
+} from '@stack-atlas/core';
 
 export type NextFileKind = 'page' | 'layout' | 'handler';
 
@@ -238,6 +244,8 @@ export interface NextConfigInfo {
   basePath?: string;
   /** `assetPrefix`（`https://cdn.example.com` か `/prefix`。`/_next/` の参照の前に付く） */
   assetPrefix?: string;
+  /** MAX_NEXT_CONFIG_BYTES を超えたので値を読まなかった（読んだファイルとして申告しない。docs/23 §3.1） */
+  tooLarge?: true;
 }
 
 const stringOption = (src: string, key: string) =>
@@ -246,33 +254,8 @@ const stringOption = (src: string, key: string) =>
 /** next.config を読む大きさの上限（バイト）。超えたら値を読まない（警告。2026-11-09（8-3b のレビュー）） */
 export const MAX_NEXT_CONFIG_BYTES = 1024 * 1024;
 
-/**
- * `/* … *\/` と、行頭（空白の後）が `//` の行を外す。前から 1 回だけ走査する（2026-11-09（8-3b のレビュー）:
- * 正規表現の `\/\*[\s\S]*?\*\/` は閉じていない `/*` があると位置ごとに末尾まで探し直して 2 乗だった。80 KB で 1.2 秒）。
- * 閉じていない `/*` から後ろはそのまま残す（正規表現のときと同じ）
- */
-export function stripJsComments(src: string): string {
-  let out = '';
-  let i = 0;
-  for (;;) {
-    const j = src.indexOf('/*', i);
-    if (j < 0) {
-      out += src.slice(i);
-      break;
-    }
-    out += src.slice(i, j);
-    const k = src.indexOf('*/', j + 2);
-    if (k < 0) {
-      out += src.slice(j);
-      break;
-    }
-    i = k + 2;
-  }
-  return out
-    .split('\n')
-    .filter((line) => !line.trimStart().startsWith('//'))
-    .join('\n');
-}
+/** next.config のコメントを外す（core へ移した。coverage の書き出し先の判定と同じもの。2026-11-11 Phase 9-L0 のレビュー） */
+export { stripJsComments };
 
 /**
  * next.config.{ts,mjs,js,cjs,mts} を探して `output`・`distDir`・`trailingSlash`・`basePath`・`assetPrefix` を読む
@@ -305,6 +288,7 @@ export function readNextConfig(
         warn?.(
           `${info.file} が ${MAX_NEXT_CONFIG_BYTES / 1024 / 1024} MB を超える（${Math.ceil(st.size / 1024)} KB）ので、output などの値を読みません`,
         );
+        info.tooLarge = true;
         return info;
       }
       const src = stripJsComments(readFileSync(p, 'utf8'));

@@ -11,9 +11,15 @@
  * - undetermined: cleanupV2 が付け替え先を決められなかった group の端（retarget で決めたものは入らない）
  * - opaque: links の無い箱（in と out の両方に項目がある）と、crude の links を持つ箱
  */
-import type { GraphV2, HarnessReportV2, ValidationIssue } from '@stack-atlas/schema';
+import type {
+  CoverageSummaryV2,
+  GraphV2,
+  HarnessReportV2,
+  ValidationIssue,
+} from '@stack-atlas/schema';
 import { HARNESS_REPORT_VERSION } from '@stack-atlas/schema';
 import { endpointRoute, handlerRoutes, httpCallOf, sqlOf, type JoinReport } from './join.js';
+import { emptyGraphText, unreadText, type CoverageReport } from './coverage.js';
 import { coverageV2, type CoverageV2, type UndeterminedWire } from './merge-v2.js';
 import { apiPathMatches, methodMatches } from './paths.js';
 import type { BuildGraphResult } from './pipeline.js';
@@ -66,10 +72,13 @@ export interface HarnessReport {
   removeMissing: string[];
   /** overrides の nodes で足した箱のうち、線の無いもの */
   addedWithoutWires: string[];
+  /** 段 0 の報告: 数える範囲・言語ごとの読めた行・読めていないソース（docs/23 §3.1、Phase 9-L0） */
+  coverage: CoverageReport;
 }
 
 export interface HarnessInput {
   graph: GraphV2;
+  coverage: CoverageReport;
   join?: Pick<JoinReport, 'client' | 'server' | 'table'>;
   undetermined: UndeterminedWire[];
   supplements: SupplementResult[];
@@ -234,6 +243,7 @@ export function computeHarnessReport(input: HarnessInput): HarnessReport {
     supplements: input.supplements,
     removeMissing: input.removeMissing,
     addedWithoutWires,
+    coverage: input.coverage,
   };
 }
 
@@ -253,9 +263,9 @@ export interface StrictResult {
  * strict の判定（docs/19 §3.3）。エラーは「埋められる隙間」だけ（D69）: 結べない呼び出し・OpenAPI に無いルート・結べない SQL、
  * 付け替え先を決められない線、screens を設定しているのに HTML の無い route、解けない・指紋が合わない・reason の無い補い、
  * 解けない views、v1 にも v2 にも無い remove の id、見つけたのに飛ばした言語アダプタ（D87）、失敗した抽出器（2026-11-10
- * 8-4 のレビュー: 以前は failed を見ていなかった）。
+ * 8-4 のレビュー: 以前は failed を見ていなかった）、箱が 0 の graph（empty。Phase 9-L0、D171）。
  * 警告: handler の無い endpoint（D86）、口の単位の線、不透明な箱、wireType unknown、typeRef の欠け、カバー率 0、broken、
- * overrides で足した線の無い箱（D71）
+ * overrides で足した線の無い箱（D71）、読めていないソース（unread。言語ごとに 1 件。Phase 9-L0）
  */
 export function strictIssues(
   result: Pick<BuildGraphResult, 'harness' | 'graphV2' | 'v2Warnings'>,
@@ -270,6 +280,8 @@ export function strictIssues(
     err('v2', 'v2', 'v2 の graph がありません（--v1 では strict を判定できません）');
     return { errors, warnings };
   }
+  // 箱が 0（どの抽出器も何も読めなかった）。2026-11-10（Phase 9-L0）: 以前は空の graph が「エラー 0・警告 0」で通った
+  if (!result.graphV2.nodes.length) err('empty', 'coverage', emptyGraphText(h.coverage));
   for (const c of h.unjoined.calls)
     err(
       'unjoined',
@@ -366,6 +378,8 @@ export function strictIssues(
   if (broken) warn('broken', 'v2', `食い違いのある線 ${broken} 本（直すのはコードの側。D69）`);
   for (const id of h.addedWithoutWires)
     warn('added-box', `v2:${id}`, `overrides の nodes で足した箱 ${id} に線がありません`);
+  // 読めていないソース（言語ごとに 1 件。9-L0 では警告、9-L1 から言語ごとの条件でエラー。D171）
+  for (const u of h.coverage?.unread ?? []) warn('unread', 'coverage', unreadText(u));
   return { errors, warnings };
 }
 
@@ -395,9 +409,11 @@ export function toGraphReport(h: HarnessReport, strict: StrictResult): HarnessRe
       supplementsUnresolved: sup.unresolved,
       supplementsMismatch: sup.mismatch,
       removeMissing: h.removeMissing.length,
+      unreadLanguages: h.coverage.unread.length,
       strictErrors: strict.errors.length,
       strictWarnings: strict.warnings.length,
     },
+    coverage: coverageSummary(h.coverage),
     lists: {
       unjoined: cap([
         ...h.unjoined.calls.map((c) => `${c.item} ${c.method} ${c.path}`),
@@ -407,5 +423,25 @@ export function toGraphReport(h: HarnessReport, strict: StrictResult): HarnessRe
       undetermined: cap(h.undetermined.map((u) => `${u.group} ↔ ${u.peer} (${u.via})`)),
       strictErrors: cap(strict.errors.map((e) => `[${e.rule}] ${e.path}: ${e.message}`)),
     },
+  };
+}
+
+/** graph.json に書く coverage（数だけ。ファイルの一覧と readBy は build --dry-run --json にだけ出す） */
+export function coverageSummary(c: CoverageReport): CoverageSummaryV2 {
+  return {
+    scope: {
+      files: c.scope.files,
+      tracked: c.scope.tracked,
+      secret: c.scope.secret,
+      excluded: { ...c.scope.excluded },
+      methods: [...new Set(c.scope.repos.map((r) => r.method))].sort(),
+    },
+    languages: c.languages.map((l) => ({
+      language: l.language,
+      files: l.files,
+      lines: l.lines,
+      read: { ...l.read },
+      unread: { ...l.unread },
+    })),
   };
 }
