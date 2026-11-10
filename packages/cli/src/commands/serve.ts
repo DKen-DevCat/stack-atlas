@@ -107,9 +107,7 @@ export function resolveStaticPath(root: string, urlPath: string): string | null 
 export function rootRedirect(url: string): string {
   const q = url.indexOf('?');
   const params = new URLSearchParams(q < 0 ? '' : (url.slice(q + 1).split('#')[0] ?? ''));
-  const rest = new URLSearchParams();
-  for (const [k, v] of params) rest.append(k, v);
-  const parts = [params.has('graph') ? '' : 'graph=./graph.json', rest.toString()];
+  const parts = [params.has('graph') ? '' : 'graph=./graph.json', params.toString()];
   return `/index.html?${parts.filter(Boolean).join('&')}`;
 }
 

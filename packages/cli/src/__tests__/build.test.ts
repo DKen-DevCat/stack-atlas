@@ -391,7 +391,9 @@ describe('読めない抽出器は警告の一覧に入る（2026-11-10）', () 
       onMissing: (name, message) => seen.push([name, message]),
     });
     expect(seen).toEqual([['go-types', text]]);
-    expect(log.of('warn')).toEqual([text]);
+    // 2026-11-10 変更（8-7 のレビュー）: onMissing があれば警告は呼ぶ側（issues と要約）だけが出す。ここでは書かない
+    // （以前は log.warn にも書いていて、build の要約と合わせて 2 回出ていた）
+    expect(log.of('warn')).toEqual([]);
     expect(list.map((e) => e.name)).not.toContain('go-types');
     expect(list.map((e) => e.name)).not.toContain('screenshots');
     expect(list).toHaveLength(13);
@@ -401,11 +403,22 @@ describe('読めない抽出器は警告の一覧に入る（2026-11-10）', () 
     const root = repo();
     const out = join(root, 'out');
     const mlog = createMemoryLogger();
-    const code = await quiet(() =>
-      runBuild({ repo: root, outDir: out, importer, strict: true, screenshots: false, log: mlog }),
-    );
+    const printed: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
+      printed.push(a.join(' '));
+    });
+    const code = await runBuild({
+      repo: root,
+      outDir: out,
+      importer,
+      strict: true,
+      screenshots: false,
+      log: mlog,
+    }).finally(() => spy.mockRestore());
     expect(code).toBe(0);
-    expect(mlog.of('warn')).toContain(text);
+    // 2026-11-10 変更（8-7 のレビュー）: 読み込みのときの警告の行は出さない。要約の警告の一覧に 1 回だけ
+    expect(mlog.of('warn')).not.toContain(text);
+    expect(printed.join('\n').split(text).length - 1).toBe(1);
     expect(JSON.parse(readFileSync(join(out, 'issues.json'), 'utf8'))).toEqual([
       { level: 'warning', path: 'build', message: text },
     ]);

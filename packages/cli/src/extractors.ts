@@ -65,9 +65,10 @@ export async function loadExtractors(
       continue;
     }
     // 外した抽出器は警告にして呼ぶ側へ知らせる（その抽出器の出す箱・線が graph から抜ける）
+    // onMissing があれば呼ぶ側が警告の一覧（issues と要約）に出すので、ここでは書かない（2 回出さない）
     const drop = (message: string) => {
-      log.warn(message);
-      opts.onMissing?.(short, message);
+      if (opts.onMissing) opts.onMissing(short, message);
+      else log.warn(message);
     };
     let mod: ExtractorModule;
     try {

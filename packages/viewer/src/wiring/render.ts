@@ -6,7 +6,6 @@
 import {
   type GraphIndex,
   type IndexedItem,
-  type LitSelection,
   type Rect,
   type VariantState,
   type WiringLayout,
@@ -24,7 +23,6 @@ import {
 } from './paint';
 import { KIND, KIND_LABEL, LANE_TINT } from './theme';
 
-export { esc, pathD } from './markup';
 export type { DiffMarks } from './paint';
 
 export interface SceneInput {
@@ -84,7 +82,6 @@ export function fitLabel(
 }
 
 /** 項目が光っているか（たどった結果に入っているものだけ。子が光れば親も光る、は wiring が入れている） */
-export const itemLit = (lit: LitSelection | null, ref: string) => !!lit && lit.items.has(ref);
 
 /** 角の丸い矩形の外周と、内側の矩形の穴（fill-rule evenodd で「箱の中の画面の領域だけ抜いた」塗り） */
 export function frameWithHole(b: Rect, rx: number, hole: Rect): string {

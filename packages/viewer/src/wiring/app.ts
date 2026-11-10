@@ -30,7 +30,7 @@ import { Flasher, itemTargets, pinVisible } from './flash';
 import { installInteraction, TABLE } from './interaction';
 import { createIssuesLink } from './issuesLink';
 import { WiringMemos } from './memoCard';
-import { inactiveOf } from './paint';
+import { inactiveOf, type Inactive } from './paint';
 import { SceneView, type Paint, type Scene } from './sceneView';
 import { ScreenLayer, type ScreenDebug } from './screenLayer';
 import { renderRegions } from './screens';
@@ -293,7 +293,7 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     h(
       'div',
       { class: 'wv-top' },
-      'Stack Atlas — 配線図',
+      h('span', { class: 'wv-title' }, 'Stack Atlas — 配線図'),
       views.el,
       alt.el,
       issuesLink.link,
@@ -369,7 +369,13 @@ export function mountWiring(opts: WiringOptions): WiringApp {
   };
   // 塗りに渡す値（描く索引の語彙）: 光るものと、今の分岐に無い線・項目。選ぶのは今の graph の索引（index）で、描くのは
   // 場面の索引（差分があれば幽霊を足した索引）。id は同じなので光るものはそのまま渡す（畳んだ場面は写して渡す。docs/21 §2.3）
-  const painted = (): Paint => ({ lit, inactive: inactiveOf(scene.index, state) });
+  let inactiveMemo: { index: GraphIndex; state: VariantState; value: Inactive } | null = null;
+  const inactiveNow = (): Inactive => {
+    if (inactiveMemo?.index !== scene.index || inactiveMemo.state !== state)
+      inactiveMemo = { index: scene.index, state, value: inactiveOf(scene.index, state) };
+    return inactiveMemo.value;
+  };
+  const painted = (): Paint => ({ lit, inactive: inactiveNow() });
   /**
    * 場面を当てる = 全体を作る。違う配置・索引で何度でも呼べる。今の選択と分岐を当て直し、球は周回の中の同じ割合の位置から
    * 続ける（restart なら 0 秒から）。視点は動かさない（どこを映すかは呼ぶ側が決める）

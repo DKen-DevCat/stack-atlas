@@ -119,13 +119,15 @@ export function installInteraction(d: InteractionDeps): () => void {
     const boxEl = closest(ev.target, '[data-box]');
     const fo = closest(ev.target, TABLE);
     tableHover.over(boxEl?.dataset.box ?? null, !!fo);
-    // 箱の外（空白・線・表）に来たら null（作り直しで消えた要素には mouseout が来ないので、ここでも外す）
-    d.hover(boxEl?.dataset.box ?? null);
+    // 箱の外（空白・線）に来たら null（作り直しで消えた要素には mouseout が来ないので、ここでも外す）。
+    // 分岐の表と橋の上では変えない（表の持ち主の箱の hover を残す。2026-11-10 のレビュー指摘）
+    if (!fo) d.hover(boxEl?.dataset.box ?? null);
   };
   const onOut = (ev: MouseEvent) => {
     const boxEl = closest(ev.target, '[data-box]');
     if (!boxEl) return;
     if (ev.relatedTarget instanceof Node && boxEl.contains(ev.relatedTarget)) return;
+    if (closest(ev.relatedTarget, TABLE)) return; // 自分の分岐の表へ移った（hover は残す）
     d.hover(null);
   };
   const onKey = (ev: KeyboardEvent) => {
@@ -136,7 +138,11 @@ export function installInteraction(d: InteractionDeps): () => void {
       else if (a === 'blur' && ev.target instanceof HTMLElement) ev.target.blur();
     } else if (isFitKey(ev)) d.fitAll();
   };
-  const onLeave = () => tableHover.leave();
+  // 図の外へ出た: 表を消し、hover も外す（表の上から外へ出たときは箱の mouseout が来ない）
+  const onLeave = () => {
+    tableHover.leave();
+    d.hover(null);
+  };
 
   svg.addEventListener('click', onClick);
   svg.addEventListener('mouseover', onOver);

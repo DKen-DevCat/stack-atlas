@@ -83,8 +83,13 @@ async function serveDist(graph, upstream) {
   const server = createServer(async (req, res) => {
     const path = decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname);
     if (upstream && path !== '/' && path !== '/index.html' && !path.startsWith('/assets/')) {
+      const raw = req.url ?? '/';
+      if (!raw.startsWith('/') || raw.startsWith('//')) {
+        res.writeHead(400).end();
+        return;
+      }
       try {
-        const r = await fetch(new URL(req.url ?? '/', upstream));
+        const r = await fetch(`${new URL(upstream).origin}${raw}`);
         const headers = {};
         for (const h of ['content-type', 'content-security-policy', 'x-content-type-options']) {
           const v = r.headers.get(h);

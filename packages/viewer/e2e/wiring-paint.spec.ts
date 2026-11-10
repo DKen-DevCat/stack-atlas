@@ -374,6 +374,17 @@ test('hover は選ぶと消え、Esc のあとは効く。点滅は解除で 0�
   await expect(page.locator('[data-box="comp:TotalCard"]')).toHaveClass(/\bhov\b/);
   await leave(page);
   await expect(page.locator('.hov')).toHaveCount(0);
+  // 分岐の表（と箱との間の橋）の上へ動かしても、表の持ち主の箱の hover は残る（2026-11-10 追加。8-7 のレビュー指摘）
+  await hoverBox(page, 'infra:static_site/this');
+  const fo0 = page.locator('.vtable-fo');
+  await expect(fo0).toHaveCount(1);
+  const fb = (await fo0.boundingBox())!;
+  const sb = (await page.locator('[data-box="infra:static_site/this"] .shape').boundingBox())!;
+  await page.mouse.move(sb.x + sb.width - 2, fb.y + 8);
+  await page.mouse.move(fb.x + 20, fb.y + 8, { steps: 8 });
+  await expect(fo0).toHaveCount(1);
+  await expect(page.locator('[data-box="infra:static_site/this"]')).toHaveClass(/\bhov\b/);
+  await leave(page);
 
   // 分岐の表の橋: 光る線の層の直前（箱の下、host の上。表は箱の上に出るが、橋が光る線を塞がない）
   await clickBox(page, 'route:/');

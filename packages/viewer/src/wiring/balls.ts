@@ -111,6 +111,8 @@ export class Player {
   private pausedAt = 0;
   private flowStart = performance.now();
   private prevTau = -1;
+  /** 前のフレームの rAF の時刻（まだ無ければ負） */
+  private lastFrame = -1;
   private sched: Schedule | null = null;
   private flows: Flow[] = [];
   private lit: LitSelection | null = null;
@@ -347,11 +349,14 @@ export class Player {
   }
 
   private tick = (now: number) => {
+    // 前のフレームからの実時間（回り込みの判定に使う。最初のフレームは 0）
+    const dt = this.lastFrame < 0 ? 0 : Math.max(0, (now - this.lastFrame) / 1000);
+    this.lastFrame = now;
     let tau = this.tau(now);
     if (this.paused || this.scrubbing)
       this.syncPhases(); // 止めている間は光らせない（位相だけ合わせる）
     else {
-      const step = stepKind(this.prevTau, tau, this.cycle);
+      const step = stepKind(this.prevTau, tau, this.cycle, dt);
       // 少しだけ戻った（シーク・再開の直後のフレームの時刻）: 進まなかったことにする（光らせない・球を戻さない）
       if (step === 'jitter') tau = this.prevTau;
       else {
@@ -428,18 +433,25 @@ export function cycleTime(now: number, start: number, cycle: number): number {
   return t > 0 ? t % cycle : 0;
 }
 
+/** これより小さい戻りは、フレームの始まりの時刻とハンドラで決めた時刻のずれと見る（秒） */
+export const JITTER_S = 0.05;
+
 /**
  * 前のフレームの時刻（prevTau。まだ無ければ負）から今の時刻へ: forward = 進んだ、wrap = 周回の始まりに戻った（位相を
- * 0 からやり直す）、jitter = 少しだけ戻った（シーク・再生の再開で決めた時刻より、次のフレームの始まりの時刻が少し前に
- * なる。周回の始まりに戻ったと読むと、そこまでの球を全部もう一度出して光らせてしまう）。周回の半分より大きく戻ったら wrap
+ * 0 からやり直す）、jitter = 少しだけ戻った（シーク・再生の再開・選び直しで決めた時刻より、次のフレームの始まりの時刻が
+ * 少し前になる。周回の始まりに戻ったと読むと、そこまでの球を全部もう一度出して光らせてしまう）。
+ * wrap は「前のフレームからの実時間（dt 秒）で周回の終わりを越えられる」かつ「JITTER_S より大きく戻った」とき。
+ * 長いフレーム（裏のタブ・重い描画）のあとの本当の回り込みも wrap になる（2026-11-10 のレビュー指摘。最初の版は
+ * 周回の半分で分けていて、周回の短い ×4 で 300ms のフレームのあとを jitter と読み、球が止まっていた）
  */
 export function stepKind(
   prevTau: number,
   tau: number,
   cycle: number,
+  dt: number,
 ): 'forward' | 'wrap' | 'jitter' {
   if (prevTau < 0 || tau >= prevTau) return 'forward';
-  return prevTau - tau > cycle / 2 ? 'wrap' : 'jitter';
+  return prevTau + dt >= cycle && prevTau - tau > JITTER_S ? 'wrap' : 'jitter';
 }
 
 /**

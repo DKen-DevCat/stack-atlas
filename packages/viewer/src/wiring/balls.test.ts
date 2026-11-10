@@ -148,16 +148,23 @@ describe('再生の時刻（rAF の時刻から 1 周回の中へ。2026-11-10�
     expect(cycleTime(1000 + 6500, 1000, 5)).toBeCloseTo(1.5, 9);
     expect(cycleTime(5000, 1000, 0)).toBe(0);
   });
-  it('stepKind: 進んだ・周回の始まりに戻った・少しだけ戻った（シーク・再開の直後）を分ける', () => {
-    expect(stepKind(-1, 0, 5)).toBe('forward'); // まだ前のフレームが無い
-    expect(stepKind(1.2, 1.216, 5)).toBe('forward');
-    expect(stepKind(1.2, 1.2, 5)).toBe('forward');
-    expect(stepKind(4.98, 0.01, 5)).toBe('wrap');
+  it('stepKind: 進んだ・周回の始まりに戻った・少しだけ戻った（シーク・再開・選び直しの直後）を分ける', () => {
+    // 2026-11-10 変更（8-7 のレビュー）: 前のフレームからの実時間 dt を渡す。最初の版は「周回の半分より大きく戻ったら wrap」で、
+    // 周回の短いときの長いフレームのあとの本当の回り込みを jitter と読んでいた
+    expect(stepKind(-1, 0, 5, 0)).toBe('forward'); // まだ前のフレームが無い
+    expect(stepKind(1.2, 1.216, 5, 0.016)).toBe('forward');
+    expect(stepKind(1.2, 1.2, 5, 0.016)).toBe('forward');
+    expect(stepKind(4.98, 0.01, 5, 0.03)).toBe('wrap');
     // seek(1.2) のあと、次のフレームの始まりの時刻が 4ms 前: 周回の始まりに戻ったとは読まない（直す前は戻ったと読み、
     // 1.2 秒までの球を全部もう一度出して光らせていた）
-    expect(stepKind(1.2, 1.196, 5)).toBe('jitter');
-    // 速さ ×4 で周回が短くても、1 フレームぶんの戻りは jitter
-    expect(stepKind(0.3, 0.25, 1.2)).toBe('jitter');
-    expect(stepKind(1.15, 0.02, 1.2)).toBe('wrap');
+    expect(stepKind(1.2, 1.196, 5, 0.016)).toBe('jitter');
+    // 選んだ直後: 始まりより前の時刻は 0（cycleTime）、build の間に進んだ分だけ戻る
+    expect(stepKind(0.06, 0, 5, 0.016)).toBe('jitter');
+    // 周回の終わりの近くへシークした直後の少しの戻りも jitter（実時間では終わりを越えられても、戻りが小さい）
+    expect(stepKind(4.995, 4.991, 5, 0.016)).toBe('jitter');
+    // 周回の短い（×4 で 0.5 秒）ときに 300ms のフレーム: 0.45 → 0.25 は本当の回り込み（レビューの例）
+    expect(stepKind(0.45, 0.25, 0.5, 0.3)).toBe('wrap');
+    // 実時間では終わりに届かない大きな戻りは回り込みではない（進まなかったことにする）
+    expect(stepKind(3, 1, 5, 0.016)).toBe('jitter');
   });
 });

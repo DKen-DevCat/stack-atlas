@@ -32,6 +32,14 @@
 .wv-top > * {
   flex: none;
 }
+/* 狭い面では題からいちばん先に縮める（省略記号）。views・警告・孤立メモ・前の graph のリンクは縮めず、面の中に残す
+   （2026-11-10 のレビュー指摘。1 行に固定したので、題が縮まないとリンクが帯の外へ切れていた） */
+.wv-top .wv-title {
+  flex: 0 1000 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .wv-top small {
   flex: 0 1 auto;
   min-width: 0;

@@ -530,6 +530,26 @@ for (const c of [
   });
 }
 
+test.describe('半分の幅: 境目をいちばん寄せた面（窓 1100・面 約 270px）', () => {
+  test.use({ viewport: { width: 1100, height: 900 } });
+
+  test('上の帯は題から縮め、views と警告のリンクは面の中で押せる', async ({ page }) => {
+    // 2026-11-10 追加（8-7 のレビュー指摘）: 1 行に固定した帯で、題が縮まず、狭い面では警告のリンクが帯の外へ切れていた
+    const errors = collectErrors(page);
+    await page.addInitScript(() => localStorage.setItem('stack-atlas-split', '75'));
+    await open(page, '&sel=fn%3Anope');
+    const pane = (await page.locator('.split-wiring').boundingBox())!;
+    expect(pane.width).toBeLessThan(300);
+    for (const sel of ['.wv-top select.wv-views', '.wv-top [data-issues]']) {
+      const b = (await page.locator(`.split-wiring ${sel}`).boundingBox())!;
+      expect(b.x + b.width, sel).toBeLessThanOrEqual(pane.x + pane.width + 0.5);
+    }
+    await page.locator('.split-wiring .wv-top [data-issues]').click();
+    await expect(page.locator('.split-wiring .wv-issues')).toContainText('fn:nope');
+    expect(errors).toEqual([]);
+  });
+});
+
 test('v1 の graph は今までどおり 3D の地図だけ（2 面にしない）', async ({ page }) => {
   const errors = collectErrors(page);
   await page.goto(SAMPLE_URL);
