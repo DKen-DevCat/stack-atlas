@@ -1,0 +1,1005 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stack Atlas — 配線図（モック）</title>
+<style>
+  :root{
+    --bg:#0d0f14; --line:#262c38; --text:#e6e9ef; --muted:#8b93a5; --dimwire:#3a4252;
+    --red:#ff3b3b; --cyan:#22d3ee; --warn:#fbbf24;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:"Noto Sans JP","Hiragino Sans",system-ui,sans-serif;overflow:hidden;-webkit-font-smoothing:antialiased}
+  #top{position:fixed;top:0;left:0;right:0;padding:10px 16px;font-size:13px;font-weight:700;letter-spacing:.02em;
+    background:linear-gradient(#0d0f14f2,#0d0f1400);z-index:5;pointer-events:none;user-select:none}
+  #top small{font-weight:400;color:var(--muted);margin-left:8px;font-size:11px;font-family:ui-monospace,Menlo,monospace}
+  #stage{position:fixed;inset:0;overflow:hidden;cursor:grab}
+  #stage.dragging{cursor:grabbing}
+  svg{display:block;width:100%;height:100%}
+  #speed{position:fixed;right:16px;bottom:14px;display:flex;align-items:center;gap:8px;z-index:5;font-size:11px;color:var(--muted);font-family:ui-monospace,Menlo,monospace;user-select:none}
+  #speed input{width:120px;accent-color:var(--cyan);cursor:pointer}
+  #speed #seek{width:260px;height:3px}
+  #speed #playBtn{background:none;border:0;color:var(--text);font-size:13px;width:22px;height:22px;padding:0;cursor:pointer;line-height:1}
+  #speed #playBtn:hover{color:var(--cyan)}
+  #speed .tl[hidden]{display:none}
+  .host .frame{fill:#ff9f4308;stroke:#ff9f43;stroke-width:1;stroke-dasharray:6 4;cursor:pointer}
+  .host .hname{font-size:11px;fill:#ffb974;pointer-events:none}
+  .host.dim{opacity:.15}
+  .host.dim text{display:none}
+  .host.lit .frame{stroke-width:1.6}
+  text{font-family:"Noto Sans JP","Hiragino Sans",system-ui,sans-serif;fill:var(--text);user-select:none}
+  .lane-title{font-size:11px;fill:var(--muted);letter-spacing:.08em}
+  .lane-sep{stroke:#171b24;stroke-width:1}
+
+  /* 箱 */
+  .box{cursor:pointer;transition:opacity .18s}
+  .box .shape{stroke-width:1.2}
+  .box .name{font-size:12px;font-weight:600}
+  .box .kind{font-size:9px;fill:var(--muted);letter-spacing:.04em}
+  .item.inactive{opacity:.2}
+  .wire.thin.inactive{opacity:.1}
+  .vtable{background:#151922f2;border:1px solid #2b3240;border-radius:6px;padding:4px 6px;font:10px/1 "Noto Sans JP","Hiragino Sans",system-ui,sans-serif;color:#e6e9ef;display:flex;flex-direction:column;gap:2px;cursor:default}
+  .vrow{display:flex;align-items:center;gap:6px;height:18px;white-space:nowrap}
+  .vrow input{margin:0;width:12px;height:12px;accent-color:#22d3ee;cursor:pointer}
+  .box.dim{opacity:.15;pointer-events:all}
+  .box.dim text{display:none}
+  .box.hov .shape{stroke-width:2}
+  .box.lit .shape{stroke-width:1.8;filter:drop-shadow(0 0 6px var(--c))}
+  .box.lit.start .shape{stroke:#ffffff}
+  .item text{font-size:10px;font-family:ui-monospace,Menlo,Consolas,monospace;fill:var(--text)}
+  .item .ty{fill:var(--muted);font-size:9.5px}
+  .item .ty.ref{cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px}
+  .item .ty.ref:hover{fill:var(--text)}
+  .item .pin{fill:#0d0f14;stroke:var(--c);stroke-width:1.2;cursor:pointer}
+  .item.child .pin{r:2.2}
+  .item.off{opacity:.35}
+  .item.on .pin{fill:var(--cyan);stroke:var(--cyan)}
+  .item.on text{fill:#cffafe}
+  .item.on .ty{fill:#8fd8e6}
+  .item.start .pin{fill:#fff;stroke:#fff}
+  .item .hit{fill:transparent;cursor:pointer}
+
+  /* 線 */
+  .wire{fill:none;stroke:var(--dimwire);stroke-linecap:round;transition:opacity .18s}
+  .wire.hov{stroke:#8a9ab8}
+  .wire.thin{stroke-width:1;opacity:.35}
+  .wire.thin.dimmed{opacity:.12}
+  .wire.dimmed{opacity:.15}
+  .item.flash .pin{animation:flashPin .4s ease-out}
+  .item.flash text{animation:flashText .4s ease-out}
+  @keyframes flashPin{0%{fill:#fff;stroke:#fff;filter:drop-shadow(0 0 5px #fff)}100%{}}
+  @keyframes flashText{0%{fill:#fff}100%{}}
+  .wire.lit{stroke:var(--cyan);cursor:pointer}
+  .wire.broken{stroke:#6e1e1e;stroke-dasharray:6 5;opacity:1;cursor:default;stroke-width:1.5}
+  .wire.broken.lit{stroke:var(--red)}
+  .wire.broken.dimmed{opacity:.6}
+  .wire.inner{stroke:#22d3ee99;stroke-width:1}
+  .wire.inner.broken{stroke:#ff3b3b99}
+  .wire.inner.sel{stroke:#fff}
+  .via-http{stroke-width:3}
+  .via-call{stroke-width:1.5}
+  .via-return{stroke-width:1.5}
+  .via-props{stroke-width:1}
+  .via-sql{stroke-width:2}
+  .via-event{stroke-width:1.5;stroke-dasharray:4 4}
+  .via-deliver{stroke-width:2;stroke-dasharray:10 3}
+  .wire.hitarea{stroke:transparent;stroke-width:12;pointer-events:stroke;cursor:pointer;opacity:1}
+  .ball{fill:#fff;stroke:#22d3ee;stroke-width:1.5;pointer-events:none;filter:drop-shadow(0 0 4px #22d3ee)}
+</style>
+</head>
+<body>
+<div id="top">Stack Atlas — 配線図<small>fixture-poly / 合成データ</small></div>
+<div id="stage"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
+<div id="speed"><button id="playBtn" class="tl" type="button" hidden>❚❚</button><input id="seek" class="tl" type="range" min="0" max="1" step="0.01" value="0" hidden><input id="speedIn" type="range" min="0.25" max="4" step="0.05" value="1"><span id="speedV">×1.0</span></div>
+<script>
+'use strict';
+// ---------------------------------------------------------------------------
+// データ（docs/15 の形: 箱 node / 口 port / 項目 item / 線 wire）
+// ---------------------------------------------------------------------------
+const T_ENTRY = 'type:Entry', T_TODAY = 'type:TodayResponse';
+function I(name, type, typeRef, children) {
+  return { id: name.replace(/[^\w]/g, '_'), name, type, typeRef: typeRef || null, children: children || [] };
+}
+const Wn = (item, when) => Object.assign(item, { when });   // 項目の分岐（この状態のときだけ存在する）
+// Entry の中身（camel / snake の 2 系統。すべて typeRef type:Entry）
+const entryTS = () => [I('id', 'string', T_ENTRY), I('amount', 'number', T_ENTRY), I('category', 'string', T_ENTRY), I('createdAt', 'string', T_ENTRY)];
+const entryGo = () => [I('id', 'string', T_ENTRY), I('amount', 'int64', T_ENTRY), I('category', 'string', T_ENTRY), I('createdAt', 'time.Time', T_ENTRY)];
+// Go 側だけが返す項目（OpenAPI の schema に無い → 合流点で「切れている」線になる。コードの事実）
+const entryGoExtra = () => [...entryGo(), I('occurredAt', 'time.Time', T_ENTRY)];
+const T_ROW = 'table:entries';
+const rowGo = () => [I('id', 'string', T_ENTRY), I('amount', 'int64', T_ENTRY), I('category', 'string', T_ENTRY), I('created_at', 'time.Time', T_ENTRY)];
+const todayResp = (entries) => [I('total', 'number', T_TODAY), I('entries', 'Entry[]', T_ENTRY, entries())];
+
+const NODES = [
+  { id: 'actor:user', name: '利用者', kind: 'actor', runtime: 'user', row: 0,
+    ports: [{ id: 'out', dir: 'out', items: [I('date', 'string'), I('open /today', 'url')] }] },
+  { id: 'trigger:scheduler', name: 'Scheduler', kind: 'trigger', runtime: 'time', row: 13,
+    ports: [{ id: 'out', dir: 'out', items: [I('at', 'cron 08:00')] }] },
+
+  { id: 'screen:/today', name: '/today', kind: 'screen', runtime: 'browser', row: 1,
+    variants: [{ id: 'date', name: 'date あり', default: true }, { id: 'login', name: 'ログイン済み', default: true }],
+    ports: [{ id: 'in', dir: 'in', items: [Wn(I('query.date', 'string'), { date: true }), I('html', 'text/html')] },
+            { id: 'out', dir: 'out', items: [Wn(I('props.date', 'string'), { date: true }), I('html', 'text/html')] }],
+    links: [{ from: 'in/query_date', to: 'out/props_date', when: { date: true } }, { from: 'in/html', to: 'out/html' }] },
+  { id: 'comp:LoginPrompt', name: 'LoginPrompt', kind: 'component', runtime: 'browser', row: 2,
+    ports: [{ id: 'in', dir: 'in', items: [I('html', 'text/html')] }] },
+  { id: 'comp:TodayIsland', name: 'TodayIsland', kind: 'component', runtime: 'browser', row: 2,
+    ports: [{ id: 'in', dir: 'in', items: [I('date', 'string'), I('total', 'number', T_TODAY), I('entries', 'Entry[]', T_ENTRY, entryTS())] },
+            { id: 'out', dir: 'out', items: [I('date', 'string'), I('total', 'number', T_TODAY), I('entries', 'Entry[]', T_ENTRY, entryTS())] }],
+    links: [{ from: 'in/date', to: 'out/date' }, { from: 'in/total', to: 'out/total' }, { from: 'in/entries', to: 'out/entries' }] },
+  { id: 'comp:TotalCard', name: 'TotalCard', kind: 'component', runtime: 'browser', row: 3,
+    ports: [{ id: 'in', dir: 'in', items: [I('total', 'number', T_TODAY)] }] },
+  { id: 'comp:EntryList', name: 'EntryList', kind: 'component', runtime: 'browser', row: 4,
+    ports: [{ id: 'in', dir: 'in', items: [I('entries', 'Entry[]', T_ENTRY, entryTS())] }] },
+  { id: 'hook:useToday', name: 'useToday', kind: 'hook', runtime: 'browser', row: 5,
+    ports: [{ id: 'in', dir: 'in', items: [I('date', 'string'), I('data', 'TodayResponse', T_TODAY, todayResp(entryTS))] },
+            { id: 'out', dir: 'out', items: [I('key', 'string'), I('total', 'number', T_TODAY), I('entries', 'Entry[]', T_ENTRY, entryTS()), I('isLoading', 'boolean')] }],
+    links: [{ from: 'in/date', to: 'out/key' }, { from: 'in/data.total', to: 'out/total' }, { from: 'in/data.entries', to: 'out/entries' }, { from: 'in/data', to: 'out/isLoading' }] },
+  { id: 'cache:swr', name: 'SWR', kind: 'cache', runtime: 'browser', row: 6,
+    ports: [{ id: 'in', dir: 'in', items: [I('key', 'string'), I('value', 'TodayResponse', T_TODAY, todayResp(entryTS))] },
+            { id: 'out', dir: 'out', items: [I('key', 'string'), I('value', 'TodayResponse', T_TODAY, todayResp(entryTS))] }],
+    variants: [{ id: 'hit', name: 'cache hit', default: false }],
+    links: [{ from: 'in/key', to: 'out/value', when: { hit: true } },                       // HIT: 箱で折り返す
+            { from: 'in/key', to: 'out/key', when: { hit: false } }, { from: 'in/value', to: 'out/value', when: { hit: false } }],
+    cache: { ttl: 'dedupe 2s', key: 'path+date', scope: 'tab' } },
+  { id: 'lib:fetcher', name: 'fetcher', kind: 'lib', runtime: 'browser', row: 7,
+    ports: [{ id: 'in', dir: 'in', items: [I('key', 'string'), I('response', 'TodayResponse', T_TODAY, todayResp(entryTS))] },
+            { id: 'out', dir: 'out', items: [I('path', 'string'), I('query.date', 'string'), I('data', 'TodayResponse', T_TODAY, todayResp(entryTS))] }],
+    links: [{ from: 'in/key', to: 'out/path' }, { from: 'in/key', to: 'out/query_date' }, { from: 'in/response', to: 'out/data' }] },
+
+  { id: 'cache:cloudfront', name: 'CloudFront', kind: 'cache', runtime: 'edge', row: 0,
+    ports: [{ id: 'in', dir: 'in', items: [I('key', 'path'), I('value', 'text/html')] },
+            { id: 'out', dir: 'out', items: [I('key', 'path'), I('value', 'text/html')] }],
+    variants: [{ id: 'hit', name: 'cache hit', default: false }],
+    links: [{ from: 'in/key', to: 'out/value', when: { hit: true } },
+            { from: 'in/key', to: 'out/key', when: { hit: false } }, { from: 'in/value', to: 'out/value', when: { hit: false } }],
+    cache: { ttl: '86400s', key: 'path', scope: 'edge' } },
+  { id: 'infra:s3-site', name: 'S3 site', kind: 'infra', runtime: 'edge', row: 1,
+    ports: [{ id: 'in', dir: 'in', items: [I('path', 'string')] }, { id: 'out', dir: 'out', items: [I('html', 'text/html')] }] },
+
+  { id: 'endpoint:GET /today', name: 'GET /today', kind: 'endpoint', runtime: 'server', row: 6,
+    ports: [{ id: 'in', dir: 'in', items: [I('path', 'string'), I('query.date', 'string')] },
+            { id: 'req', dir: 'out', items: [I('query.date', 'string')] },
+            { id: 'res', dir: 'in', items: [I('body', 'TodayResponse', T_TODAY, todayResp(entryTS))] },
+            { id: 'out', dir: 'out', items: [I('body', 'TodayResponse', T_TODAY, todayResp(entryTS))] }],
+    links: [{ from: 'in/query_date', to: 'req/query_date' }, { from: 'res/body', to: 'out/body' }] },
+  { id: 'fn:api.handleToday', name: 'api.handleToday', kind: 'fn', runtime: 'server', row: 8, host: 'infra:lambda-api',
+    ports: [{ id: 'in', dir: 'in', items: [I('date', 'string'), I('rows', '[]store.Row', T_ENTRY, rowGo())] },
+            { id: 'out', dir: 'out', items: [I('date', 'string'), I('resp', 'TodayResponse', T_TODAY, [I('total', 'int64', T_TODAY), I('entries', '[]Entry', T_ENTRY, entryGoExtra())])] }],
+    links: [{ from: 'in/date', to: 'out/date' }, { from: 'in/rows', to: 'out/resp.total' }, { from: 'in/rows', to: 'out/resp.entries' },
+            { from: 'in/rows.created_at', to: 'out/resp.entries.createdAt' }] },
+  { id: 'fn:store.ListEntries', name: 'store.ListEntries', kind: 'fn', runtime: 'server', row: 9, host: 'infra:lambda-api',
+    ports: [{ id: 'in', dir: 'in', items: [I('date', 'string'), I('row', 'pgx.Row', T_ENTRY, rowGo())] },
+            { id: 'out', dir: 'out', items: [I('query.date', 'string'), I('rows', '[]store.Row', T_ENTRY, rowGo())] }],
+    links: [{ from: 'in/date', to: 'out/query_date' }, { from: 'in/row', to: 'out/rows' }] },
+  { id: 'fn:notify.Run', name: 'notify.Run', kind: 'fn', runtime: 'server', row: 11, host: 'infra:lambda-notify',
+    ports: [{ id: 'in', dir: 'in', items: [I('at', 'time.Time'), I('rows', '[]store.Row', T_ENTRY, rowGo())] },
+            { id: 'out', dir: 'out', items: [I('date', 'string'), I('mail.subject', 'string'), I('mail.body', 'string')] }],
+    links: [{ from: 'in/at', to: 'out/date' }, { from: 'in/at', to: 'out/mail_subject' }, { from: 'in/rows', to: 'out/mail_subject' }, { from: 'in/rows', to: 'out/mail_body' }] },
+
+  { id: 'table:entries', name: 'entries', kind: 'table', runtime: 'data', row: 9,
+    ports: [{ id: 'key', dir: 'in', items: [I('date', 'date')] },        // WHERE・検索条件
+            { id: 'write', dir: 'in', items: [] },                           // 書き込むカラム（このデータでは無し）
+            { id: 'read', dir: 'out', items: [I('row', 'record', T_ROW, [I('id', 'text', T_ROW), I('amount', 'bigint', T_ROW), I('category', 'text', T_ROW), I('created_at', 'timestamptz', T_ROW)])] }] },
+
+  { id: 'external:gmail', name: 'Gmail', kind: 'external', runtime: 'external', row: 11,
+    ports: [{ id: 'in', dir: 'in', items: [I('subject', 'string'), I('body', 'string')] }] },
+];
+// 箱を動かしているインフラ（host）。線上の箱ではなく、fn を囲む枠として描く（§8 #6）
+const HOSTS = [
+  { id: 'infra:lambda-api', name: 'Lambda api', runtime: 'server' },
+  { id: 'infra:lambda-notify', name: 'Lambda notify', runtime: 'server' },
+];
+
+// 線: from → to はデータが流れる向き。reply は往復の「戻り」側（呼び出し元への対応づけに使う）
+const W = (from, to, via, reply, when) => ({ from, to, via, reply: !!reply, when: when || null });
+const WIRES = [
+  // HTML の配信: 利用者 → CloudFront → S3 → 画面
+  W('actor:user#out/open__today', 'cache:cloudfront#in/key', 'http'),
+  W('cache:cloudfront#out/key', 'infra:s3-site#in/path', 'http'),
+  W('infra:s3-site#out/html', 'cache:cloudfront#in/value', 'deliver', true),
+  W('cache:cloudfront#out/value', 'screen:/today#in/html', 'deliver', true),
+  W('actor:user#out/date', 'screen:/today#in/query_date', 'http', false, { date: true }),
+  // ブラウザの中
+  W('screen:/today#out/props_date', 'comp:TodayIsland#in/date', 'props', false, { date: true, login: true }),
+  W('screen:/today#out/html', 'comp:LoginPrompt#in/html', 'props', false, { login: false }),   // 未ログインはログイン画面だけ
+  W('comp:TodayIsland#out/date', 'hook:useToday#in/date', 'call'),
+  W('hook:useToday#out/key', 'cache:swr#in/key', 'call'),
+  W('cache:swr#out/key', 'lib:fetcher#in/key', 'call'),
+  // API の往路
+  W('lib:fetcher#out/path', 'endpoint:GET /today#in/path', 'http'),
+  W('lib:fetcher#out/query_date', 'endpoint:GET /today#in/query_date', 'http'),
+  W('endpoint:GET /today#req/query_date', 'fn:api.handleToday#in/date', 'call'),
+  W('fn:api.handleToday#out/date', 'fn:store.ListEntries#in/date', 'call'),
+  W('fn:store.ListEntries#out/query_date', 'table:entries#key/date', 'sql'),
+  // API の復路
+  W('table:entries#read/row', 'fn:store.ListEntries#in/row', 'sql', true),   // 行を親にして 1 本（子は親の線に乗る）
+  W('fn:store.ListEntries#out/rows', 'fn:api.handleToday#in/rows', 'return', true),
+  W('fn:api.handleToday#out/resp', 'endpoint:GET /today#res/body', 'return', true),   // レスポンス丸ごと 1 本
+  W('endpoint:GET /today#out/body', 'lib:fetcher#in/response', 'http', true),
+  W('lib:fetcher#out/data', 'cache:swr#in/value', 'return', true),
+  W('cache:swr#out/value', 'hook:useToday#in/data', 'return', true),
+  W('hook:useToday#out/total', 'comp:TodayIsland#in/total', 'return', true),
+  W('hook:useToday#out/entries', 'comp:TodayIsland#in/entries', 'return', true),
+  W('comp:TodayIsland#out/total', 'comp:TotalCard#in/total', 'props'),
+  W('comp:TodayIsland#out/entries', 'comp:EntryList#in/entries', 'props'),
+  // 時刻イベント: Scheduler → Lambda → notify → ListEntries / Gmail
+  W('trigger:scheduler#out/at', 'fn:notify.Run#in/at', 'event'),
+  W('fn:notify.Run#out/date', 'fn:store.ListEntries#in/date', 'call'),
+  W('fn:store.ListEntries#out/rows', 'fn:notify.Run#in/rows', 'return', true),
+  W('fn:notify.Run#out/mail_subject', 'external:gmail#in/subject', 'http'),
+  W('fn:notify.Run#out/mail_body', 'external:gmail#in/body', 'http'),
+];
+
+const LANES = [
+  { id: 'user', runtimes: ['user', 'time'], name: '利用者・時刻' },
+  { id: 'browser', runtimes: ['browser'], name: 'ブラウザ' },
+  { id: 'edge', runtimes: ['edge'], name: 'エッジ・配信' },
+  { id: 'server', runtimes: ['server'], name: 'サーバー' },
+  { id: 'data', runtimes: ['data'], name: 'データ' },
+  { id: 'external', runtimes: ['external'], name: '外部' },
+];
+const KIND_LABEL = { screen: 'screen', component: 'component', hook: 'hook', lib: 'helper', fn: 'function', endpoint: 'endpoint', table: 'table', cache: 'cache', trigger: 'trigger', actor: 'actor', external: 'external', infra: 'infra' };
+const KIND = {
+  screen:    { c: '#4f8cff', rx: 4 },
+  component: { c: '#a78bfa', rx: 10 },
+  hook:      { c: '#c084fc', rx: 18 },
+  lib:       { c: '#94a3b8', rx: 2 },
+  fn:        { c: '#4ade80', rx: 6 },
+  endpoint:  { c: '#fbbf24', rx: 0, double: true },
+  table:     { c: '#f472b6', rx: 3, band: true },
+  infra:     { c: '#ff9f43', rx: 2, dash: '5 3' },
+  cache:     { c: '#22d3ee', rx: 14, dash: '2 3' },
+  trigger:   { c: '#fde047', rx: 999 },
+  actor:     { c: '#cbd5e1', rx: 999 },
+  external:  { c: '#f87171', rx: 2, dash: '5 3' },
+};
+
+// ---------------------------------------------------------------------------
+// 索引
+// ---------------------------------------------------------------------------
+const nodeById = new Map();
+const itemByRef = new Map();      // "node#port/path" → item
+const allItems = [];
+for (const n of NODES) {
+  nodeById.set(n.id, n);
+  n.items = [];
+  n.state = {}; (n.variants || []).forEach(v => { n.state[v.id] = !!v.default; });   // 分岐の今の状態
+  for (const p of n.ports) {
+    const walk = (it, parent, prefix) => {
+      it.node = n; it.port = p; it.dir = p.dir; it.parent = parent;
+      it.path = prefix ? prefix + '.' + it.id : it.id;
+      it.ref = n.id + '#' + p.id + '/' + it.path;
+      it.depth = parent ? parent.depth + 1 : 0;
+      itemByRef.set(it.ref, it);
+      n.items.push(it); allItems.push(it);
+      for (const c of it.children) walk(c, it, it.path);
+    };
+    for (const it of p.items) walk(it, null, '');
+  }
+}
+WIRES.forEach((w, i) => {
+  w.id = 'w' + i;
+  w.fromItem = itemByRef.get(w.from); w.toItem = itemByRef.get(w.to);
+  if (!w.fromItem || !w.toItem) throw new Error('wire の参照が解けない: ' + w.from + ' → ' + w.to);
+  w.fromNode = w.fromItem.node; w.toNode = w.toItem.node;
+});
+const wiresFrom = new Map(), wiresTo = new Map();   // item.ref → wire[]
+for (const w of WIRES) {
+  (wiresFrom.get(w.from) || wiresFrom.set(w.from, []).get(w.from)).push(w);
+  (wiresTo.get(w.to) || wiresTo.set(w.to, []).get(w.to)).push(w);
+}
+// 呼び出し元 / 戻り先（往復の対応づけに使う）
+const requesters = new Map(), repliers = new Map();   // node.id → Set(node.id)
+for (const w of WIRES) {
+  if (!w.reply) (requesters.get(w.toNode.id) || requesters.set(w.toNode.id, new Set()).get(w.toNode.id)).add(w.fromNode.id);
+  else (repliers.get(w.fromNode.id) || repliers.set(w.fromNode.id, new Set()).get(w.fromNode.id)).add(w.toNode.id);
+}
+
+// 切れている線: 親の単位で引かれた線で、from 側の子に to 側の同名の子が無いもの（合流点の食い違い）
+const BROKEN = [];
+function resolveItem(n, rel) { // "port/path" → item
+  return itemByRef.get(n.id + '#' + rel);
+}
+// 分岐（§3.4b）: when が今の状態に合うものだけが「存在する」。変数の持ち主は、その id を宣言している箱
+function matches(when, nodes) {
+  if (!when) return true;
+  for (const [k, v] of Object.entries(when)) {
+    const owner = nodes.find(x => x.variants && x.variants.some(vr => vr.id === k));
+    if (owner && owner.state[k] !== v) return false;
+  }
+  return true;
+}
+const wireActive = (w) => matches(w.when, [w.fromNode, w.toNode]) && itemActive(w.fromItem) && itemActive(w.toItem);
+function itemActive(it) { for (let x = it; x; x = x.parent) if (!matches(x.when, [x.node])) return false; return true; }
+// 箱の中の links。省略時は すべての in → すべての out（先頭の項目どうし）。分岐のある links は今の状態のものだけ
+function linksOf(n) {
+  if (n.links) return n.links.filter(l => matches(l.when, [n]));
+  if (!n._defaultLinks) {
+    // 既定: すべての in → すべての out。テーブルは key → read だけ（write は read につながない）
+    const ins = n.items.filter(i => i.dir === 'in' && !i.parent && (n.kind !== 'table' || i.port.id === 'key'));
+    const outs = n.items.filter(i => i.dir === 'out' && !i.parent && (n.kind !== 'table' || i.port.id === 'read'));
+    n._defaultLinks = [];
+    for (const a of ins) for (const b of outs) n._defaultLinks.push({ from: a.port.id + '/' + a.path, to: b.port.id + '/' + b.path });
+  }
+  return n._defaultLinks;
+}
+function ancestorsOf(it) { const a = []; for (let x = it; x; x = x.parent) a.push(x); return a; }
+// 辺が祖先の単位で引かれているとき、相対パスで相手側の子項目に写す（なければ段階的に粗くする）
+function mapAcross(fromItem, edgeSrc, edgeTgt) {
+  const rel = fromItem.path.slice(edgeSrc.path.length).replace(/^\./, '');
+  if (!rel) return edgeTgt;
+  const segs = rel.split('.');
+  for (let k = 0; k < segs.length; k++) {
+    const cand = itemByRef.get(edgeTgt.node.id + '#' + edgeTgt.port.id + '/' + edgeTgt.path + '.' + segs.slice(k).join('.'));
+    if (cand) return cand;
+  }
+  return edgeTgt;
+}
+// 項目から出る辺。まず「その項目と、その子孫」に引かれた辺（値の全体はその部分も運ぶ）。
+// 無ければ最も近い祖先に引かれた辺を使い、相対パスで子へ写す（mapAcross）
+const isDescOf = (x, a) => x !== a && x.path.startsWith(a.path + '.') && x.port === a.port && x.node === a.node;
+function edgesAt(it, dir) {
+  const n = it.node;
+  const useLinks = it.dir === (dir === 'down' ? 'in' : 'out');
+  const edgesOf = (a) => {
+    const found = [];
+    if (useLinks) {
+      for (const l of linksOf(n)) {
+        const s = resolveItem(n, l.from), t = resolveItem(n, l.to);
+        if (!s || !t || !itemActive(s) || !itemActive(t)) continue;
+        if ((dir === 'down' ? s : t) === a) found.push({ kind: 'link', node: n, src: s, tgt: t });
+      }
+    } else {
+      for (const w of (dir === 'down' ? wiresFrom : wiresTo).get(a.ref) || []) if (wireActive(w)) found.push({ kind: 'wire', wire: w, src: w.fromItem, tgt: w.toItem });
+    }
+    return found;
+  };
+  let found = edgesOf(it);
+  for (const d of n.items) if (isDescOf(d, it)) found = found.concat(edgesOf(d));
+  if (found.length) return found;
+  for (const a of ancestorsOf(it).slice(1)) { found = edgesOf(a); if (found.length) return found; }
+  return [];
+}
+
+for (const w of WIRES) {
+  for (const c of w.fromNode.items) {
+    if (!isDescOf(c, w.fromItem)) continue;
+    if (mapAcross(c, w.fromItem, w.toItem) === w.toItem) BROKEN.push({ wire: w, from: c, to: w.toItem });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// たどる（§3.5）
+// ---------------------------------------------------------------------------
+function traverse(starts, { up, down }) {
+  starts = starts.filter(itemActive);
+  const lit = { items: new Set(), boxes: new Set(), wires: new Map(), links: new Map(), segs: [] };
+  const reached = new Set();
+  for (const s of starts) { lit.items.add(s); lit.boxes.add(s.node.id); reached.add(s.node.id); }
+  const anyReached = (set) => !!set && [...set].some(id => reached.has(id));
+  const addSeg = (e, from, to) => {
+    const key = (e.kind === 'wire' ? e.wire.id : 'L:' + e.node.id) + '|' + from.ref + '|' + to.ref;
+    const store = e.kind === 'wire' ? lit.wires : lit.links;
+    if (store.has(key)) return;
+    const seg = { key, kind: e.kind, wire: e.wire, node: e.node, from, to };
+    store.set(key, seg); lit.segs.push(seg);
+  };
+  if (down) {
+    const q = [...starts], seen = new Set(starts.map(s => s.ref));
+    while (q.length) {
+      const it = q.shift();
+      const snap = new Set(reached);   // 兄弟の線の判定は、この項目を処理し始めた時点の「光っている箱」で行う
+      for (const e of edgesAt(it, 'down')) {
+        if (e.kind === 'wire' && e.wire.reply) {
+          // 複数から呼ばれる箱の戻りの線は、光っている呼び出し元へだけ。呼び出し元が 1 つも光っていなければ全部へ
+          const rq = requesters.get(e.wire.fromNode.id);
+          if (!snap.has(e.wire.toNode.id) && rq && rq.size > 1 && [...rq].some(id => snap.has(id))) continue;
+        }
+        const origin = isDescOf(e.src, it) ? e.src : it;
+        const to = mapAcross(origin, e.src, e.tgt);
+        addSeg(e, origin, to);
+        lit.items.add(origin); lit.items.add(to); lit.boxes.add(to.node.id); reached.add(to.node.id);
+        if (!seen.has(to.ref)) { seen.add(to.ref); q.push(to); }
+      }
+    }
+  }
+  if (up) {
+    const q = [...starts], seen = new Set(starts.map(s => s.ref));
+    while (q.length) {
+      const it = q.shift();
+      const snap = new Set(reached);
+      for (const e of edgesAt(it, 'up')) {
+        if (e.kind === 'wire' && !e.wire.reply) {
+          // 複数へ戻す箱の行きの線を逆にたどるとき、戻り先が光っていれば、その呼び出し元だけ
+          const rp = repliers.get(e.wire.toNode.id);
+          if (!snap.has(e.wire.fromNode.id) && rp && rp.size > 1 && [...rp].some(id => snap.has(id))) continue;
+        }
+        const origin = isDescOf(e.tgt, it) ? e.tgt : it;
+        const from = mapAcross(origin, e.tgt, e.src);
+        addSeg(e, from, origin);
+        lit.items.add(origin); lit.items.add(from); lit.boxes.add(from.node.id); reached.add(from.node.id);
+        if (!seen.has(from.ref)) { seen.add(from.ref); q.push(from); }
+      }
+    }
+  }
+  return lit;
+}
+
+// ---------------------------------------------------------------------------
+// 選択の状態
+// ---------------------------------------------------------------------------
+// sel: null | {kind:'box'|'item'|'wire'|'type', ...}
+let sel = null, lit = null, mode = 'flow', flowStart = 0;
+function computeLit() {
+  if (!sel) { lit = null; return; }
+  mode = 'flow';
+  if (sel.kind === 'host') {
+    // host の枠 = その Lambda に関係する全部。fn ごとに独立にたどって合併する（§8 #17）
+    const boxes = NODES.filter(n => n.host === sel.id);
+    lit = { items: new Set(), boxes: new Set(), wires: new Map(), links: new Map(), segs: [] };
+    for (const n of boxes) {
+      const part = traverse(n.items.filter(i => !i.parent), { up: true, down: true });
+      part.items.forEach(i => lit.items.add(i)); part.boxes.forEach(b => lit.boxes.add(b));
+      for (const s of part.segs) { const store = s.kind === 'wire' ? lit.wires : lit.links; if (!store.has(s.key)) { store.set(s.key, s); lit.segs.push(s); } }
+    }
+    lit.startBoxes = new Set(boxes.map(n => n.id)); lit.startItems = new Set();
+    lit.flowStarts = new Set(boxes.flatMap(n => n.items.filter(i => !i.parent && itemActive(i)).map(i => i.ref)));
+  } else if (sel.kind === 'box') {
+    const n = nodeById.get(sel.id);
+    lit = traverse(n.items.filter(i => !i.parent), { up: !sel.downOnly, down: true });
+    lit.startBoxes = new Set([n.id]); lit.startItems = new Set();
+    lit.flowStarts = new Set(n.items.filter(i => !i.parent && itemActive(i)).map(i => i.ref));
+  } else if (sel.kind === 'item') {
+    const it = itemByRef.get(sel.ref);
+    lit = traverse([it], { up: true, down: true });
+    lit.startBoxes = new Set(); lit.startItems = new Set([it.ref]); lit.flowStarts = new Set([it.ref]);
+  } else if (sel.kind === 'wire') {
+    const w = WIRES.find(w => w.id === sel.id);
+    const to = itemByRef.get(sel.to), from = itemByRef.get(sel.from);
+    lit = traverse([to], { up: false, down: true });
+    lit.items.add(from); lit.boxes.add(from.node.id);
+    const key = w.id + '|' + from.ref + '|' + to.ref;
+    const seg = { key, kind: 'wire', wire: w, from, to, selected: true };
+    lit.wires.set(key, seg); lit.segs.push(seg);
+    lit.startBoxes = new Set(); lit.startItems = new Set(); lit.startSeg = key; lit.flowStarts = new Set([from.ref]);
+  } else if (sel.kind === 'type') {
+    // 横断面: 同じ typeRef の項目を全部光らせるだけ。線はたどらず、球も流さない
+    const starts = allItems.filter(i => i.typeRef === sel.typeRef);
+    lit = { items: new Set(starts), boxes: new Set(starts.map(s => s.node.id)), wires: new Map(), links: new Map(), segs: [] };
+    lit.startBoxes = new Set(); lit.startItems = new Set(starts.map(s => s.ref)); lit.flowStarts = new Set();
+  }
+  flowStart = performance.now(); paused = false; scrubbing = false; pausedAt = 0;   // 選び直したら 0 から再生
+}
+
+// ---------------------------------------------------------------------------
+// レイアウト（レーン × 重心。起動時に 1 回決めて固定。箱は常に全部開く）
+// 間隔は線の数で決める: 隙間 = 通る線の数 × 8px ＋ 24px（最低 40px）。レーンの間の通り道も同じ
+// ---------------------------------------------------------------------------
+const ML = 40, MT = 40, BOX_W = 300, SLOT_H = 70, HEAD = 26, ROW_H = 18, PORT_GAP = 6, HOST_PAD = 10, HOST_HEAD = 36;   // 枠の頭は、枠の名前と中の箱の種類の文字の両方が入る高さ
+const PITCH = 8, MARGIN = 24, MIN_GAP = 40;
+const laneIndex = new Map();
+LANES.forEach((l, i) => l.runtimes.forEach(r => laneIndex.set(r, i)));
+for (const n of NODES) n.lane = laneIndex.get(n.runtime);
+const hostById = new Map(HOSTS.map(h => [h.id, h]));
+const neighbors = new Map();   // node.id → Set(node)
+for (const w of WIRES) {
+  (neighbors.get(w.fromNode.id) || neighbors.set(w.fromNode.id, new Set()).get(w.fromNode.id)).add(w.toNode);
+  (neighbors.get(w.toNode.id) || neighbors.set(w.toNode.id, new Set()).get(w.toNode.id)).add(w.fromNode);
+}
+
+function columnOf(n, dir, order) { // 片側に並ぶ項目（親の直後に子）。口の境目に印を付ける
+  const out = [];
+  const walk = (it) => { out.push(it); it.children.forEach(walk); };
+  const tops = order || n.items.filter(i => i.dir === dir && !i.parent);
+  let prevPort = null;
+  for (const it of tops) {
+    if (prevPort && it.port !== prevPort) out.push(null);   // 口の区切り（6px の空き）
+    walk(it); prevPort = it.port;
+  }
+  return out;
+}
+function placeColumn(n, col, x, side) {
+  let y = n.y + HEAD + 8;
+  for (const it of col) {
+    if (it === null) { y += PORT_GAP; continue; }
+    n.pin.set(it.ref, { x, y, side }); y += ROW_H;
+  }
+  return y - n.y;
+}
+function setPins(n) {
+  n.pin = new Map();
+  const hIn = placeColumn(n, n.ins, n.x, 'in'), hOut = placeColumn(n, n.outs, n.x + n.w, 'out');
+  n.h = Math.max(hIn, hOut, HEAD + 8);
+}
+function centerY(n) { return n.y + n.h / 2; }
+function counterpartY(it) { // 項目につながる相手側のピンの y
+  const ys = [];
+  const take = (x) => { const p = x.node.pin.get(x.ref); ys.push(p ? p.y : centerY(x.node)); };
+  for (const d of [it, ...it.node.items.filter(x => isDescOf(x, it))]) {
+    for (const w of wiresFrom.get(d.ref) || []) take(w.toItem);
+    for (const w of wiresTo.get(d.ref) || []) take(w.fromItem);
+  }
+  return ys.length ? ys.reduce((a, b) => a + b, 0) / ys.length : null;
+}
+function anchor(it) { return it.node.pin.get(it.ref); }
+
+const laneOrder = [];           // lane → 縦順に並んだ箱
+const gapSize = new Map();      // "lane:k"（レーン lane の k 番目の箱の上の隙間）→ px
+let chanW = [], laneX = [];     // 通り道 ci（レーン ci の左）の幅、レーンの箱の x
+const chanLeft = (ci) => ML + chanW.slice(0, ci).reduce((a, b) => a + b, 0) + ci * BOX_W;
+
+// 箱の縦位置（重心）。gapSize があればその隙間を最低限あける
+function placeLanes(rowScale) {
+  for (let li = 0; li < LANES.length; li++) {
+    const boxes = NODES.filter(n => n.lane === li).sort((a, b) => a.row - b.row);
+    const placed = [];
+    for (const b of boxes) {
+      const nb = neighbors.get(b.id) || new Set();
+      const left = [...nb].filter(m => m.lane < li);
+      const prev = placed[placed.length - 1];
+      const slot = MT + 30 + b.row * rowScale + b.h / 2;
+      if (left.length) { b.key = left.reduce((a, m) => a + centerY(m), 0) / left.length; b.comp = left[0].comp; }
+      else if (prev && placed.some(p => nb.has(p))) { b.key = prev.key + prev.h / 2 + MIN_GAP + b.h / 2; b.comp = prev.comp; }
+      else { b.key = prev ? Math.max(slot, prev.key + 1) : slot; b.comp = b.id; }
+      placed.push(b);
+    }
+    for (const h of HOSTS) {   // 同じ host の箱は key を揃えて隣り合わせる
+      const g = boxes.filter(b => b.host === h.id);
+      if (g.length > 1) { const k = g.reduce((a, b) => a + b.key, 0) / g.length; g.forEach((b, i) => b.key = k + i * 0.01); }
+    }
+    boxes.sort((a, b) => (a.key - b.key) || (a.row - b.row));
+    laneOrder[li] = boxes;
+    let bottom = MT + 30 - MIN_GAP, prevHost = null;
+    boxes.forEach((b, k) => {
+      b.y = Math.max(b.key - b.h / 2, bottom + gapNeeded(li, k, b, prevHost)); bottom = b.y + b.h; prevHost = b.host || null;
+      setPins(b);
+    });
+  }
+  compact();
+}
+function gapNeeded(li, k, b, prevHost) {
+  let gap = gapSize.get(li + ':' + k) ?? MIN_GAP;
+  if (b.host && b.host !== prevHost) gap += HOST_HEAD + HOST_PAD;   // 枠の頭の分
+  else if (!b.host && prevHost) gap += HOST_PAD;
+  return gap;
+}
+// 左に錨の無い成分（Scheduler → notify.Run → Gmail）は row の位置に置かれるので、隙間の規則を守る範囲で上に寄せる
+function compact() {
+  const comps = [...new Set(NODES.map(n => n.comp))];
+  for (let iter = 0; iter < 3; iter++) for (const c of comps) {
+    const members = NODES.filter(n => n.comp === c);
+    let shift = Infinity;
+    for (const b of members) {
+      const order = laneOrder[b.lane], k = order.indexOf(b), above = k > 0 ? order[k - 1] : null;
+      if (above && above.comp === c) continue;
+      const minY = above ? above.y + above.h + gapNeeded(b.lane, k, b, above.host || null) : MT + 30 + (b.host ? HOST_HEAD + HOST_PAD : 0);
+      shift = Math.min(shift, b.y - minY);
+    }
+    if (shift > 0 && isFinite(shift)) members.forEach(b => { b.y -= shift; setPins(b); });
+  }
+}
+function reorderItems() { // 箱の中の項目: 相手側の項目の並び（y の重心）に合わせて親の順を入れ替える。子は親の直後のまま
+  for (let pass = 0; pass < 2; pass++) {
+    for (const n of NODES) {
+      for (const dir of ['in', 'out']) {
+        const tops = n.items.filter(i => i.dir === dir && !i.parent);
+        const keyed = tops.map(it => ({ it, key: counterpartY(it) ?? n.pin.get(it.ref).y }));
+        const portOrder = n.ports.map(p => p.id);   // 口の順は保ったまま、口の中で並べ替える
+        keyed.sort((a, b) => (portOrder.indexOf(a.it.port.id) - portOrder.indexOf(b.it.port.id)) || (a.key - b.key));
+        n[dir === 'in' ? 'ins' : 'outs'] = columnOf(n, dir, keyed.map(k => k.it));
+      }
+      setPins(n);
+    }
+  }
+}
+
+// 配線の計画: どの通り道・どの隙間を使うか（x はまだ決めない）
+const ROUTED = [...WIRES.map(w => ({ id: w.id, from: w.fromItem, to: w.toItem })),
+                ...BROKEN.map((b, i) => ({ id: 'broken' + i, from: b.from, to: b.to }))];
+const plans = new Map();
+const gapKey = (n, side) => n.lane + ':' + (laneOrder[n.lane].indexOf(n) + (side === 'below' ? 1 : 0));
+let chanUse = [], gapUse = new Map();
+function planRoutes() {
+  chanUse = LANES.map(() => []); chanUse.push([]); gapUse = new Map();
+  for (const r of ROUTED) {
+    const fn = r.from.node, tn = r.to.node, fl = fn.lane, tl = tn.lane, ty = anchor(r.to).y;
+    const plan = { id: r.id, chans: [], gaps: [], fy: anchor(r.from).y, ty };
+    if (tl > fl) {
+      // 途中のレーンに箱があって y2 の高さを横切れないときは、その箱の上の隙間を通して相手の手前で下りる
+      const block = NODES.find(n => n.lane > fl && n.lane < tl && n.y - 8 < ty && ty < n.y + n.h + 8);
+      if (block) { plan.chans = [fl + 1, tl]; plan.gaps = [gapKey(block, 'above')]; }
+      else plan.chans = [fl + 1];
+    } else {
+      plan.chans = [fl + 1, tl];
+      if (fn === tn) plan.gaps = [gapKey(tn, 'above')];
+      else if (tl === fl) plan.gaps = [tn.y > fn.y ? gapKey(tn, 'above') : gapKey(tn, 'below')];
+      else plan.gaps = [gapKey(fn, 'below')];
+    }
+    plans.set(r.id, plan);
+    for (const c of plan.chans) chanUse[c].push(plan);
+    for (const g of plan.gaps) (gapUse.get(g) || gapUse.set(g, []).get(g)).push(plan);
+  }
+  gapSize.clear();
+  for (const [g, list] of gapUse) gapSize.set(g, Math.max(MIN_GAP, list.length * PITCH + MARGIN));
+}
+// 通り道の割り当て: 同じ隙間・通り道を通る線は等間隔で重ならない
+function assignSlots() {
+  chanW = chanUse.map(list => Math.max(MIN_GAP, list.length * PITCH + MARGIN));
+  laneX = LANES.map((l, i) => chanLeft(i + 1) - BOX_W);
+  for (const n of NODES) { n.x = laneX[n.lane]; setPins(n); }
+  chanUse.forEach((list, ci) => {
+    list.sort((a, b) => Math.min(a.fy, a.ty) - Math.min(b.fy, b.ty));
+    const x0 = chanLeft(ci) + (chanW[ci] - list.length * PITCH) / 2 + PITCH / 2;
+    list.forEach((p, i) => { p.x = p.x || {}; p.x[ci] = x0 + i * PITCH; });
+  });
+  for (const [g, list] of gapUse) {
+    const [li, k] = g.split(':').map(Number), boxes = laneOrder[li];
+    const above = boxes[k - 1], below = boxes[k];
+    let top = above ? above.y + above.h + (above.host ? HOST_PAD : 0) : MT + 30;
+    let bottom = below ? below.y - (below.host ? HOST_HEAD + HOST_PAD : 0) : top + MIN_GAP;
+    list.sort((a, b) => a.fy - b.fy);
+    const y0 = top + (bottom - top - list.length * PITCH) / 2 + PITCH / 2;
+    list.forEach((p, i) => { p.y = p.y || {}; p.y[g] = y0 + i * PITCH; });
+  }
+}
+function layout() {
+  for (const n of NODES) { n.w = BOX_W; n.x = 0; n.ins = columnOf(n, 'in'); n.outs = columnOf(n, 'out'); n.y = MT + 30 + n.row * SLOT_H; setPins(n); }
+  const maxRow = Math.max(...NODES.map(n => n.row));
+  const stackH = Math.max(...LANES.map((l, li) => NODES.filter(n => n.lane === li).reduce((a, n) => a + n.h + MIN_GAP, 0)));
+  // 置く → 線を数える → 隙間を広げて置き直す、を繰り返す（迂回の有無が位置で変わるので 3 回）
+  placeLanes(Math.max(SLOT_H, stackH / (maxRow + 1)));
+  reorderItems();
+  for (let i = 0; i < 3; i++) {
+    planRoutes();
+    placeLanes(Math.max(SLOT_H, Math.max(...NODES.map(n => n.y + n.h)) * 1.1 / (maxRow + 1)));
+    reorderItems();
+  }
+  planRoutes();
+  assignSlots();
+  for (const h of HOSTS) {   // host の枠: 囲む箱の縦位置に合わせる
+    const g = NODES.filter(n => n.host === h.id);
+    h.lane = laneIndex.get(h.runtime);
+    h.x = Math.min(...g.map(n => n.x)) - HOST_PAD; h.w = Math.max(...g.map(n => n.x + n.w)) - h.x + HOST_PAD;
+    h.y = Math.min(...g.map(n => n.y)) - HOST_HEAD; h.h = Math.max(...g.map(n => n.y + n.h)) - h.y + HOST_PAD;
+  }
+  const maxBottom = Math.max(...NODES.map(n => n.y + n.h));
+  return { w: chanLeft(LANES.length) + chanW[LANES.length] + ML, h: maxBottom + 40 };
+}
+
+// ---------------------------------------------------------------------------
+// 直交の配線（出口 → 右へ → 縦 → 入口へ。戻りと同じレーンはレーンの脇を通す）。線ごとに決めた通り道を使う
+// ---------------------------------------------------------------------------
+function route(a, b, planId) {
+  const p = plans.get(planId);
+  const xs = p.chans.map(c => p.x[c]), ys = p.gaps.map(g => p.y[g]);
+  if (xs.length === 1) return `M${a.x},${a.y} H${xs[0]} V${b.y} H${b.x}`;
+  return `M${a.x},${a.y} H${xs[0]} V${ys[0]} H${xs[1]} V${b.y} H${b.x}`;
+}
+function innerRoute(a, b) { const xm = (a.x + b.x) / 2; return `M${a.x},${a.y} H${xm} V${b.y} H${b.x}`; }
+
+// ---------------------------------------------------------------------------
+// 描画（光るものは常に手前の層へ。選択は「関係ないものを沈める」だけで、形は変えない）
+// ---------------------------------------------------------------------------
+const svg = document.getElementById('svg'), stage = document.getElementById('stage');
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+const viewSize = layout();
+const view = { k: 1, tx: 0, ty: 0 };
+
+function render() {
+  const litWireIds = new Set(lit ? [...lit.wires.values()].map(s => s.wire.id) : []);
+  let lanesSvg = '', baseWires = '', baseBoxes = '', litWires = '', litBoxes = '';
+
+  const TINT = { user: '#cbd5e1', browser: '#4f8cff', edge: '#22d3ee', server: '#4ade80', data: '#f472b6', external: '#f87171' };
+  LANES.forEach((l, i) => {   // 背景のうっすらした色（レーンごと。左右は通り道の中央まで、上下は十分に伸ばす）
+    const x0 = i ? chanLeft(i) + chanW[i] / 2 : 0;
+    const x1 = i < LANES.length - 1 ? chanLeft(i + 1) + chanW[i + 1] / 2 : viewSize.w;
+    lanesSvg += `<rect class="lane-tint" x="${x0}" y="-4000" width="${x1 - x0}" height="${viewSize.h + 8000}" fill="${TINT[l.id]}" fill-opacity=".06" pointer-events="none"/>`;
+  });
+  LANES.forEach((l, i) => {
+    lanesSvg += `<text class="lane-title" x="${laneX[i] + BOX_W / 2}" y="${MT + 12}" text-anchor="middle">${esc(l.name)}</text>`;
+    if (i) { const x = chanLeft(i) + chanW[i] / 2; lanesSvg += `<line class="lane-sep" x1="${x}" y1="${MT}" x2="${x}" y2="${viewSize.h}"/>`; }
+  });
+
+  // すべての線（項目のピンからピンへ）。選択中は光っていない線を沈める
+  for (const w of WIRES) {
+    if (litWireIds.has(w.id)) continue;
+    const d = route(anchor(w.fromItem), anchor(w.toItem), w.id);
+    baseWires += `<path class="wire thin via-${w.via}${lit ? ' dimmed' : ''}${wireActive(w) ? '' : ' inactive'}" data-ends="${esc(w.fromNode.id)}|${esc(w.toNode.id)}" d="${d}"/>`;
+  }
+  if (lit) {
+    for (const s of lit.segs) {
+      if (s.kind === 'wire') {
+        const d = route(anchor(s.from), anchor(s.to), s.wire.id);
+        litWires += `<path class="wire lit via-${s.wire.via}${s.key === lit.startSeg ? ' sel' : ''}" data-seg="${esc(s.key)}" d="${d}"/>`;
+        litWires += `<path class="wire hitarea" data-seg="${esc(s.key)}" data-wire="${s.wire.id}" data-from="${esc(s.from.ref)}" data-to="${esc(s.to.ref)}" d="${d}"/>`;
+      } else if (s.node.kind === 'cache') {
+        litWires += `<path class="wire lit inner" data-seg="${esc(s.key)}" d="${innerRoute(anchor(s.from), anchor(s.to))}"/>`;
+      }
+    }
+  }
+  // 切れている線（コードの事実。選択に関係なく常に赤の破線。相手側のピンが無い所で切れた端を描く）
+  BROKEN.forEach((b, i) => {
+    const from = b.from.node, to = b.to.node, on = !lit || lit.boxes.has(from.id);
+    const a = anchor(b.from), end = { x: to.x - 16, y: anchor(b.to).y };
+    const cut = `<path class="wire broken${on ? ' lit' : ' dimmed'}" d="${route(a, end, 'broken' + i)}"/><path class="wire broken${on ? ' lit' : ' dimmed'}" style="stroke-dasharray:none" d="M${end.x},${end.y - 5} V${end.y + 5}"/>`;
+    if (lit && on) litWires += cut; else baseWires += cut;
+  });
+
+  // host の枠
+  for (const h of HOSTS) {
+    const on = !lit || NODES.some(n => n.host === h.id && lit.boxes.has(n.id));
+    const g = `<g class="host${lit ? (on ? ' lit' : ' dim') : ''}" data-host="${esc(h.id)}"><rect class="frame" x="${h.x}" y="${h.y}" width="${h.w}" height="${h.h}" rx="6"/><text class="hname" x="${h.x + 8}" y="${h.y + 15}">${esc(h.name)}</text></g>`;
+    if (lit && on) litBoxes += g; else baseBoxes += g;
+  }
+
+  for (const n of NODES) {
+    const k = KIND[n.kind], on = !lit || lit.boxes.has(n.id);
+    const state = !lit ? '' : on ? ' lit' + (lit.startBoxes.has(n.id) ? ' start' : '') : ' dim';
+    let g = `<g class="box${state}" data-box="${esc(n.id)}" style="--c:${k.c}">`;
+    const dash = k.dash ? ` stroke-dasharray="${k.dash}"` : '';
+    g += `<rect class="shape" x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="${k.rx}" fill="${k.c}1a" stroke="${k.c}"${dash}/>`;
+    if (k.double) g += `<rect x="${n.x + 3}" y="${n.y + 3}" width="${n.w - 6}" height="${n.h - 6}" fill="none" stroke="${k.c}" stroke-width=".8" pointer-events="none"/>`;
+    if (k.band) g += `<line x1="${n.x}" y1="${n.y + HEAD - 2}" x2="${n.x + n.w}" y2="${n.y + HEAD - 2}" stroke="${k.c}" stroke-width=".8" pointer-events="none"/>`;
+    g += `<text class="name" x="${n.x + 10}" y="${n.y + 17}">${esc(n.name)}</text>`;
+    g += `<text class="kind" x="${n.x}" y="${n.y - 4}">${KIND_LABEL[n.kind]}</text>`;   // 種類は箱の外側の左上
+    const itemSvg = (it, side) => {
+      const p = n.pin.get(it.ref);
+      let st = '';
+      if (!itemActive(it)) st = 'off inactive';   // 今の分岐には無い項目
+      else if (lit) {
+        // 子が光れば親も光る。親の線で届いた子は親に乗って光る（親が光れば子も光る）
+        const isOn = lit.items.has(it) || n.items.some(d => (isDescOf(d, it) || isDescOf(it, d)) && lit.items.has(d));
+        st = isOn ? 'on' + (lit.startItems.has(it.ref) && sel.kind !== 'type' ? ' start' : '') : 'off';
+      }
+      const indent = it.depth * 10;
+      const tyAttr = `class="ty${it.typeRef ? ' ref' : ''}"${it.typeRef ? ` data-type="${esc(it.typeRef)}"` : ''}`;
+      let s = `<g class="item ${st}${it.parent ? ' child' : ''}" data-item="${esc(it.ref)}">`;
+      if (side === 'in') {
+        s += `<text x="${p.x + 9 + indent}" y="${p.y + 3.5}">${esc(it.name)}<tspan ${tyAttr}> ${esc(it.type)}</tspan></text>`;
+        s += `<rect class="hit" x="${p.x}" y="${p.y - 8}" width="${n.w / 2}" height="16"/>`;
+      } else {
+        s += `<text x="${p.x - 9 - indent}" y="${p.y + 3.5}" text-anchor="end"><tspan ${tyAttr}>${esc(it.type)} </tspan>${esc(it.name)}</text>`;
+        s += `<rect class="hit" x="${p.x - n.w / 2}" y="${p.y - 8}" width="${n.w / 2}" height="16"/>`;
+      }
+      return s + `<circle class="pin" cx="${p.x}" cy="${p.y}" r="3.2"/></g>`;
+    };
+    for (const it of n.ins) if (it) g += itemSvg(it, 'in');
+    for (const it of n.outs) if (it) g += itemSvg(it, 'out');
+    g += '</g>';
+    if (lit && on) litBoxes += g; else baseBoxes += g;
+  }
+
+  svg.innerHTML = `<g id="view"><g id="lanes">${lanesSvg}</g><g id="baseWires">${baseWires}</g><g id="baseBoxes">${baseBoxes}</g>` +
+    `<g id="litWires">${litWires}</g><g id="litBoxes">${litBoxes}</g><g id="balls"></g></g>`;
+  applyView();
+  setupBalls();
+}
+
+// ---------------------------------------------------------------------------
+// 球（1 通信 = 1 球。線を進み切ってから次の球を生み、箱の中は 0.25 秒。末端で 0.6 秒止まって最初から）
+// ---------------------------------------------------------------------------
+const SPEED = 420, INNER = 0.25, REST = 0.6;
+let speedMul = 1, ballSegs = [], flowSegs = [], cycle = 1, prevTau = -1;
+let paused = false, scrubbing = false, pausedAt = 0;   // 一時停止・つまみ操作中は tau を pausedAt に固定
+function setupBalls() {
+  ballSegs = []; flowSegs = []; cycle = 1; prevTau = -1;
+  const layer = svg.querySelector('#balls');
+  if (!lit || !lit.segs.length) { layer.innerHTML = ''; updateBar(); return; }
+  const v = SPEED * speedMul;
+  const pathOf = new Map();
+  svg.querySelectorAll('#litWires path[data-seg]:not(.hitarea)').forEach(el => pathOf.set(el.dataset.seg, el));
+  const segs = lit.segs.map(s => {
+    const el = pathOf.get(s.key) || null, len = el ? el.getTotalLength() : 0;
+    return { s, el, len, dur: s.kind === 'wire' ? (el ? len / v : 0.3 / speedMul) : INNER / speedMul };
+  });
+  // 出発時刻: クリックした始点の項目を 0 とし、そこから下流へ 1 本の流れ（上流は光るだけで球は流さない）。全部の球が着いてから次へ（最長経路）
+  const t = new Map();
+  for (const ref of lit.flowStarts || []) t.set(ref, 0);
+  for (let pass = 0; pass <= segs.length; pass++) {
+    let changed = false;
+    for (const x of segs) {
+      const a = t.get(x.s.from.ref); if (a === undefined) continue;
+      if ((t.get(x.s.to.ref) ?? -1) < a + x.dur) { t.set(x.s.to.ref, a + x.dur); changed = true; }
+    }
+    if (!changed) break;
+  }
+  let end = 0, html = '';
+  const flowing = segs.filter(x => t.has(x.s.from.ref));   // 始点から届く線だけ球が流れる
+  flowing.forEach((x, i) => { x.t0 = t.get(x.s.from.ref); end = Math.max(end, x.t0 + x.dur); if (x.el) html += `<circle class="ball" data-i="${i}" r="4" visibility="hidden"/>`; });
+  cycle = end + REST / speedMul;
+  layer.innerHTML = html;
+  layer.querySelectorAll('circle').forEach(c => flowing[+c.dataset.i].dot = c);
+  flowSegs = flowing; pausedAt = Math.min(pausedAt, cycle); syncPhases();
+  ballSegs = flowing.filter(x => x.el);
+  updateBar();
+}
+const curTau = (now) => (paused || scrubbing) ? Math.min(pausedAt, cycle) : ((now - flowStart) / 1000) % cycle;
+function syncPhases() {
+  const tau = curTau(performance.now()); prevTau = tau;
+  for (const x of flowSegs) { const f = (tau - x.t0) / x.dur; x.phase = f < 0 ? 0 : f < 1 ? 1 : 2; }
+}
+// 項目の単位の光り: 球が出る瞬間に送り側、着いた瞬間に受け側の項目を白く光らせ 0.4 秒で戻す。親の線なら子を 60ms ずつずらして順に
+function flashItem(it) {
+  const n = it.node, col = it.dir === 'in' ? n.ins : n.outs;
+  const targets = [it, ...col.filter(d => d && isDescOf(d, it))];
+  targets.forEach((d, i) => setTimeout(() => {
+    const el = svg.querySelector(`[data-item="${CSS.escape(d.ref)}"]`); if (!el) return;
+    el.classList.remove('flash'); el.getBoundingClientRect(); el.classList.add('flash');
+  }, i * 60));
+}
+function onDepart(x) { if (x.s.kind === 'wire') flashItem(x.s.from); }
+function onArrive(x) {
+  if (x.s.kind === 'wire') { flashItem(x.s.to); return; }
+  // 箱の中を通って出口に着いたとき: その先に光る線が無い末端だけ光らせる（線があれば出る瞬間に光る）
+  if (!flowSegs.some(y => y.s.kind === 'wire' && y.s.from === x.s.to)) flashItem(x.s.to);
+}
+function tick(now) {
+  const frozen = paused || scrubbing, tau = curTau(now);
+  if (frozen) syncPhases();   // 止めている間は光らせない（位相だけ合わせる）
+  else {
+    if (tau < prevTau) for (const x of flowSegs) x.phase = 0;   // 最初から繰り返す
+    prevTau = tau;
+    for (const x of flowSegs) {   // このフレームで f が 0 / 1 を跨いだら項目を光らせる
+      const f = (tau - x.t0) / x.dur, ph = f < 0 ? 0 : f < 1 ? 1 : 2;
+      if (ph >= 1 && x.phase < 1) onDepart(x);
+      if (ph === 2 && x.phase < 2) onArrive(x);
+      x.phase = ph;
+    }
+  }
+  if (!scrubbing && barOn) seekEl.value = tau;
+  for (const x of ballSegs) {
+    const f = (tau - x.t0) / x.dur;
+    if (f < 0 || f >= 1) { x.dot.setAttribute('visibility', 'hidden'); continue; }
+    const p = x.el.getPointAtLength(f * x.len);
+    x.dot.setAttribute('cx', p.x); x.dot.setAttribute('cy', p.y); x.dot.setAttribute('visibility', 'visible');
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+// タイムライン（再生 / 一時停止ボタンとシークバー）
+const seekEl = document.getElementById('seek'), playBtn = document.getElementById('playBtn');
+let barOn = false, wasPlaying = true;
+function updateBar() {
+  barOn = !!(lit && lit.segs.length);
+  seekEl.hidden = playBtn.hidden = !barOn;
+  seekEl.max = cycle; seekEl.value = Math.min(+seekEl.value, cycle);
+  playBtn.textContent = paused ? '▶' : '❚❚';
+}
+function setPaused(v) {
+  if (v === paused) return;
+  if (v) pausedAt = ((performance.now() - flowStart) / 1000) % cycle;
+  else { flowStart = performance.now() - pausedAt * 1000; syncPhases(); }
+  paused = v; updateBar();
+}
+playBtn.addEventListener('click', () => setPaused(!paused));
+seekEl.addEventListener('pointerdown', () => { wasPlaying = !paused; pausedAt = curTau(performance.now()); scrubbing = true; });
+window.addEventListener('pointerup', () => {
+  if (!scrubbing) return;
+  scrubbing = false;
+  if (!paused) { flowStart = performance.now() - pausedAt * 1000; syncPhases(); }   // 離したら、再生中だったなら続きから
+});
+seekEl.addEventListener('input', () => {
+  const v = Math.min(+seekEl.value, cycle);
+  if (scrubbing || paused) { pausedAt = v; syncPhases(); }
+  else { flowStart = performance.now() - v * 1000; syncPhases(); }
+});
+const speedIn = document.getElementById('speedIn'), speedV = document.getElementById('speedV');
+speedIn.addEventListener('input', () => {
+  speedMul = +speedIn.value; speedV.textContent = '×' + speedMul.toFixed(speedMul < 1 ? 2 : 1);
+  setupBalls();   // 周期を計算し直す
+});
+
+// ---------------------------------------------------------------------------
+// 無限の平面: ドラッグで移動、ホイールで移動、ctrl/⌘ + ホイールとピンチで拡大縮小（カーソル中心、0.1〜4 倍）
+// ---------------------------------------------------------------------------
+function applyView() { const g = svg.querySelector('#view'); if (g) g.setAttribute('transform', `translate(${view.tx},${view.ty}) scale(${view.k})`); }
+function fitView() {
+  const r = stage.getBoundingClientRect();
+  view.k = Math.min((r.width - 40) / viewSize.w, (r.height - 80) / viewSize.h);
+  view.tx = (r.width - viewSize.w * view.k) / 2; view.ty = 44 + (r.height - 44 - viewSize.h * view.k) / 2;
+  applyView();
+}
+stage.addEventListener('wheel', (ev) => {
+  ev.preventDefault();
+  const r = stage.getBoundingClientRect();
+  if (ev.ctrlKey || ev.metaKey) {   // ピンチは ctrlKey 付きの wheel で届く
+    const cx = ev.clientX - r.left, cy = ev.clientY - r.top;
+    const k = Math.min(4, Math.max(0.1, view.k * Math.exp(-ev.deltaY * 0.01)));
+    view.tx = cx - (cx - view.tx) * (k / view.k); view.ty = cy - (cy - view.ty) * (k / view.k); view.k = k;
+  } else { view.tx -= ev.deltaX; view.ty -= ev.deltaY; }
+  applyView();
+}, { passive: false });
+let drag = null, dragged = false;
+stage.addEventListener('mousedown', (ev) => { if (ev.button !== 0 || (ev.target.closest && ev.target.closest('.vtable-fo'))) return; drag = { x: ev.clientX, y: ev.clientY, tx: view.tx, ty: view.ty }; dragged = false; });
+window.addEventListener('mousemove', (ev) => {
+  if (!drag) return;
+  const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+  if (!dragged && Math.hypot(dx, dy) > 3) { dragged = true; stage.classList.add('dragging'); }
+  if (dragged) { view.tx = drag.tx + dx; view.ty = drag.ty + dy; applyView(); }
+});
+window.addEventListener('mouseup', () => { drag = null; stage.classList.remove('dragging'); });
+let lastStage = null;
+window.addEventListener('resize', () => {   // 中心を保ったまま追従
+  const r = stage.getBoundingClientRect();
+  if (lastStage) { view.tx += (r.width - lastStage.w) / 2; view.ty += (r.height - lastStage.h) / 2; applyView(); }
+  lastStage = { w: r.width, h: r.height };
+});
+
+// ---------------------------------------------------------------------------
+// 操作（§3.6: 選択中は hover 無効、Esc / 空白で解除）
+// ---------------------------------------------------------------------------
+function select(next) { sel = next; computeLit(); render(); }
+svg.addEventListener('click', (ev) => {
+  if (dragged) { dragged = false; return; }   // ドラッグの終わりはクリックにしない
+  const el = ev.target;
+  if (el.closest && el.closest('.vtable-fo')) return;   // 分岐の表の上のクリックは選択にしない
+  const typeEl = el.closest('[data-type]');
+  if (typeEl) { select({ kind: 'type', typeRef: typeEl.dataset.type }); return; }
+  const itemEl = el.closest('[data-item]');
+  if (itemEl) { select({ kind: 'item', ref: itemEl.dataset.item }); return; }
+  const wireEl = el.closest('[data-wire]');
+  if (wireEl) { select({ kind: 'wire', id: wireEl.dataset.wire, from: wireEl.dataset.from, to: wireEl.dataset.to }); return; }
+  const boxEl = el.closest('[data-box]');
+  if (boxEl) {
+    const n = nodeById.get(boxEl.dataset.box);
+    if (lit && lit.boxes.has(n.id)) select({ kind: 'box', id: n.id, downOnly: true });   // 光っている箱 → そこから下流だけ
+    else select({ kind: 'box', id: n.id });
+    return;
+  }
+  const hostEl = el.closest('[data-host]');
+  if (hostEl) { select({ kind: 'host', id: hostEl.dataset.host }); return; }   // 枠 = 中の fn 全部を始点にした選択
+  select(null);
+});
+window.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') select(null); });
+// 分岐の表（§3.4b）: 分岐を持つ箱に hover すると右上の外側に出る。選択中でも出る（唯一の例外。表以外は変えない）
+let hoverNode = null;
+function hideVTable() { hoverNode = null; svg.querySelectorAll('.vtable-fo').forEach(e => e.remove()); }
+function showVTable(n) {
+  hideVTable();
+  if (!n || !n.variants) return;
+  hoverNode = n;
+  const fo = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
+  fo.setAttribute('class', 'vtable-fo');
+  fo.setAttribute('x', n.x + n.w + 6); fo.setAttribute('y', n.y - 4); fo.setAttribute('width', 140); fo.setAttribute('height', n.variants.length * 20 + 12);
+  fo.innerHTML = `<div xmlns="http://www.w3.org/1999/xhtml" class="vtable">` + n.variants.map(v =>
+    `<div class="vrow"><input type="checkbox" data-v="${esc(v.id)}" data-val="0"${n.state[v.id] ? '' : ' checked'}><input type="checkbox" data-v="${esc(v.id)}" data-val="1"${n.state[v.id] ? ' checked' : ''}><span>${esc(v.name)}</span></div>`).join('') + '</div>';
+  svg.querySelector('#view').appendChild(fo);
+}
+function setVariant(n, vid, val) {
+  n.state[vid] = val;
+  computeLit(); render();          // 経路を計算し直して 0 秒から
+  if (hoverNode === n) showVTable(n);
+}
+svg.addEventListener('change', (ev) => {
+  const cb = ev.target; if (!cb.dataset || !cb.dataset.v || !hoverNode) return;
+  setVariant(hoverNode, cb.dataset.v, cb.dataset.val === '1');
+});
+svg.addEventListener('mouseover', (ev) => {
+  const boxEl = ev.target.closest('[data-box]'), fo = ev.target.closest('.vtable-fo');
+  if (boxEl) { const n = nodeById.get(boxEl.dataset.box); if (n !== hoverNode) { if (n.variants) showVTable(n); else hideVTable(); } }
+  else if (!fo && hoverNode) hideVTable();   // 箱からも表からも離れたら消す
+});
+// hover は何も選んでいないときだけ、箱とその線を少し明るくする
+svg.addEventListener('mouseover', (ev) => {
+  if (sel) return;
+  const boxEl = ev.target.closest('[data-box]'); if (!boxEl) return;
+  boxEl.classList.add('hov');
+  const id = boxEl.dataset.box;
+  svg.querySelectorAll('[data-ends]').forEach(p => { const [a, b] = p.dataset.ends.split('|'); if (a === id || b === id) p.classList.add('hov'); });
+});
+svg.addEventListener('mouseout', (ev) => {
+  const boxEl = ev.target.closest('[data-box]'); if (!boxEl) return;
+  if (boxEl.contains(ev.relatedTarget)) return;
+  boxEl.classList.remove('hov');
+  svg.querySelectorAll('.wire.hov').forEach(p => p.classList.remove('hov'));
+});
+window.__atlas = { NODES, WIRES, HOSTS, BROKEN, select, traverse, nodeById, itemByRef, viewSize, view, setVariant, showVTable, hideVTable, get lit() { return lit; }, get sel() { return sel; }, get cycle() { return cycle; }, get balls() { return ballSegs; }, get speedMul() { return speedMul; }, rewind(tau) { flowStart = performance.now() - tau * 1000; syncPhases(); } };
+render();
+fitView();
+lastStage = (() => { const r = stage.getBoundingClientRect(); return { w: r.width, h: r.height }; })();
+</script>
+</body>
+</html>

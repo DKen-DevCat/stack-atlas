@@ -9,6 +9,7 @@ export default tseslint.config(
       '**/dist/**',
       '**/coverage/**',
       '**/node_modules/**',
+      'out/**',
       'prototype/**',
       'examples/fixture-repo/**',
       'examples/fixture-poly/**',

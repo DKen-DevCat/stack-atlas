@@ -113,6 +113,19 @@ Lambda → Go 入口の推定 5 件、DB の推定、Function URL の呼び先�
 
 **達成状況**: 7-1〜7-7 すべて達成（テスト 397 件、viewer e2e 20 件）。
 
+## Phase 8 — データフローのモデル（箱・口・項目・線）と配線図（次）
+
+実リポジトリの地図を見たユーザーの要望（props 1 つ単位で流れを見たい、型を変えたらどこが切れるか知りたい、スタックに依存しない作り）から、モデルを作り直す。設計は `docs/15-design-dataflow-model.md`（D27〜D35、2026-11-08 承認）、配布と画面は `docs/14-design-harness.md`。モック `prototype/dataflow-mock.html` で 6 版まで検証済み。
+
+- [ ] 8-1 契約: graph.json v2（箱・口・項目・線・links・variants・host・wireType・broken）、v1 → v2 変換
+- [ ] 8-2 抽出: TS（compiler API）・Go（go/packages）の言語アダプタ、合流点の項目照合、レシピ
+- [ ] 8-3 表示: 配線図ビューア（層状レイアウト＋直交配線、球、分岐の表、再生バー、折りたたみ）
+- [ ] 8-4 ハーネス: skill と `init --skill`、`validate --strict`
+- [ ] 8-5 実リポジトリへの適用（非公開）
+- [ ] 8-6 地図（3D）との接続
+
+**完了条件**: 実リポジトリで、画面をクリックすると項目の単位で流れが 1 本見え、契約と実装の食い違いが赤で出る。
+
 ## 後回し・アイデア
 
 - React fiber からの regions（`data-component` を付けられない場合）
