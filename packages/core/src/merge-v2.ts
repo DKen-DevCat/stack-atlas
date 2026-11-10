@@ -39,7 +39,9 @@
  */
 import type {
   Edge,
+  Graph,
   GraphV2,
+  GroupInfoV2,
   ItemV2,
   LinkV2,
   NodeV2,
@@ -837,6 +839,32 @@ export interface CoverageV2 {
   crudeLinks: number;
   /** links を書いていない箱のうち in と out の両方に項目がある箱（既定の「全 in → 全 out」で通す） */
   opaqueBoxes: number;
+}
+
+/**
+ * group になった v1 の箱の元の名前・kind・file（v2 のトップの `groups`。Phase 8-6、docs/20 §5.1 #3）。
+ * 3D の地図（projectMap）が group のノードの名前と kind に使う。group の値のうち、v1 の箱の id で、v2 の箱としては
+ * 残っていない（関数の箱で置き換わって消えた）ものだけ。順は v2 の箱で最初に現れた順（決定的）
+ */
+export function groupInfosV2(v2: Pick<GraphV2, 'nodes'>, v1: Pick<Graph, 'nodes'>): GroupInfoV2[] {
+  const boxes = new Set(v2.nodes.map((n) => n.id));
+  const v1ById = new Map(v1.nodes.map((n) => [n.id, n]));
+  const out: GroupInfoV2[] = [];
+  const seen = new Set<string>();
+  for (const n of v2.nodes) {
+    const g = n.group;
+    if (g === undefined || seen.has(g) || boxes.has(g)) continue;
+    seen.add(g);
+    const src = v1ById.get(g);
+    if (!src) continue;
+    out.push({
+      id: g,
+      name: src.name,
+      kind: src.kind,
+      ...(src.file !== undefined ? { file: src.file } : {}),
+    });
+  }
+  return out;
 }
 
 const CODE_KINDS = new Set(['screen', 'component', 'hook', 'helper', 'fn']);

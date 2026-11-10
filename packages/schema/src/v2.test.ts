@@ -51,7 +51,8 @@ describe('v2.ts と graph-v2.schema.json の一致', () => {
 
   it('トップレベルのフィールド', () => {
     expect(sorted(Object.keys(schema.properties))).toEqual(
-      sorted(['$schema', 'version', 'project', 'types', 'nodes', 'wires', 'views']),
+      // 2026-11-10 変更（8-6）: groups（group になった v1 の箱の元の名前・kind・file）を足した
+      sorted(['$schema', 'version', 'project', 'types', 'nodes', 'wires', 'views', 'groups']),
     );
     expect(sorted(schema.required)).toEqual(['nodes', 'version', 'wires']);
   });
@@ -115,6 +116,8 @@ describe('v2.ts と graph-v2.schema.json の一致', () => {
       sorted(['id', 'name', 'file', 'line', 'source', 'meta']),
     );
     expect(keys(schema.$defs.broken!)).toEqual(sorted(['path', 'level', 'reason']));
+    expect(keys(schema.$defs.groupInfo!)).toEqual(sorted(['id', 'name', 'kind', 'file']));
+    expect(sorted(schema.$defs.groupInfo!.required!)).toEqual(['id', 'kind', 'name']);
     expect(keys(schema.$defs.screen!)).toEqual(
       sorted(['html', 'source', 'screenshot', 'width', 'height', 'regions']),
     );

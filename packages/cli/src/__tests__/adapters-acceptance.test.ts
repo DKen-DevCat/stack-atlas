@@ -253,6 +253,21 @@ describe('8-2a 受け入れ: fixture-poly の TS の側が手で組んだ例と�
     expect(a.join.table).toEqual({ matched: hasGo ? 8 : 0, unmatched: [] });
     // group にした v1 の箱: TS のファイルの箱 4 ＋ Go のパッケージの箱 9（internal/domain は type なので types[]）
     expect(a.groups).toBe(hasGo ? 13 : 4);
+    // 2026-11-10 追加（8-6）: group になった v1 の箱の元の名前・kind・file が v2 のトップの groups に残る（docs/20 §5.1 #3）
+    expect(g.groups?.map((x) => x.id).sort()).toEqual(
+      [...new Set(g.nodes.flatMap((n) => (n.group ? [n.group] : [])))].sort(),
+    );
+    expect(g.groups).toHaveLength(hasGo ? 13 : 4);
+    expect(g.groups?.find((x) => x.id === 'lib:web/src/feature/spend/request.ts')).toEqual({
+      id: 'lib:web/src/feature/spend/request.ts',
+      name: 'request',
+      kind: 'lib',
+      file: 'web/src/feature/spend/request.ts',
+    });
+    if (hasGo)
+      expect(g.groups?.find((x) => x.id === 'handler:internal/api')).toMatchObject({
+        kind: 'handler',
+      });
     // 付け替え先を決められない線（中の全部へ付け替えたもの）。C6 の refs は go-types も出す（pkgRefs。型だけの import の
     // push も参照している関数へ）。
     // 2026-11-09 変更（8-2b レビュー）: 中が 1 つだけの group は付け替え先が決まっているものとして数える（11 → 0）。

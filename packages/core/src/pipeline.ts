@@ -47,6 +47,7 @@ import { disambiguateV2, mergePartialV2 } from './v2-parts.js';
 import {
   cleanupV2,
   coverageV2,
+  groupInfosV2,
   mergeV2,
   removeOverrideWiresV2,
   type CoverageV2,
@@ -501,6 +502,10 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
             : supplementText(r),
       });
     }
+    // group になった v1 の箱の元の名前・kind・file（3D の地図の group のノードに使う。Phase 8-6、docs/20 §5.1 #3）
+    const groupInfo = groupInfosV2(graphV2, graph);
+    if (groupInfo.length) graphV2.groups = groupInfo;
+    else delete graphV2.groups;
     const v2 = validateGraphV2(graphV2);
     issues.push(...v2.errors.map(v2path));
     result.graphV2 = graphV2;
