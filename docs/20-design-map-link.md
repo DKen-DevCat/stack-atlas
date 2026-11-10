@@ -116,7 +116,7 @@
 
 | §5.1 | 実装 |
 |---|---|
-| #1・#2 単位と `@runtime` | `projectMap`（モックのまま）。メモ・差分・`?sel=` は `stripRuntime` した id で引く（地図の 📝 は `memoKey`、group の選択の id もメモのキー） |
+| #1・#2 単位と `@runtime` | `projectMap`（モックのまま）。メモは `projectMap` の `memoKey`（箱・host は id、group は group の値そのもの。`@runtime` の写しも元のキー。§7.7）で引く（地図の 📝、group の選択の id も同じキー）。差分・`?sel=` は地図のノードの id |
 | #3 kind と `groups` | v2 のトップに **`groups: [{ id, name, kind, file? }]`**（group になった v1 の箱の元の値。kind は v1 の語彙）。パイプライン（`groupInfosV2`）が書き、`graph-v2.schema.json`・`GroupInfoV2`・`validateGraphV2`（id の重複はエラー、どの箱の group でもない id・箱と同じ id は警告）・docs/16・docs/03 を同時に直した。`projectMap` は group のノードの名前・kind・file にこれを使う |
 | #4 線の対応表 | `projectMap` が `{ graph, unitOf, members, unitKind, edges }` を返す（モックのまま） |
 | #5 戻りの向き・束の kind | モックのまま |
@@ -126,11 +126,11 @@
 | #9 狭い画面 | 窓 1100px 未満で面を 1 つ（最初は配線図）。両方を置いたまま `visibility: hidden`、隠れた地図は描かず（`setHidden`）、隠れた配線図は球を描かない（`Player.setHidden`。時刻は進む）。題名の横のリンク（「3D の地図」/「配線図」）はページを移らずに面を切り替える |
 | #10 止まっている間は描かない | `scene/frames.ts` の `framePlan`。カメラの寄せ・OrbitControls の慣性・層の展開・旧フロー・キャッシュの輪・地図の球のどれかが動いている間だけ毎フレーム描き、それ以外は見た目が変わったときに 1 回。3D だけのページにも効く |
 | #11 Viewer の改修 | iframe は使わない。描く面（`.stage`）の大きさを ResizeObserver で取り（0 は無視）、fixed の部品は面に `transform` を掛けて面の中に閉じ込める。狭い並べ方は面の幅（`.viewer.narrow`、761px 未満。以前の `@media (max-width: 760px)` を置き換え）。口は `embed`（`lit`・`onSelect`・`hoverLocked`・`keys`・`memoKey`・`flow`・`onSwitchPane`）。2 面では右のパネル・凡例・孤立メモの一覧・旧フローを出さず、沈んだノードのラベルを消す |
-| #12 メモ | `SharedMemoStore.subscribe`（変更の通知）。1 つの store を両方の面で共有。孤立の判定は「v2 の箱 ∪ 型 ∪ group ∪ 地図のノード」で、一覧は配線図の題名の横の 1 か所（「移す…」の候補にも地図のノード） |
+| #12 メモ | `SharedMemoStore.subscribe`（変更の通知）。1 つの store を両方の面で共有。孤立の判定は「v2 の箱 ∪ 型 ∪ group ∪ 地図のノード」で、一覧は配線図の題名の横の 1 か所（「移す…」の候補にも地図のノードのメモのキー。`@runtime` の写しは出さない） |
 | #13 差分 | 前が v2 なら地図は `projectMap(前)` と比べる。前が v1 なら地図は比べず、配線図は「前の graph が v1 です」。docs/ci-example.yml は前回の graph.json を退避するように直した（docs/11・docs/13・README も） |
 | #14 v1 は 3D だけ | `viewFor` が `split` / `wiring` / `map` を返す。2 面では隣の graph.v1.json のリンクを出さない（配線図だけのときは今までどおり） |
 | #15 層 | `projectMap` が LANES の順と色（`LANE_TINT`） |
-| #16 `?sel=` | 地図のノード → host → 箱の順に解く（URL エンコード）。`?view=` が勝つ（`?sel=` を外す）。選択が変わるたびに `replaceState`（箱・host・group だけ。項目・線・型の選択は外す）。解けない値は警告の一覧に出して外す |
+| #16 `?sel=` | 地図のノード（host を含む）→ 箱の順に解く（URL エンコード）。解ける `?view=` が勝つ（`?sel=` を外す。解けない `?view=` は外して `?sel=` を当てる。§7.7）。選択が変わるたびに `replaceState`（箱・host・group だけ。項目・線・型の選択は外す）。解けない値は警告の一覧に出して外す |
 | #17 `?pane=wiring` | e2e の 1 面のテスト（wiring・wiring-views・screens・built）は `&pane=wiring`（理由はテストのコメント） |
 | #18 基準の graph と境目 | 基準は 8-6 の fixture-poly の build（`packages/wiring/src/__tests__/fixtures/poly-86.v2.json`。groups 入り）。境目は `role=separator`、ドラッグと矢印キー（5% ずつ、25〜75%、localStorage） |
 
@@ -162,7 +162,7 @@
 | `route:/` を選ぶ | 地図で光る 18 ノード・束 20。地図の球 21（配線図の schedule の区間 62 のうち、線の描く球を束でまとめたもの）。脈動 0（下の「見つかったこと」） |
 | クリックから両方の面が光るまで | fixture-poly: 32〜46ms（手元の Chrome、窓 1440×900、地図のクリック → 地図の次のフレーム）。合成 300 箱（`synthetic()`。箱 312・線 1000）: 170〜320ms |
 | 止まっている間 | 開いた直後に 1 フレーム描いて止まる。一時停止・選択なしでもフレームは増えない（e2e で確かめる） |
-| テスト | 単体 1307 → **1332**（skip 2）。viewer の e2e 48 → **58**（`split.spec.ts` 9 件、built.spec 1 件） |
+| テスト | 単体 1307 → **1332**（skip 2）、レビューの修正（§7.7）で **1357**。viewer の e2e 48 → **58**（`split.spec.ts` 9 件、built.spec 1 件。§7.7 の確認は split.spec の 3 件に足した） |
 
 ### 7.5 見つかったこと
 
@@ -177,3 +177,18 @@
 - 合成 300 箱の 50ms（配線図の描き直しを差分に。上の「見つかったこと」）
 - 案 1「浮かび上がる」（docs/15 §3.7。地図と配線図が同じ空間）は後で育てる
 - 2 面の地図は型の層を出さない（§5.2 の 3）。型は配線図の型クリックで見る
+
+### 7.7 レビューの修正（2026-11-10、PR 前のセキュリティレビューとコードレビュー）
+
+- **group の値の段の数の上限**（セキュリティ、MEDIUM）: 表示名の候補を最後の 2〜8 段と全部だけにした（以前は全部の段の数だけ候補を作って O(段²)。64,000 段の group = 128KB の graph.json でタブが落ち、`?prev=` も同じ道）。名前は 120 文字まで（頭を `…`）。`projectMap` の CPU 時間: 64,000 段 落ちる → 4ms、group 2000 × 300 段 1.9 秒 → 52ms、500 × 1000 段 4.6 秒 → 36ms（`map-hostile.test.ts`）
+- **地図のスクショ**（LOW）: v2 の `screen.screenshot` を配線図の画面の HTML と同じ規則（`screenSrc`。graph.json からの相対パスで、同じ origin の graph.json のディレクトリの下）で絞ってから地図に渡す（`restrictScreenshots`。前の graph も同じ規則）。外れたものはプレースホルダ
+- **接頭辞の表**（LOW）: `PREFIX_KIND`・`V2_KIND_TO_V1` は自分のプロパティだけ引く（`constructor:x` の kind が関数になり、地図の graph が v1 の検証を通らなかった）。`:` の無い id（`libs`・`hooks`）は接頭辞なし（`lib`・`hook` にしていた）
+- **束の球のまとめ**（LOW）: まとめた線の重複を Set で見る（1 つの束に 10,000 本: 179ms → 16ms）
+- **メモのキー**: `projectMap` が `memoKey`（箱・host は id、group は group の値そのもの）と `copies`（`@runtime` の写し）を返す。接頭辞の無い group（地図では `group:<値>`）も `groups` とメモを値そのもので引き、2 面で同じメモが出る（以前は地図だけ `group:<値>` で、配線図の印・札とずれた）。「移す…」の候補はメモのキーだけ（写しの id に移したメモはどのノードにも出ない）
+- **`?sel=`**: 解ける `?view=` だけが勝つ（解けない `?view=` は配線図が警告して外し、`?sel=` を当てる）。箱として無い host（参照だけ）は解かない（配線図で選べない）
+- **地図の脈動とラベル**: `setNodeVisual` はラベルの見た目の class だけを付け替える（className を丸ごと書き換えていたので、脈動が毎フレーム枠を戻すたびに LOD・差分の class が消えてちらついた）。脈動の戻しは `applyState` と同じ `paintNode`（`scene/paint.ts`。差分の枠の色・始点の白も戻る）
+- **見た目と選択の口**: Viewer の `if (this.embed)` のうち、見た目・始点の印・hover の効き・選んでいるか・メモのキーを `ViewerMode`（`mode.ts`。3D だけ / 2 面）にまとめた。選択・Esc・凡例・孤立メモの一覧の枝は残した（パネルを持つかどうかの違いで、口にしても枝が減らない）
+- **流れ**: `mapFlow` は schedule が変わったときだけ作り直す（`flowCache`。シーク・一時停止・再生・バーを離したは時刻だけ）
+- **空白のクリック・Esc**: 2 面で選んでいなければ配線図に渡さない（以前は毎回配線図を描き直し、`?sel=` を書き直していた）
+- **メモの通知**: `SharedMemoStore.subscribe(fn, owner)` と `set`・`move` の `origin`。書いた面は自分の通知を受けない（札の入力 1 文字ごとに印と孤立メモを 2 回数え直していた）。`move` の通知は移し終えてから 1 回（以前は 2 回で、1 回目は両方にメモがある途中の状態）
+- 掃除: `MapFlowLayer` の束のキーは `edgeKey`、`resolveSel` の使われない host の枝を外した

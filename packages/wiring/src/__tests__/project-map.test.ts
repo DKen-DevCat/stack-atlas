@@ -287,6 +287,68 @@ describe('projectMap: 単位の規則（合成）', () => {
     expect(validateGraph(p.graph).errors).toEqual([]);
   });
 
+  // 2026-11-10 追加（8-6 のレビュー）: 接頭辞の無い group の値は、地図では `group:<値>` のノードだが、groups とメモのキーは
+  // 値そのもの（直す前は groups を `group:<値>` で引いて名前・kind が当たらず、地図のメモのキーも `group:<値>` で配線図とずれた）
+  it('接頭辞の無い group: groups は値そのもので引き、メモのキーも値そのもの（@runtime の写しも同じキー）', () => {
+    const g: GraphV2 = {
+      version: 2,
+      nodes: [
+        box('fn:a', 'server', { group: 'feature/spend' }),
+        box('fn:b', 'server', { group: 'feature/spend' }),
+        box('fn:c', 'browser', { group: 'feature/spend' }),
+        box('fn:d', 'browser'),
+      ],
+      wires: [],
+      groups: [{ id: 'feature/spend', name: '支出', kind: 'service', file: 'src/feature/spend' }],
+    };
+    const p = projectMap(g);
+    expect(p.graph.nodes.map((n) => [n.id, n.kind, n.name, n.file])).toEqual([
+      ['group:feature/spend', 'service', '支出', 'src/feature/spend'],
+      ['group:feature/spend@browser', 'service', '支出@browser', 'src/feature/spend'],
+      ['fn:d', 'lib', 'd', undefined],
+    ]);
+    expect(Object.fromEntries(p.memoKey)).toEqual({
+      'group:feature/spend': 'feature/spend',
+      'group:feature/spend@browser': 'feature/spend',
+      'fn:d': 'fn:d',
+    });
+    expect([...p.copies]).toEqual(['group:feature/spend@browser']);
+    expect(validateGraph(p.graph).errors).toEqual([]);
+  });
+
+  it('接頭辞のある group・host・箱のメモのキーは地図のノードの id（@runtime の写しは元の id）', () => {
+    const g: GraphV2 = {
+      version: 2,
+      nodes: [
+        box('fn:a', 'server', { group: 'lib:shared', host: 'infra:fn' }),
+        box('fn:b', 'server', { group: 'lib:shared' }),
+        box('fn:c', 'browser', { group: 'lib:shared' }),
+        N('infra:fn', 'infra', 'server', []),
+      ],
+      wires: [],
+    };
+    const p = projectMap(g);
+    expect(Object.fromEntries(p.memoKey)).toEqual({
+      'lib:shared': 'lib:shared',
+      'lib:shared@browser': 'lib:shared',
+      'infra:fn': 'infra:fn',
+    });
+    expect([...p.copies]).toEqual(['lib:shared@browser']);
+  });
+
+  // 2026-11-10 追加（8-6 のレビュー）: 直す前は `:` の無い id で slice(0, -1) が接頭辞になり、`libs` → lib・`hooks` → hook だった
+  it('`:` の無い id は接頭辞なし（中の箱の v2 の kind の多数決）', () => {
+    const g: GraphV2 = {
+      version: 2,
+      nodes: [N('libs', 'component', 'browser', []), N('hooks', 'endpoint', 'server', [])],
+      wires: [],
+    };
+    expect(projectMap(g).graph.nodes.map((n) => [n.id, n.kind])).toEqual([
+      ['libs', 'component'],
+      ['hooks', 'endpoint'],
+    ]);
+  });
+
   it('画面の regions の ref は単位に付け替え、無い箱を指すものは落とす', () => {
     const g: GraphV2 = {
       version: 2,

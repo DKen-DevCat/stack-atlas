@@ -77,11 +77,11 @@ export class WiringMemos {
     ].filter((t) => !seenTarget.has(t.id) && !!seenTarget.add(t.id));
     this.orphans = new OrphanList(targets, {
       onDelete: (id) => {
-        opts.store.set(id, '');
+        opts.store.set(id, '', this);
         this.changed();
       },
       onMove: (from, to) => {
-        opts.store.move(from, to);
+        opts.store.move(from, to, this);
         this.changed();
         this.refreshEntries();
       },
@@ -93,12 +93,13 @@ export class WiringMemos {
       else this.orphans.show(this.orphanItems());
     });
     this.refreshOrphans();
-    // もう片方の面（3D の地図）で書いた・移したメモ
+    // もう片方の面（3D の地図）で書いた・移したメモと、サーバーへの保存（setShared）。自分で書いたものは受けない
+    // （書いたあとは自分で直す。以前は自分の入力 1 文字ごとに印と孤立メモを 2 回数え直していた）
     this.offStore = opts.store.subscribe(() => {
       if (this.disposed) return;
       this.changed();
       this.refreshEntries();
-    });
+    }, this);
   }
 
   /** 角を折る箱 */
@@ -136,7 +137,7 @@ export class WiringMemos {
     });
     ta.value = this.opts.store.get(t.id);
     ta.addEventListener('input', () => {
-      this.opts.store.set(t.id, ta.value);
+      this.opts.store.set(t.id, ta.value, this);
       this.changed();
       this.refreshEntries();
     });

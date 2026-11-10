@@ -168,7 +168,8 @@ export class SharedMemoStore implements MemoStore {
   private readonly local: LocalMemoStore;
   private readonly deleted = new Set<string>();
   private merged: Memos = {};
-  private readonly listeners = new Set<() => void>();
+  /** 通知を受ける関数 → その持ち主（set・move に同じ持ち主を渡すと、その持ち主には通知しない） */
+  private readonly listeners = new Map<() => void, unknown>();
 
   constructor(
     private readonly scope: string,
@@ -193,19 +194,28 @@ export class SharedMemoStore implements MemoStore {
   }
 
   /**
-   * メモが変わったら呼ぶ（set・move・setShared のあと）。3D の地図と配線図の 2 面は 1 つの store を共有し、
-   * 片方で書いたメモの印をもう片方にも出す（docs/20 §5.1 #12）。戻り値で外す
+   * メモが変わったら呼ぶ（set・move・setShared のあと。1 回の操作に 1 回）。3D の地図と配線図の 2 面は 1 つの store を共有し、
+   * 片方で書いたメモの印をもう片方にも出す（docs/20 §5.1 #12）。owner を渡すと、同じ owner を渡した set・move では呼ばない
+   * （自分で書いたあとは自分で直すので、二度手間にしない）。戻り値で外す
    */
-  subscribe(fn: () => void): () => void {
-    this.listeners.add(fn);
+  subscribe(fn: () => void, owner?: unknown): () => void {
+    this.listeners.set(fn, owner);
     return () => this.listeners.delete(fn);
   }
 
-  private notify(): void {
-    for (const fn of [...this.listeners]) fn();
+  /** 通知する（origin を持ち主に持つ関数は飛ばす。origin が無ければ全部） */
+  private notify(origin?: unknown): void {
+    for (const [fn, owner] of [...this.listeners])
+      if (origin === undefined || owner !== origin) fn();
   }
 
-  set(id: string, text: string): void {
+  /** origin: 書いた側（subscribe の owner。その関数には通知しない） */
+  set(id: string, text: string, origin?: unknown): void {
+    this.write(id, text);
+    this.notify(origin);
+  }
+
+  private write(id: string, text: string): void {
     const sharedText = memoOf(this.shared, id);
     if (!text.trim()) {
       this.local.set(id, '');
@@ -217,7 +227,6 @@ export class SharedMemoStore implements MemoStore {
     }
     this.persistDeleted();
     this.recompute();
-    this.notify();
   }
 
   all(): Readonly<Memos> {
@@ -240,14 +249,18 @@ export class SharedMemoStore implements MemoStore {
     return [...ids].filter((id) => this.isLocal(id)).sort();
   }
 
-  /** text を to のメモに移す（to に既にあれば改行で続ける）。from は消す */
-  move(from: string, to: string): void {
+  /**
+   * text を to のメモに移す（to に既にあれば改行で続ける）。from は消す。通知は移し終えてから 1 回
+   * （以前は書く・消すの 2 回で、1 回目は両方にメモがある途中の状態を通知していた）
+   */
+  move(from: string, to: string, origin?: unknown): void {
     if (from === to) return;
     const text = this.get(from);
     if (!text) return;
     const cur = this.get(to);
-    this.set(to, cur ? `${cur}\n${text}` : text);
-    this.set(from, '');
+    this.write(to, cur ? `${cur}\n${text}` : text);
+    this.write(from, '');
+    this.notify(origin);
   }
 
   /**

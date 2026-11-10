@@ -184,8 +184,9 @@ describe('SharedMemoStore', () => {
     expect(seen).toEqual(['map:メモ', 'wiring:メモ']);
     seen.length = 0;
     s.move('lib:x', 'lib:y');
-    // move は 2 回の set（移し先に書く・元を消す）
-    expect(seen).toHaveLength(4);
+    // 2026-11-10 変更（8-6 のレビュー）: move の通知は移し終えてから 1 回（以前は書く・消すの 2 回で 4 件、1 回目は
+    // 移し先と元の両方にメモがある途中の状態だった）
+    expect(seen).toEqual(['map:', 'wiring:']);
     expect(s.get('lib:y')).toBe('メモ');
     seen.length = 0;
     s.setShared({ a: 'A2' });
@@ -195,6 +196,30 @@ describe('SharedMemoStore', () => {
     seen.length = 0;
     s.set('lib:z', 'z');
     expect(seen).toEqual([]);
+  });
+
+  // 2026-11-10 追加（8-6 のレビュー）: 書いた側は自分の通知を受けない（以前は配線図の札の入力 1 文字ごとに、自分の通知と
+  // 自分の後始末で印と孤立メモを 2 回数え直していた）。サーバーへの保存（setShared）は書いた側にも知らせる
+  it('subscribe の owner: 同じ owner を渡した set・move はその owner に通知しない（ほかの面には 1 回）', () => {
+    const s = new SharedMemoStore('p', {}, fakeStorage());
+    const map = {};
+    const wiring = {};
+    const seen: string[] = [];
+    s.subscribe(() => seen.push('map'), map);
+    s.subscribe(() => seen.push('wiring'), wiring);
+    s.subscribe(() => seen.push('anon'));
+    s.set('lib:x', 'メモ', wiring);
+    expect(seen).toEqual(['map', 'anon']);
+    seen.length = 0;
+    s.move('lib:x', 'lib:y', map);
+    expect(seen).toEqual(['wiring', 'anon']);
+    seen.length = 0;
+    // 書いた側を渡さなければ全部
+    s.set('lib:y', '');
+    expect(seen).toEqual(['map', 'wiring', 'anon']);
+    seen.length = 0;
+    s.setShared({ a: 'A' });
+    expect(seen).toEqual(['map', 'wiring', 'anon']);
   });
 });
 

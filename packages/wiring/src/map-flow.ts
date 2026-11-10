@@ -41,16 +41,27 @@ export interface MapFlow {
 export const PULSE_MIN = 0.3;
 const EPS = 1e-9;
 
-/** 時間の重なるものを 1 つにまとめる（t0 の順。触れるだけ（前の t1 = 次の t0）はまとめない） */
+/**
+ * 時間の重なるものを 1 つにまとめる（t0 の順。触れるだけ（前の t1 = 次の t0）はまとめない）。
+ * まとめた線は Set で重複を見る（配列の includes だと 1 つの束に M 本の線が重なると O(M²)。docs/20 §7.7）
+ */
 function mergeOverlaps<T extends { t0: number; t1: number; wires: string[] }>(xs: T[]): T[] {
   const sorted = [...xs].sort((a, b) => a.t0 - b.t0 || a.t1 - b.t1);
   const out: T[] = [];
+  let seen = new Set<string>();
   for (const x of sorted) {
     const cur = out[out.length - 1];
     if (cur && x.t0 < cur.t1 - EPS) {
       cur.t1 = Math.max(cur.t1, x.t1);
-      for (const w of x.wires) if (!cur.wires.includes(w)) cur.wires.push(w);
-    } else out.push({ ...x, wires: [...x.wires] });
+      for (const w of x.wires) {
+        if (seen.has(w)) continue;
+        seen.add(w);
+        cur.wires.push(w);
+      }
+    } else {
+      out.push({ ...x, wires: [...x.wires] });
+      seen = new Set(x.wires);
+    }
   }
   return out;
 }

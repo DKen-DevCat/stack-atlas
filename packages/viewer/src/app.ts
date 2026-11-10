@@ -2,7 +2,8 @@
  * Viewer: 1 つの graph を描画し、操作を受け付ける。
  * 状態は state.ts の ViewState に集め、見た目は computeVisuals() の結果を three.js / DOM に反映する。
  * - 3D の地図だけのページ（v1 の graph）と、2 面（Phase 8-6。docs/20）の左の地図（embed）の両方で使う。
- *   2 面では見た目は配線図の選択を写したもの（split/visuals.ts）、選択・hover・キー・球の時刻は embed の口で外とつなぐ
+ *   2 面では見た目は配線図の選択を写したもの（split/visuals.ts）、選択・hover・キー・球の時刻は embed の口で外とつなぐ。
+ *   見た目・始点の印・hover の効き・メモのキーの違いは mode.ts の ViewerMode 1 つにまとめる
  * - 大きさは描く面（stage）から取り（ResizeObserver）、狭い画面の判定（.narrow）も面の幅で行う（docs/20 §5.1 #11）
  * - 止まっている間は描かない（scene/frames.ts。docs/20 §5.1 #10）
  */
@@ -31,7 +32,6 @@ import {
 } from './scene/edges';
 import {
   addDiffBadge,
-  applyDiffMark,
   createGhosts,
   createRemovedEdges,
   refreshDashes,
@@ -41,27 +41,26 @@ import {
 } from './scene/diff';
 import { FlowAnimator } from './scene/flow';
 import { framePlan } from './scene/frames';
-import { MapFlowLayer, markStarts, type MapFlowFrame } from './scene/mapFlow';
+import { MapFlowLayer, type MapFlowFrame } from './scene/mapFlow';
 import {
   anchor,
   createSceneNodes,
   positionNodes,
-  setNodeObjectVisible,
-  setNodeVisual,
   type SceneNode,
   type ScreenSceneNode,
 } from './scene/nodes';
+import { paintNode } from './scene/paint';
 import { pickNode } from './scene/picking';
 import { createPlates, positionPlates } from './scene/plates';
 import { createSceneContext, type SceneContext } from './scene/renderer';
-import { linkedVisuals } from './split/visuals';
+import { linkedMode, standaloneMode, type ViewerMode } from './mode';
 import {
-  computeVisuals,
   highlightTarget,
   initialState,
   isNodeShown,
   type LabelMode,
   type ViewState,
+  type Visuals,
 } from './state';
 import { h } from './ui/dom';
 import { createFlowPill, type FlowPill } from './ui/flowPill';
@@ -121,7 +120,7 @@ export interface MapEmbed {
   onSelect(id: string | null): void;
   /** キー（Esc・/）を受けるか（最後に触った面。docs/20 §5.1 #8） */
   keys(): boolean;
-  /** メモのキー（地図のノードの id から @runtime を外したもの。docs/20 §5.1 #2） */
+  /** メモのキー（projectMap の memoKey。箱・host は id、group は group の値そのもの。docs/20 §5.1 #2） */
   memoKey(id: string): string;
   /** 球の時刻（D106）。流れない選択・選択なしは null */
   flow(): MapFlowSource | null;
@@ -172,6 +171,8 @@ export class Viewer {
   /** 描いた回数（テスト用。止まっている間は増えない） */
   private frames = 0;
   private readonly embed: MapEmbed | undefined;
+  /** 見た目と選択の口（3D だけのページ / 2 面の地図） */
+  private readonly mode: ViewerMode;
   private readonly mapFlow: MapFlowLayer | null = null;
   private readonly cleanups: (() => void)[] = [];
 
@@ -180,6 +181,7 @@ export class Viewer {
     this.model = model;
     this.embed = opts.embed;
     this.state = initialState(model.layers.length, model.nodes.length);
+    this.mode = opts.embed ? linkedMode(opts.embed) : standaloneMode(() => this.state);
     this.alwaysLabel = alwaysLabelLayers(model.nodes);
     this.diff = opts.prev ? diffGraphs(opts.prev, model.graph) : null;
     this.marks = this.diff ? diffMarks(this.diff) : null;
@@ -236,7 +238,8 @@ export class Viewer {
       onJump: (id) => this.select(id, true),
       onFocus: (id) => this.focusOn(id),
       onMemo: (id, text) => {
-        opts.memos.set(id, text);
+        // 自分の書いたメモの通知は受けない（このあと自分で印を直す）
+        opts.memos.set(id, text, this);
         this.panel.setMemoStatus(opts.memos.status(id));
         this.panel.setSaveMessage('');
         this.refreshMemoBadges();
@@ -251,11 +254,11 @@ export class Viewer {
       model.nodes.map((n) => ({ id: n.id, name: n.node.name })),
       {
         onDelete: (id) => {
-          opts.memos.set(id, '');
+          opts.memos.set(id, '', this);
           this.refreshMemoBadges();
         },
         onMove: (from, to) => {
-          opts.memos.move(from, to);
+          opts.memos.move(from, to, this);
           this.refreshMemoBadges();
           if (this.panel.openId === to) this.select(to);
         },
@@ -265,7 +268,7 @@ export class Viewer {
     );
     this.el = h(
       'div',
-      { class: `viewer${this.diff ? ' diff-on' : ''}${this.embed ? ' linked' : ''}` },
+      { class: `viewer${this.diff ? ' diff-on' : ''}${this.mode.linked ? ' linked' : ''}` },
       stage,
       labels,
       this.topbar.el,
@@ -364,13 +367,7 @@ export class Viewer {
         this.nodes,
         this.edges,
         (se) => this.lastVisuals?.edges[se.index],
-        (id) => {
-          const sn = this.nodes.get(id);
-          const nv = this.lastVisuals?.nodes.get(id);
-          if (sn && nv) setNodeVisual(sn, nv.visual);
-          if (sn && this.embed?.lit()?.starts.has(id))
-            markStarts(new Map([[id, sn]]), new Set([id]));
-        },
+        (id) => this.repaint(id),
         this.sceneScale,
       );
 
@@ -395,8 +392,10 @@ export class Viewer {
     window.addEventListener('keydown', onKey);
     this.cleanups.push(() => window.removeEventListener('keydown', onKey));
 
-    // メモの store は 2 面で共有する（配線図の札で書いたメモの 📝 もここに出す。docs/20 §5.1 #12）
-    this.cleanups.push(opts.memos.subscribe(() => !this.disposed && this.refreshMemoBadges()));
+    // メモの store は 2 面で共有する（配線図の札で書いたメモの 📝 もここに出す。docs/20 §5.1 #12）。自分の書いたものは受けない
+    this.cleanups.push(
+      opts.memos.subscribe(() => !this.disposed && this.refreshMemoBadges(), this),
+    );
     this.cleanups.push(() => {
       this.ctx.controls.removeEventListener('change', onControls);
       this.ctx.controls.removeEventListener('start', onControls);
@@ -474,20 +473,11 @@ export class Viewer {
   // ---------------------------------------------------------------- state
 
   private applyState(): void {
-    const lit = this.embed?.lit() ?? null;
-    const v = this.embed
-      ? linkedVisuals(this.model, this.state, this.marks, lit)
-      : computeVisuals(this.model, this.state, this.marks);
+    const v = this.mode.visuals(this.model, this.state, this.marks);
+    const paint = { diff: !!this.marks, starts: this.mode.starts() };
     for (const [id, nv] of v.nodes) {
       const sn = this.nodes.get(id);
-      if (!sn) continue;
-      setNodeObjectVisible(sn, nv.visible);
-      setNodeVisual(sn, nv.visual);
-      if (this.marks) applyDiffMark(sn, nv.diff);
-      if (sn.ring) {
-        sn.ring.visible = nv.ringVisible;
-        sn.ring.material.opacity = nv.ringOpacity;
-      }
+      if (sn) paintNode(sn, nv, paint);
     }
     for (const se of this.edges) {
       const ev = v.edges[se.index];
@@ -512,11 +502,20 @@ export class Viewer {
     }
     this.lastVisuals = v;
     this.updateLabelLod(true);
-    if (this.embed) markStarts(this.nodes, lit?.starts ?? new Set());
     this.requestRender();
   }
 
-  private lastVisuals: ReturnType<typeof computeVisuals> | null = null;
+  private lastVisuals: Visuals | null = null;
+
+  /**
+   * 1 つのノードを今の見た目（最後の applyState）に戻す。2 面の地図の脈動が画面の枠を毎フレーム戻すのに使う。
+   * applyState と同じ道（paintNode）なので、差分の枠の色・始点の白・ラベルの LOD と差分の class が残る（docs/20 §7.7）
+   */
+  private repaint(id: string): void {
+    const sn = this.nodes.get(id);
+    const nv = this.lastVisuals?.nodes.get(id);
+    if (sn && nv) paintNode(sn, nv, { diff: !!this.marks, starts: this.mode.starts() });
+  }
 
   /**
    * ラベルの LOD（ui/labels.ts の labelMode）。カメラからの距離で判定するので、
@@ -575,7 +574,7 @@ export class Viewer {
   /** ホバー対象を変える（ラベルの mouseenter／レイキャスト／e2e の計測から呼ぶ） */
   hover(id0: string | null): void {
     // 2 面: 選択中は hover が効かない（残っている hover も外す。docs/15 §3.6 の規則 1）
-    const id = this.embed?.hoverLocked() ? null : id0;
+    const id = this.mode.hoverLocked() ? null : id0;
     if (id === this.state.hoverId) return;
     this.state.hoverId = id;
     this.applyState();
@@ -603,7 +602,8 @@ export class Viewer {
 
   private clearSelection(): void {
     if (this.embed) {
-      this.embed.onSelect(null);
+      // 選んでいなければ外へ渡さない（以前は空白のクリック・Esc のたびに配線図を描き直し、?sel= を書き直していた。docs/20 §7.7）
+      if (this.mode.selected()) this.embed.onSelect(null);
       return;
     }
     this.state.selectedId = null;
@@ -637,9 +637,8 @@ export class Viewer {
   }
 
   private refreshMemoBadges(): void {
-    const key = (id: string) => this.embed?.memoKey(id) ?? id;
     for (const sn of this.nodes.values()) {
-      sn.memoBadge.textContent = this.opts.memos.get(key(sn.m.id)) ? '📝' : '';
+      sn.memoBadge.textContent = this.opts.memos.get(this.mode.memoKey(sn.m.id)) ? '📝' : '';
     }
     this.refreshOrphans();
   }
@@ -881,7 +880,7 @@ export class Viewer {
     return {
       frames: this.frames,
       narrow: this.el.classList.contains('narrow'),
-      linked: !!this.embed,
+      linked: this.mode.linked,
       mapFlow: this.mapFlow ? this.mapFlow.frame : null,
       plate: this.plateSize,
       layerGap: this.layerGap,

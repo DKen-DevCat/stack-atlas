@@ -5,7 +5,7 @@
  * - 始点（白い輪）: 選択の始点のノードの下に白い輪、ラベルの枠も白く
  */
 import * as THREE from 'three';
-import { mapFlowAt, type MapFlow } from '@stack-atlas/wiring';
+import { edgeKey, mapFlowAt, type MapFlow } from '@stack-atlas/wiring';
 import type { EdgeVisualState } from '../state';
 import { applyEdgeVisual, EDGE_POINTS, type SceneEdge } from './edges';
 import type { SceneNode } from './nodes';
@@ -56,12 +56,12 @@ export class MapFlowLayer {
     edges: readonly SceneEdge[],
     /** 束の今の見た目（球が離れた線を戻す） */
     private readonly edgeVisual: (se: SceneEdge) => EdgeVisualState | undefined,
-    /** 脈動の終わった画面のノードの見た目を戻す */
+    /** 脈動の終わった画面のノードの見た目を戻す（Viewer の 1 つのノードの見た目の道 = scene/paint.ts の paintNode） */
     private readonly restoreNode: (id: string) => void,
     sceneScale = 1,
   ) {
     this.geo = new THREE.SphereGeometry(BALL_RADIUS * Math.max(1, sceneScale), 16, 12);
-    for (const se of edges) this.byKey.set(`${se.edge.from}\n${se.edge.to}`, se);
+    for (const se of edges) this.byKey.set(edgeKey(se.edge.from, se.edge.to), se);
   }
 
   /** 最後に描いたフレーム（テスト・デバッグ用） */
@@ -118,7 +118,7 @@ export class MapFlowLayer {
     this.last = {
       balls: n,
       pulses: now.size,
-      edges: [...active].map((se) => `${se.edge.from}\n${se.edge.to}`),
+      edges: [...active].map((se) => edgeKey(se.edge.from, se.edge.to)),
     };
     return this.last;
   }
@@ -141,34 +141,32 @@ export class MapFlowLayer {
 
 /**
  * 始点（白い輪）: 選択の始点のノードの下に白い輪（画面は枠を白く）、ラベルの枠も白く（docs/15 §3.6）。
- * 輪は初めて要るときに作り、外すときは隠す
+ * 輪は初めて要るときに作り、外すときは隠す。画面の枠の白は、見た目（setNodeVisual）で枠の色を決めたあとに当てる
+ * （scene/paint.ts の paintNode の順）
  */
-export function markStarts(nodes: ReadonlyMap<string, SceneNode>, starts: ReadonlySet<string>) {
-  for (const [id, sn] of nodes) {
-    const on = starts.has(id);
-    sn.label.classList.toggle('start', on);
-    if (sn.type === 'screen') {
-      if (on) sn.frameMat.color.set(WHITE);
-      continue;
-    }
-    let ring = sn.hit.getObjectByName('start-ring') as THREE.Mesh | undefined;
-    if (!ring && on) {
-      const [sx, , sz] = sn.m.kind.size;
-      const r = Math.max(sx, sz) * 0.62;
-      ring = new THREE.Mesh(
-        new THREE.RingGeometry(r, r + 0.14, 48).rotateX(-Math.PI / 2),
-        new THREE.MeshBasicMaterial({
-          color: WHITE,
-          transparent: true,
-          opacity: 0.95,
-          depthWrite: false,
-          side: THREE.DoubleSide,
-        }),
-      );
-      ring.name = 'start-ring';
-      ring.position.set(0, -sn.half + 0.02, 0);
-      sn.hit.add(ring);
-    }
-    if (ring) ring.visible = on;
+export function markStart(sn: SceneNode, on: boolean): void {
+  sn.label.classList.toggle('start', on);
+  if (sn.type === 'screen') {
+    if (on) sn.frameMat.color.set(WHITE);
+    return;
   }
+  let ring = sn.hit.getObjectByName('start-ring') as THREE.Mesh | undefined;
+  if (!ring && on) {
+    const [sx, , sz] = sn.m.kind.size;
+    const r = Math.max(sx, sz) * 0.62;
+    ring = new THREE.Mesh(
+      new THREE.RingGeometry(r, r + 0.14, 48).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({
+        color: WHITE,
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    ring.name = 'start-ring';
+    ring.position.set(0, -sn.half + 0.02, 0);
+    sn.hit.add(ring);
+  }
+  if (ring) ring.visible = on;
 }

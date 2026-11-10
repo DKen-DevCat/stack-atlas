@@ -7,11 +7,11 @@
 // - Esc・空白のクリックは、最後に触った面が受けて両方を 1 回だけ解く（選択は配線図の 1 か所にあり、地図はそれを写すだけ）
 // - 境目はドラッグと矢印キー（25〜75%。localStorage）。窓の幅が 1100px 未満なら面は 1 つで、題名の横のリンクで切り替え
 //   （両方を置いたまま隠し、隠れた面は描かない。最初は配線図）
-// - メモの store は 1 つを両方で共有。孤立の判定は「v2 の箱 ∪ 型 ∪ group ∪ 地図のノード」
+// - メモの store は 1 つを両方で共有。孤立の判定は「v2 の箱 ∪ 型 ∪ group ∪ 地図のノード」。キーは projectMap の memoKey
+// - 地図の画面のスクショは配線図の画面の HTML と同じ制限（restrictScreenshots）
 import type { Graph, GraphV2, ValidationIssue } from '@stack-atlas/schema';
 import {
   litOnMap,
-  mapFlow,
   mapFlowAt,
   projectMap,
   type LitSelection,
@@ -27,7 +27,15 @@ import { h } from '../ui/dom';
 import { LocalShotStore, type SharedMemoStore } from '../ui/memos';
 import { mountWiring, type WiringApp } from '../wiring/app';
 import { LANE_TINT } from '../wiring/theme';
-import { mapTargets, memoKeyOf, resolveSel, selectionForUnit, selParam } from './link';
+import {
+  flowCache,
+  initialSelection,
+  mapTargets,
+  memoKeyOf,
+  restrictScreenshots,
+  selectionForUnit,
+  selParam,
+} from './link';
 import './split.css';
 
 /** 窓の幅がこれ未満なら面を 1 つにする（docs/20 §2.2） */
@@ -45,7 +53,7 @@ export interface SplitOptions {
   memos: { store: SharedMemoStore; apiUrl?: string };
   /** 前回の graph（?prev=）。v2 なら地図も projectMap(prev) と比べ、v1 なら地図は比べない（§5.1 #13） */
   prev?: { v2: GraphV2 } | { v1: true };
-  /** ?view= の id（?sel= に勝つ） */
+  /** ?view= の id（graph の views で解ければ ?sel= に勝つ） */
   view?: string;
   onViewChange?: (id: string | null) => void;
   /** ?sel= の値（箱・地図のノード・host の id） */
@@ -67,6 +75,8 @@ export interface SplitDebug {
   readonly mapLit: { nodes: string[]; edges: number; starts: string[] } | null;
   /** 地図の流れ（schedule を写したもの）の数 */
   readonly mapFlow: { balls: number; pulses: number; cycle: number } | null;
+  /** mapFlow を作った回数（schedule が変わったときだけ増える。シーク・一時停止では増えない） */
+  readonly mapFlowBuilds: number;
   /** 今の時刻（配線図の Player）と、その時刻に地図で見えている球（束・進み具合・線） */
   flowAt(tau?: number): {
     tau: number;
@@ -100,8 +110,14 @@ const readRatio = (): number => {
  */
 export function mountSplit(o: SplitOptions): SplitApp {
   const projection = projectMap(o.graph, { laneColors: LANE_TINT });
+  // 地図のスクショは配線図の画面の HTML と同じ制限（前の graph も同じ規則で絞り、差分を揃える）
+  const forMap = (g: Graph) => restrictScreenshots(g, o.load.baseUrl, location.href);
+  const mapGraph = forMap(projection.graph);
   const prevMap: Graph | undefined =
-    o.prev && 'v2' in o.prev ? projectMap(o.prev.v2, { laneColors: LANE_TINT }).graph : undefined;
+    o.prev && 'v2' in o.prev
+      ? forMap(projectMap(o.prev.v2, { laneColors: LANE_TINT }).graph)
+      : undefined;
+  const flows = flowCache(projection);
 
   // ---- 骨組み ----
   const mapPane = h('div', { class: 'split-pane split-map', attrs: { 'data-pane': 'map' } });
@@ -137,9 +153,9 @@ export function mountSplit(o: SplitOptions): SplitApp {
   try {
     map = new Viewer({
       root: mapPane,
-      model: buildModel(projection.graph),
+      model: buildModel(mapGraph),
       load: {
-        graph: projection.graph,
+        graph: mapGraph,
         issues: [],
         source: o.load.source,
         ...(o.load.baseUrl ? { baseUrl: o.load.baseUrl } : {}),
@@ -154,7 +170,7 @@ export function mountSplit(o: SplitOptions): SplitApp {
         hoverLocked: () => !!wiring?.selection,
         onSelect: (id) => selectFromMap(id),
         keys: () => active === 'map',
-        memoKey: memoKeyOf,
+        memoKey: (id) => memoKeyOf(projection, id),
         flow: () => {
           const clock = wiring?.clock;
           return flow && clock
@@ -189,28 +205,21 @@ export function mountSplit(o: SplitOptions): SplitApp {
     // ?sel=（view で選んだときは書かない。?view= が勝つ）
     o.onSelChange?.(wiring?.debug.viewId ? null : selParam(projection, sel));
   };
-  /** 配線図の球の時刻が変わった → 地図の流れを写し直す（D106） */
+  /**
+   * 配線図の球の時刻が変わった → 地図に描かせる（D106）。流れ（mapFlow）を作り直すのは schedule が変わったときだけ
+   * （シーク・一時停止・再生・バーを離したは同じ schedule の時刻だけ）
+   */
   const syncClock = () => {
-    const s = wiring?.clock.schedule ?? null;
-    flow = s ? mapFlow(projection, s) : null;
+    flow = flows.get(wiring?.clock.schedule ?? null);
     map.flowChanged();
   };
 
-  // ---- ?sel=（?view= が勝つ） ----
+  // ---- ?sel=（解ける ?view= が勝つ。解けない ?view= は配線図が警告して外し、?sel= を当てる） ----
   const issues = [...o.issues];
-  let initial: Selection | undefined;
-  if (o.sel && !o.view) {
-    const r = resolveSel(projection, o.graph, o.sel);
-    if (r) initial = r;
-    else {
-      issues.push({
-        level: 'warning',
-        path: '?sel',
-        message: `選択 "${o.sel}" は graph.json の箱・地図のノード・host にありません`,
-      });
-      o.onSelChange?.(null);
-    }
-  } else if (o.sel && o.view) o.onSelChange?.(null);
+  const start = initialSelection(projection, o.graph, o.sel, o.view);
+  const initial: Selection | undefined = start.select;
+  if (start.issue) issues.push(start.issue);
+  if (start.dropSel) o.onSelChange?.(null);
 
   // ---- 配線図 ----
   try {
@@ -340,6 +349,9 @@ export function mountSplit(o: SplitOptions): SplitApp {
       return flow
         ? { balls: flow.balls.length, pulses: flow.pulses.length, cycle: flow.cycle }
         : null;
+    },
+    get mapFlowBuilds() {
+      return flows.builds;
     },
     flowAt(tau0?: number) {
       const tau = tau0 ?? w.clock.tau(performance.now());

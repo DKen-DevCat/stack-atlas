@@ -2,7 +2,8 @@
 // 地図の 1 ノード = `group ?? 箱の id`（× runtime。少ない側の runtime は `<id>@<runtime>`）。host の箱はそのまま 1 ノードで、
 // 中の箱の単位へ deploy の線。線は (from の単位, to の単位) ごとに束 1 本（kind は deploy ＞ http ＞ schema ＞ uses ＞ flow）。
 // 往復の戻り（return・sql・http の reply）は向きを戻して行きの束に入れる（deliver はデータの向きのまま）。層は LANES の順。
-// group のノードの名前・kind・file は v2 のトップの `groups`（group になった v1 の箱の元の値）。無ければ id から決める。
+// group のノードの名前・kind・file は v2 のトップの `groups`（group になった v1 の箱の元の値。group の値そのもので引く）。
+// 無ければ id から決める。メモのキーは箱・host は id、group は group の値そのもの（配線図のメモの規則と同じ。`group:` は付けない）。
 // 型の層とフローは出さない（型は配線図の型クリック、始点は views）。純関数・決定的（同じ v2 から同じ結果）
 import {
   parseItemRef,
@@ -41,7 +42,7 @@ export const VIA_EDGE_KIND: Readonly<Record<WireVia, MapEdgeKind>> = {
 /** 向きを戻す戻りの via（往復の戻り。deliver の reply はデータの向きのままにする） */
 const REVERSED_REPLY: ReadonlySet<WireVia> = new Set(['return', 'sql', 'http']);
 
-/** 地図のノードの id の接頭辞 → v1 の kind（docs/20 §5.1 #3） */
+/** 地図のノードの id の接頭辞 → v1 の kind（docs/20 §5.1 #3）。引くときは `ownValue`（`constructor` などを拾わない） */
 export const PREFIX_KIND: Readonly<Record<string, string>> = {
   route: 'page',
   layout: 'layout',
@@ -60,6 +61,10 @@ export const PREFIX_KIND: Readonly<Record<string, string>> = {
   queue: 'queue',
   service: 'service',
 };
+
+/** 表の自分のプロパティだけを引く（`constructor`・`__proto__`・`toString` などの継承したものは undefined） */
+const ownValue = <V>(table: Readonly<Record<string, V>>, key: string): V | undefined =>
+  Object.hasOwn(table, key) ? table[key] : undefined;
 
 /** 接頭辞が表に無いとき（`fn:` など）: 中の箱の v2 の kind の多数決をこの表で v1 の語彙にする */
 export const V2_KIND_TO_V1: Readonly<Record<NodeKindV2, string>> = {
@@ -101,6 +106,13 @@ export interface MapProjection {
   unitKind: ReadonlyMap<string, 'box' | 'host' | 'group'>;
   /** edgeKey(from, to) → 束の中身 */
   edges: ReadonlyMap<string, MapEdgeInfo>;
+  /**
+   * 地図のノードの id → メモのキー（docs/20 §5.1 #2）。箱・host は id、group は箱の `group` の値そのもの（`group:` を付けた
+   * ノードも、`@<runtime>` の写しも同じキー）。配線図のメモの規則（memoRules。group の値で引く）と同じキーにする
+   */
+  memoKey: ReadonlyMap<string, string>;
+  /** `@<runtime>` の写し（同じ base の少ない側の runtime のノード）。メモの「移す…」の候補には出さない */
+  copies: ReadonlySet<string>;
 }
 
 /** 束のキー（地図のノードの id は改行を含まない） */
@@ -114,7 +126,7 @@ export function unitBase(n: Pick<NodeV2, 'id' | 'group'>): string {
   return GROUP_ID.test(n.group) ? n.group : `group:${n.group}`;
 }
 
-/** `@<runtime>` を外した id（メモ・差分・`?sel=` はこれで引く。docs/20 §5.1 #2） */
+/** `@<runtime>` を外した id（写しの id → 元の単位の id。メモのキーは `MapProjection.memoKey` で引く。docs/20 §5.1 #2） */
 export function stripRuntime(id: string): string {
   const at = id.lastIndexOf('@');
   if (at < 0) return id;
@@ -154,29 +166,44 @@ function majority<T extends string>(values: T[], order: readonly string[]): T | 
 }
 
 function kindOf(unitId: string, boxes: NodeV2[]): string {
-  const prefix = unitId.slice(0, unitId.indexOf(':'));
+  // `:` の無い id（`libs`・`hooks`）は接頭辞なし（slice(0, -1) で `lib`・`hook` にしない）
+  const colon = unitId.indexOf(':');
+  const prefix = colon < 0 ? undefined : unitId.slice(0, colon);
   const own = boxes.length === 1 && boxes[0]!.id === unitId ? boxes[0]! : undefined;
   // id は infra: でも v2 で trigger / actor の箱（Scheduler など）は v2 の kind を優先する
   if (own && (own.kind === 'trigger' || own.kind === 'actor')) return V2_KIND_TO_V1[own.kind];
-  const byPrefix = PREFIX_KIND[prefix];
+  const byPrefix = prefix === undefined ? undefined : ownValue(PREFIX_KIND, prefix);
   if (byPrefix) return byPrefix;
   const k = majority(
     boxes.map((b) => b.kind),
     Object.keys(V2_KIND_TO_V1),
   );
-  return k ? V2_KIND_TO_V1[k] : 'lib';
+  return (k === undefined ? undefined : ownValue(V2_KIND_TO_V1, k)) ?? 'lib';
 }
 
+/** 段の候補の上限（最後の 2〜8 段。それより深い group は全部の 1 つだけ） */
+export const NAME_MAX_SEGMENTS = 8;
+/** group の表示名の長さの上限（越えたら頭を `…` にして最後の方を残す） */
+export const NAME_MAX_LENGTH = 120;
+
+/** 表示名を NAME_MAX_LENGTH に収める（最後の方が見分けに効くので頭を落とす） */
+export const clipName = (s: string): string =>
+  s.length <= NAME_MAX_LENGTH ? s : `…${s.slice(s.length - (NAME_MAX_LENGTH - 1))}`;
+
 /**
- * group の値の表示名の候補（短い順）: 接頭辞とファイルの拡張子を外し、最後の 2 段、3 段、…、全部（1 段しか無ければその 1 段）。
- * v1 の箱の名前（`cmd/api`・`internal/store`）に近い形。v2 の `groups` に元の名前があればそれを使い、この候補は
- * `groups` が無いときと、元の名前がほかの group と重なるとき（`days/request.ts` と `spend/request.ts` がどちらも `request`）だけ使う
+ * group の値の表示名の候補（短い順）: 接頭辞とファイルの拡張子を外し、最後の 2 段、3 段、…、NAME_MAX_SEGMENTS 段と、
+ * 全部（1 段しか無ければその 1 段）。v1 の箱の名前（`cmd/api`・`internal/store`）に近い形。v2 の `groups` に元の名前があれば
+ * それを使い、この候補は `groups` が無いときと、元の名前がほかの group と重なるとき（`days/request.ts` と `spend/request.ts` が
+ * どちらも `request`）だけ使う。
+ * 候補の数は 8 つ以下で、group 1 つあたり O(段の数)（以前は全部の段の数だけ候補を作り、64,000 段の group（128KB）で O(段²) の
+ * 文字列を作ってタブが落ちた。docs/20 §7.7）
  */
 function nameCandidates(base: string): string[] {
   const label = base.slice(base.indexOf(':') + 1).replace(/\.[A-Za-z0-9]+$/, '');
   const segs = label.split('/').filter(Boolean);
   const out: string[] = [];
-  for (let k = Math.min(2, segs.length); k <= segs.length; k++) out.push(segs.slice(-k).join('/'));
+  const top = Math.min(segs.length, NAME_MAX_SEGMENTS);
+  for (let k = Math.min(2, segs.length); k <= top; k++) out.push(segs.slice(-k).join('/'));
   if (!out.includes(label)) out.push(label);
   return out;
 }
@@ -190,8 +217,11 @@ export function projectMap(g: GraphV2, opts: ProjectMapOptions = {}): MapProject
 
   // 1. 単位: base × runtime。中の箱がいちばん多い runtime が base の id を持つ（同数は RUNTIMES の順）
   const perBase = new Map<string, Map<Runtime, NodeV2[]>>();
+  /** base → group の値そのもの（groups の引き先とメモのキー。`group:` を付けた base も元の値で引く） */
+  const rawGroup = new Map<string, string>();
   for (const n of g.nodes) {
     const base = hostIds.has(n.id) ? n.id : unitBase(n);
+    if (base !== n.id && n.group !== undefined && !rawGroup.has(base)) rawGroup.set(base, n.group);
     let m = perBase.get(base);
     if (!m) perBase.set(base, (m = new Map()));
     const arr = m.get(n.runtime);
@@ -215,8 +245,13 @@ export function projectMap(g: GraphV2, opts: ProjectMapOptions = {}): MapProject
   }
 
   // 2. 表示名: 箱そのもの（単位の id が箱の id）は箱の名前、group は v2 の groups の元の名前（無ければ最後の段）。
-  // 元の名前がほかの group と重なるとき・groups が無いときは、ほかの group と重ならない最も短い段
-  const groupInfo = new Map((g.groups ?? []).map((x) => [x.id, x]));
+  // 元の名前がほかの group と重なるとき・groups が無いときは、ほかの group と重ならない最も短い段。
+  // groups は group の値そのもので引く（`group:` を付けた base では引かない）
+  const groupInfoById = new Map((g.groups ?? []).map((x) => [x.id, x]));
+  const infoOf = (base: string) => {
+    const raw = rawGroup.get(base);
+    return raw === undefined ? undefined : groupInfoById.get(raw);
+  };
   const groupUnits = [...units.entries()].filter(
     ([id, u]) => !(u.boxes.length === 1 && u.boxes[0]!.id === id),
   );
@@ -227,17 +262,18 @@ export function projectMap(g: GraphV2, opts: ProjectMapOptions = {}): MapProject
   /** 元の名前ごとの group の数（@runtime の写しは数えない） */
   const infoNames = new Map<string, number>();
   for (const [id, u] of groupUnits) {
-    const n = id === u.base ? groupInfo.get(u.base)?.name : undefined;
+    const n = id === u.base ? infoOf(u.base)?.name : undefined;
     if (n !== undefined) infoNames.set(n, (infoNames.get(n) ?? 0) + 1);
   }
   const nameOf = (id: string, u: { base: string; runtime: Runtime; boxes: NodeV2[] }) => {
     if (u.boxes.length === 1 && u.boxes[0]!.id === id) return u.boxes[0]!.name;
-    const info = groupInfo.get(u.base)?.name;
+    const info = infoOf(u.base)?.name;
     const c = cands.get(id)!;
-    const name =
+    const name = clipName(
       info !== undefined && infoNames.get(info) === 1
         ? info
-        : (c.find((s) => (taken.get(s) ?? 0) <= 1) ?? c[c.length - 1]!);
+        : (c.find((s) => (taken.get(s) ?? 0) <= 1) ?? c[c.length - 1]!),
+    );
     return id === u.base ? name : `${name}@${u.runtime}`;
   };
 
@@ -251,6 +287,8 @@ export function projectMap(g: GraphV2, opts: ProjectMapOptions = {}): MapProject
   // 4. ノード
   const members = new Map<string, string[]>();
   const unitKind = new Map<string, 'box' | 'host' | 'group'>();
+  const memoKey = new Map<string, string>();
+  const copies = new Set<string>();
   const nodes: GraphNode[] = [];
   for (const [id, u] of units) {
     const own = u.boxes.length === 1 && u.boxes[0]!.id === id ? u.boxes[0]! : undefined;
@@ -260,7 +298,9 @@ export function projectMap(g: GraphV2, opts: ProjectMapOptions = {}): MapProject
       u.boxes.map((b) => b.id),
     );
     unitKind.set(id, own ? (hostIds.has(own.id) ? 'host' : 'box') : 'group');
-    const info = own ? undefined : groupInfo.get(u.base);
+    memoKey.set(id, own ? own.id : (rawGroup.get(u.base) ?? u.base));
+    if (id !== u.base) copies.add(id);
+    const info = own ? undefined : infoOf(u.base);
     // 行とコードは箱そのもの（と、元の値の無い 1 箱の group）だけ。group の元の値があれば file はそれ
     const lineOf = info ? undefined : one;
     const file =
@@ -347,7 +387,7 @@ export function projectMap(g: GraphV2, opts: ProjectMapOptions = {}): MapProject
     nodes,
     edges: graphEdges,
   };
-  return { graph, unitOf, members, unitKind, edges };
+  return { graph, unitOf, members, unitKind, edges, memoKey, copies };
 }
 
 /** 地図で光らせるもの（配線図の LitSelection を対応表で写したもの。docs/20 §5.1 #6） */
@@ -397,7 +437,7 @@ export function litOnMap(
       nodes.add(u);
     }
   } else if (sel.kind === 'group') {
-    // 始点は中の箱の単位（id はメモのキーで @runtime を外してあるので、写しを選んだときも中の箱から引く）
+    // 始点は中の箱の単位（id はメモのキー（group の値）なので、写しを選んだときも中の箱から引く）
     for (const m of sel.members) {
       const u = unit(m);
       if (u !== undefined) starts.add(u);

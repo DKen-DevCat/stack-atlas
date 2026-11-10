@@ -73,6 +73,7 @@ interface SplitWin {
       ratio: number;
       mapLit: { nodes: string[]; edges: number; starts: string[] } | null;
       mapFlow: { balls: number; pulses: number; cycle: number } | null;
+      mapFlowBuilds: number;
       flowAt(tau?: number): {
         tau: number;
         balls: { edge: string; from: string; to: string; progress: number; wires: string[] }[];
@@ -83,6 +84,7 @@ interface SplitWin {
       schedule: { cycle: number; balls: { key: string; t0: number; dur: number }[] } | null;
       time: number;
       paused: boolean;
+      renders: number;
       select(sel: unknown): void;
       setPaused(p: boolean): void;
       seek(t: number): void;
@@ -218,11 +220,17 @@ test('地図で route:/ をクリック → 配線図で route:/ が選ばれ、
     return -1;
   });
   expect(t).toBeGreaterThan(0);
+  const builds = () =>
+    page.evaluate(() => (window as unknown as SplitWin).__stackAtlas.split!.mapFlowBuilds);
+  const b0 = await builds();
   await page.evaluate((x) => {
     const w = (window as unknown as SplitWin).__stackAtlas.wiring!;
     w.setPaused(true);
+    w.seek(x / 2);
     w.seek(x);
   }, t);
+  // 一時停止・シークは同じ schedule の時刻だけ: 地図の流れ（mapFlow）は作り直さない（2026-11-10 追加。8-6 のレビュー）
+  expect(await builds()).toBe(b0);
   await frames(page, 2);
   const r = await page.evaluate(() => {
     const st = (window as unknown as SplitWin).__stackAtlas;
@@ -317,6 +325,13 @@ test('Esc は最後に触った面が受けて両方を 1 回で解く。空白�
   await page.mouse.click(24, 880);
   expect(await wsel(page)).toBeNull();
   expect((await split(page)).mapLit).toBeNull();
+  // 選んでいないときの空白のクリック・Esc は配線図に渡さない（描き直さない。2026-11-10 追加。8-6 のレビュー）
+  const renders = () =>
+    page.evaluate(() => (window as unknown as SplitWin).__stackAtlas.wiring!.renders);
+  const r0 = await renders();
+  await page.mouse.click(24, 880);
+  await page.keyboard.press('Escape');
+  expect(await renders()).toBe(r0);
   // 選択が無いときの地図の hover は効く（つながる線を明るくするだけ）
   await page.evaluate(() => (window as unknown as SplitWin).__stackAtlas.viewer!.hover('route:/'));
   expect((await mapInfo(page)).highlight).toBe('route:/');
@@ -346,6 +361,13 @@ test('?sel= で開くと選ばれている（地図の group・箱・host）。�
   await waitReady(page);
   expect(new URL(page.url()).searchParams.get('view')).toBe(views[0]!.id);
   expect(new URL(page.url()).searchParams.has('sel')).toBe(false);
+  // 解けない ?view= は勝たない: 警告して外し、?sel= を当てる（2026-11-10 追加。8-6 のレビュー）
+  await page.goto(`${URL0}&view=no-such-view&sel=route%3A%2F`);
+  await waitReady(page);
+  expect(await wsel(page)).toEqual({ kind: 'box', id: 'route:/' });
+  expect(new URL(page.url()).searchParams.has('view')).toBe(false);
+  expect(new URL(page.url()).searchParams.get('sel')).toBe('route:/');
+  expect((await split(page)).mapLit!.starts).toEqual(['route:/']);
   expect(errors).toEqual([]);
 });
 
