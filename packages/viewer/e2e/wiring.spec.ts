@@ -1,4 +1,5 @@
-// 配線図（graph.json v2）: docs/15 §3.5 の操作、分岐の表、切れている線、球と再生バー、Esc（Phase 8-0b）
+// 配線図（graph.json v2）: docs/15 §3.5 の操作、分岐の表、切れている線、球と再生バー、Esc（Phase 8-0b）、
+// 開いた直後の倍率と F キー（Phase 8-3a。docs/18 §3.2）
 import { readFileSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
 import { todayGraph } from '../../wiring/src/__tests__/fixture';
@@ -27,6 +28,8 @@ interface WiringDbg {
   } | null;
   state: Record<string, boolean>;
   paused: boolean;
+  size: { width: number; height: number };
+  view: { k: number; tx: number; ty: number };
   time: number;
   select(sel: unknown): void;
   setPaused(p: boolean): void;
@@ -49,14 +52,23 @@ const time = (page: Page) =>
   page.evaluate(() => (window as unknown as Win).__stackAtlas.wiring!.time);
 const ballPositions = (page: Page) =>
   page.evaluate(() => (window as unknown as Win).__stackAtlas.wiring!.ballPositions());
+const view = (page: Page) =>
+  page.evaluate(() => (window as unknown as Win).__stackAtlas.wiring!.view);
+const size = (page: Page) =>
+  page.evaluate(() => (window as unknown as Win).__stackAtlas.wiring!.size);
 
-/** 開いて、検証の一覧（警告 1 件）を閉じる（画面の上の方の箱に重なるので） */
+/**
+ * 開いて、検証の一覧（警告 1 件）を閉じる（画面の上の方の箱に重なるので）。
+ * 2026-11-09 変更（8-3a）: 開いた直後は読める倍率で画面の箱のあたりだけを映すので、F キーで全体を映してから操作する
+ * （以前は開いた直後が全体表示だった）
+ */
 async function openV2(page: Page) {
   await page.goto(V2_URL);
   await waitReady(page);
   await expect(page.locator('.wv')).toBeVisible();
   await expect(page.locator('.issues li.warning')).toHaveCount(1);
   await page.locator('.issues .x').click();
+  await page.keyboard.press('f');
 }
 
 /** 箱の名前の帯（項目の行より上）を本物のマウスでクリックする */
@@ -261,6 +273,8 @@ test('分岐の表: date（項目の when）を切ると項目が薄く残り、
 }) => {
   const errors = collectErrors(page);
   await openWithGraph(page, todayGraph(), 'mock-today.v2.json');
+  // 2026-11-09 変更（8-3a）: 全体を映してから操作する（openV2 と同じ）
+  await page.keyboard.press('f');
   await clickBox(page, 'screen:/today');
   expect((await lit(page))!.boxes).toContain('hook:useToday');
   await hoverBox(page, 'screen:/today');
@@ -348,5 +362,64 @@ test('光っている線をクリックするとその線から下流だけ。�
   l = (await lit(page))!;
   expect(l.boxes).toContain('schema:transactions');
   expect(l.boxes).not.toContain('route:/');
+  expect(errors).toEqual([]);
+});
+
+test('開いた直後は項目の文字が 6px 以上の倍率で画面の箱のあたり。F で全体（文字は出さない）。選択しても箱は動かない', async ({
+  page,
+}) => {
+  const errors = collectErrors(page);
+  await page.goto(V2_URL);
+  await waitReady(page);
+  await expect(page.locator('.wv')).toBeVisible();
+  // 項目の文字（10px）× 倍率 ≥ 6px。/today の例は全体だと 0.6 未満なので、画面の箱（route:/）のあたりを 0.6 で映す
+  const v0 = await view(page);
+  expect(v0.k).toBeGreaterThanOrEqual(0.6 - 1e-9);
+  const vp = page.viewportSize()!;
+  const screen = (await page.locator('[data-box="route:/"] .shape').boundingBox())!;
+  expect(screen.x).toBeGreaterThanOrEqual(0);
+  expect(screen.y).toBeGreaterThanOrEqual(0);
+  expect(screen.x).toBeLessThan(vp.width);
+  expect(screen.y).toBeLessThan(vp.height);
+  const fontPx = await page
+    .locator('[data-box="route:/"] .item text')
+    .first()
+    .evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+  expect(fontPx * v0.k).toBeGreaterThanOrEqual(6 - 1e-9);
+
+  // F: 全体が収まる倍率（左右 20px・上の帯 44px・下 36px の内側）。画面に文字は増えない
+  const text = await page.locator('.wv').innerText();
+  await page.keyboard.press('f');
+  const v1 = await view(page);
+  const s = await size(page);
+  expect(v1.k).toBeLessThan(0.6);
+  expect(s.width * v1.k).toBeLessThanOrEqual(vp.width - 40 + 1);
+  expect(s.height * v1.k).toBeLessThanOrEqual(vp.height - 44 - 36 + 1);
+  for (const id of ['actor:user', 'route:/', 'schema:transactions']) {
+    const b = (await page.locator(`[data-box="${id}"] .shape`).boundingBox())!;
+    expect(b.x, id).toBeGreaterThanOrEqual(0);
+    expect(b.x + b.width, id).toBeLessThanOrEqual(vp.width);
+    expect(b.y + b.height, id).toBeLessThanOrEqual(vp.height);
+  }
+  expect(await page.locator('.wv').innerText()).toBe(text);
+
+  // 選択・分岐の切り替えで箱の座標は変わらない（配置は graph ごとに 1 回）
+  const rect = (id: string) =>
+    page
+      .locator(`[data-box="${id}"] .shape`)
+      .evaluate((el) => ['x', 'y', 'width', 'height'].map((a) => el.getAttribute(a)).join(','));
+  const before = await rect('fn:internal/api.handleToday');
+  await page.evaluate(() => {
+    const w = (window as unknown as Win).__stackAtlas.wiring!;
+    w.select({ kind: 'box', id: 'route:/' });
+  });
+  expect(await rect('fn:internal/api.handleToday')).toBe(before);
+  await page.evaluate(() => {
+    const w = (window as unknown as Win).__stackAtlas.wiring! as unknown as {
+      setVariant(n: string, v: string, value: boolean): void;
+    };
+    w.setVariant('infra:static_site/this', 'hit', true);
+  });
+  expect(await rect('fn:internal/api.handleToday')).toBe(before);
   expect(errors).toEqual([]);
 });

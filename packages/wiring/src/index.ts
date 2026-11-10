@@ -56,6 +56,7 @@ export {
   segmentRoute,
   LANES,
   BROKEN_CUT,
+  defaultWidthOf,
   type LayoutOptions,
   type WiringLayout,
   type BoxLayout,
@@ -63,10 +64,11 @@ export {
   type LaneLayout,
   type LaneDef,
   type Channel,
+  type ColumnLayout,
   type Pin,
   type Point,
   type Rect,
   type Route,
   type RoutePlan,
   type BrokenRoute,
-} from './layout.js';
+} from './layout/index.js';

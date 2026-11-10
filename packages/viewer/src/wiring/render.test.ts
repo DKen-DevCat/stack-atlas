@@ -135,3 +135,78 @@ describe('文字の幅', () => {
     expect(fitLabel('id', 'string', 120)).toEqual({ name: 'id', type: 'string', cut: false });
   });
 });
+
+describe('配置は graph ごとに 1 回（docs/18 §3.1・§4「動かない」）', () => {
+  const BASELINE = new URL(
+    '../../../wiring/src/__tests__/fixtures/poly-82a.v2.json',
+    import.meta.url,
+  );
+  /** 箱と host の枠の矩形（id ごと）。選択で層が変わっても座標は同じはず */
+  const rects = (svg: string) => {
+    const out: string[] = [];
+    for (const m of svg.matchAll(
+      /data-box="([^"]+)"[^>]*><rect class="shape" x="([^"]+)" y="([^"]+)" width="([^"]+)" height="([^"]+)"/g,
+    ))
+      out.push(m.slice(1).join(' '));
+    for (const m of svg.matchAll(
+      /data-host="([^"]+)"><rect class="frame" x="([^"]+)" y="([^"]+)" width="([^"]+)" height="([^"]+)"/g,
+    ))
+      out.push(`host ${m.slice(1).join(' ')}`);
+    return out.sort();
+  };
+
+  it.each([
+    ['基準の graph（poly-82a）', () => JSON.parse(readFileSync(BASELINE, 'utf8')) as GraphV2],
+    ['/today の例', () => graph],
+  ])(
+    '%s: 分岐を全部切り替えても、選択・選択の解除をしても、どの箱と枠の座標も変わらない',
+    (_n, make) => {
+      const g = make();
+      const idx = indexGraph(g);
+      const lay = layoutWiring(idx);
+      const s0 = defaultState(idx);
+      const base = rects(renderScene({ index: idx, layout: lay, state: s0, lit: null }));
+      expect(base.length).toBe(lay.boxes.size + lay.hosts.size);
+      // 分岐: 1 つずつ反転、全部反転
+      const states: VariantState[] = [s0];
+      const all: VariantState = { ...s0 };
+      for (const n of g.nodes)
+        for (const v of n.variants ?? []) {
+          const k = variantKey(n.id, v.id);
+          states.push({ ...s0, [k]: !s0[k] });
+          all[k] = !s0[k];
+        }
+      states.push(all);
+      expect(states.length).toBeGreaterThan(2);
+      // 始点: 画面・共有の箱・下流だけ・項目・型・線・枠・選択の解除
+      const screen = g.nodes.find((n) => n.kind === 'screen')!.id;
+      const w0 = idx.wires[0]!;
+      const item = idx.wires.find((w) => w.from.id !== '_')?.from.ref ?? w0.from.ref;
+      const type = [...idx.byTypeRef.keys()][0];
+      const host = [...lay.hosts.keys()][0]!;
+      const sels = [
+        { kind: 'box' as const, id: screen },
+        { kind: 'box' as const, id: screen, downOnly: true },
+        { kind: 'box' as const, id: w0.toNode.id },
+        { kind: 'item' as const, ref: item },
+        ...(type ? [{ kind: 'type' as const, typeRef: type }] : []),
+        { kind: 'wire' as const, from: w0.wire.from, to: w0.wire.to },
+        { kind: 'host' as const, id: host },
+      ];
+      for (const state of states) {
+        expect(rects(renderScene({ index: idx, layout: lay, state, lit: null }))).toEqual(base);
+        for (const sel of sels) {
+          const lit = select(idx, state, sel);
+          expect(
+            rects(renderScene({ index: idx, layout: lay, state, lit })),
+            JSON.stringify(sel),
+          ).toEqual(base);
+        }
+      }
+      // 配置をし直しても同じ（入力は索引だけ）
+      expect(
+        rects(renderScene({ index: idx, layout: layoutWiring(idx), state: all, lit: null })),
+      ).toEqual(base);
+    },
+  );
+});
