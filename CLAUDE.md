@@ -27,6 +27,7 @@
 8'. **`docs/15-design-dataflow-model.md`** — Phase 8 の設計（箱・口・項目・線のモデル、たどる規則、表示の規則、分岐、型 API による抽出、D27〜D35）。`docs/14-design-harness.md` はハーネス配布・ビルド成果物の画面（層の節は docs/15 に置き換え）。モックは `prototype/dataflow-mock.html`
 8''. Phase 8 の設計と実装結果: `docs/16-graph-v2-contract.md`（graph.json v2 の契約）、`docs/17-design-adapters.md`（言語アダプタと合流）、`docs/18-design-wiring-viewer.md`（配線図ビューア・画面・views、D60〜D81）、`docs/20-design-map-link.md`（8-6 の 3D の地図 ⇄ 配線図の 2 面。§6 Q20 の決定、§7 実装結果、D106〜D113）
 8'''. **`docs/19-design-harness-v2.md`** — Phase 8-4 のハーネス（補いの `v2:`・手書きの部分グラフ・views.yaml・`build --dry-run --json` / `--strict`・`init --skill`・`init-views`、D67〜D105。§11 ドッグフード、§12 レビューの修正）。skill の本文は `harness/skill/`（SKILL.md と references/）、隙間を仕込んだ fixture は `examples/fixture-gaps/`、その正解表は §9（**正解表と参照解 `packages/cli/src/__tests__/fixtures/gaps-answers/` を fixture-gaps の中や skill に書かない**。ドッグフードのエージェントが読む）
+8''''. **`docs/23-design-any-repo.md`** — Phase 9-L: どのリポジトリ・どの構成にもはめる（ファイル・構文（tree-sitter）・型（LSP）の 3 段、言語ごとの違いはデータ、レシピ、線の `confidence`、実行の許可、D170〜D183、Q27〜Q33）。`docs/22-design-one-model.md` — Phase 9: モデルを 1 つに（包含の木・地図は畳みの段・アダプタの自立・直す入力を 1 つ、D140〜D159、Q22〜Q26）。**判断の基準: 「見たことのない言語の repo でも動くか」**
 9. `docs/10-screenshots-guide.md`（`data-component` と screenshots の設定）、`docs/11-sharing.md`（メモ・差分・配信）、`docs/ci-example.yml`
 10. 必要に応じて `docs/05-viewer-spec.md`（UI 仕様）、`docs/04-extractors.md`（抽出方法）、各 `extractors/*/README.md`
 
