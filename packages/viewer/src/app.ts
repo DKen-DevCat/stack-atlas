@@ -54,6 +54,7 @@ import {
   isNodeShown,
   type LabelMode,
   type ViewState,
+  type Visuals,
 } from './state';
 import { h } from './ui/dom';
 import { createFlowPill, type FlowPill } from './ui/flowPill';
@@ -86,6 +87,25 @@ export interface ViewerOptions {
   prev?: Graph;
   onOpenFile(f: File): void;
   onOpenPrev(f: File): void;
+  /** 【8-6 のモック（Q20）用。packages/viewer/src/mock/】地図と配線図の 2 面で、光らせ方・hover・選択の通知を外から差し替える */
+  mock?: MapMockHooks;
+}
+
+/**
+ * 【8-6 のモック（Q20）用の口】本実装（docs/20 §5.1 #11 の Viewer の改修）で正式な口に置き換える。
+ * どれも省略でき、省略したときは今の 3D の地図のまま
+ */
+export interface MapMockHooks {
+  /** 見た目を差し替える（null を返すと今の規則 computeVisuals） */
+  visuals?(model: GraphModel, state: ViewState, marks: DiffMarks | null): Visuals | null;
+  /** 見た目を当てたあと（始点の輪などを足す） */
+  afterApply?(nodes: ReadonlyMap<string, SceneNode>, v: Visuals): void;
+  /** true の間は hover を無視する（選択中は hover が効かない） */
+  hoverLocked?(): boolean;
+  /** true なら選んでも右のパネルを開かない */
+  noPanel?(): boolean;
+  /** ノードを選んだ・選択を解いた（クリック・Esc・空白のクリック・パネルを閉じる） */
+  onSelect?(id: string | null): void;
 }
 
 const isTouch = () => window.matchMedia('(hover: none)').matches;
@@ -334,7 +354,9 @@ export class Viewer {
   // ---------------------------------------------------------------- state
 
   private applyState(): void {
-    const v = computeVisuals(this.model, this.state, this.marks);
+    const v =
+      this.opts.mock?.visuals?.(this.model, this.state, this.marks) ??
+      computeVisuals(this.model, this.state, this.marks);
     for (const [id, nv] of v.nodes) {
       const sn = this.nodes.get(id);
       if (!sn) continue;
@@ -369,6 +391,17 @@ export class Viewer {
     }
     this.lastVisuals = v;
     this.updateLabelLod(true);
+    this.opts.mock?.afterApply?.(this.nodes, v);
+  }
+
+  /** 【8-6 のモック用】外の状態（配線図の選択・規則の切り替え）が変わったので見た目を当て直す */
+  refresh(): void {
+    this.applyState();
+  }
+
+  /** 【8-6 のモック用】選択を解く（Esc・空白のクリックと同じ） */
+  deselect(): void {
+    this.clearSelection();
   }
 
   private lastVisuals: ReturnType<typeof computeVisuals> | null = null;
@@ -428,7 +461,9 @@ export class Viewer {
   }
 
   /** ホバー対象を変える（ラベルの mouseenter／レイキャスト／e2e の計測から呼ぶ） */
-  hover(id: string | null): void {
+  hover(id0: string | null): void {
+    // 【8-6 のモック】選択中は hover が効かない（残っている hover も外す）
+    const id = this.opts.mock?.hoverLocked?.() ? null : id0;
     if (id === this.state.hoverId) return;
     this.state.hoverId = id;
     this.applyState();
@@ -439,18 +474,21 @@ export class Viewer {
     if (!n) return;
     this.state.selectedId = id;
     this.state.hoverId = null;
-    this.panel.open(n, this.opts.memos.get(id), this.screenInfo(id));
+    if (this.opts.mock?.noPanel?.()) this.panel.close();
+    else this.panel.open(n, this.opts.memos.get(id), this.screenInfo(id));
     this.panel.setMemoStatus(this.opts.memos.status(id));
     this.panel.setSaveMessage('');
     this.updatePanelDiff(id);
     if (fly) this.focusOn(id);
     this.applyState();
+    this.opts.mock?.onSelect?.(id);
   }
 
   private clearSelection(): void {
     this.state.selectedId = null;
     this.panel.close();
     this.applyState();
+    this.opts.mock?.onSelect?.(null);
   }
 
   private focusOn(id: string): void {

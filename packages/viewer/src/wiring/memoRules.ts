@@ -60,6 +60,8 @@ export function memoTargets(
     return [{ id: selection.typeRef, label: t?.name ?? selection.typeRef, role: 'type' }];
   }
   if (selection.kind === 'wire') return [];
+  // 地図の group（8-6 のモック）: group の id（v1 の箱の id）のメモ
+  if (selection.kind === 'group') return [{ id: selection.id, label: selection.id, role: 'group' }];
   const id = selection.kind === 'item' ? index.items.get(selection.ref)?.node.id : selection.id;
   const n = id === undefined ? undefined : index.nodes.get(id);
   if (!n) return [];

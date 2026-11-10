@@ -8,6 +8,11 @@ export type Selection =
   | { kind: 'item'; ref: string; downOnly?: boolean }
   | { kind: 'wire'; from: string; to: string }
   | { kind: 'host'; id: string }
+  /**
+   * 地図のノード（group）のクリック（docs/20 §5.1 #7。8-6 のモックで足した）: 中の箱ごとに独立にたどって合併し、
+   * 始点の輪は中の箱それぞれ（host と同じ）。id は地図のノードの id（メモの札のキー）、members は中の箱の id
+   */
+  | { kind: 'group'; id: string; members: readonly string[] }
   | { kind: 'type'; typeRef: string };
 
 export interface LitSelection extends Lit {
@@ -33,6 +38,7 @@ const activeRoots = (index: GraphIndex, state: VariantState, n: IndexedNode) =>
  * - item: その 1 項目の上流と下流
  * - wire: その線から下流だけ
  * - host: 枠の中の箱ごとに独立にたどって合併（§8 #17）
+ * - group: 地図のノードの中の箱ごとに独立にたどって合併（host と同じ）
  * - type: 同じ typeRef の項目を全部（横断面。線はたどらない）
  */
 export function select(
@@ -49,19 +55,30 @@ export function select(
     flows: true,
   });
 
+  // 中の箱ごとに独立にたどって合併する（host の枠と地図の group）
+  const each = (members: IndexedNode[]): LitSelection => {
+    const lit = emptyLit();
+    for (const n of members)
+      mergeLit(lit, traverse(index, state, n.roots, { up: true, down: true }));
+    const r = base(lit);
+    r.startBoxes = new Set(members.map((n) => n.id));
+    r.flowStarts = new Set(members.flatMap((n) => activeRoots(index, state, n).map((i) => i.ref)));
+    return r;
+  };
+
   switch (selection.kind) {
     case 'host': {
       const members = index.hosts.get(selection.id) ?? [];
       if (members.length === 0 && !index.nodes.has(selection.id)) return null;
-      const lit = emptyLit();
-      for (const n of members)
-        mergeLit(lit, traverse(index, state, n.roots, { up: true, down: true }));
-      const r = base(lit);
-      r.startBoxes = new Set(members.map((n) => n.id));
-      r.flowStarts = new Set(
-        members.flatMap((n) => activeRoots(index, state, n).map((i) => i.ref)),
-      );
-      return r;
+      return each(members);
+    }
+    case 'group': {
+      const members = selection.members.flatMap((id) => {
+        const n = index.nodes.get(id);
+        return n ? [n] : [];
+      });
+      if (members.length === 0) return null;
+      return each(members);
     }
     case 'box': {
       const n = index.nodes.get(selection.id);

@@ -85,6 +85,8 @@ export interface WiringApp {
    * 凡例やバッジは置かない（docs/15 §3.6 の表示の規則）。文字のリンク 1 つだけ
    */
   setAltLink(link: AltLink | null): void;
+  /** 【8-6 のモック（Q20）用】選択の始点が面の外なら、倍率はそのままで始点を面の真ん中へ動かす（地図から選んだとき） */
+  reveal(): void;
   dispose(): void;
 }
 
@@ -108,6 +110,11 @@ export interface WiringOptions {
    * opts.view が graph に無いときも、警告を出したあと null で呼ぶ（URL から外す）
    */
   onViewChange?: (id: string | null) => void;
+  /**
+   * 【8-6 のモック（Q20）用】選択が変わった（クリック・Esc・views・debug.select のどれでも）。3D の地図に選択を写すのに使う。
+   * 本実装は docs/20 §5.1 #8 の「Esc は 1 か所で受けて両方を 1 回だけ解く」に合わせて作り直す
+   */
+  onSelectionChange?: (selection: Selection | null, lit: LitSelection | null) => void;
 }
 
 const sortedSets = (s: { nodes: Set<string>; items: Set<string>; wires: Set<string> }) => ({
@@ -279,6 +286,7 @@ export function mountWiring(opts: WiringOptions): WiringApp {
   const doSelect = (next: Selection | null, fromView = false) => {
     applySelection(next, fromView);
     render(true);
+    opts.onSelectionChange?.(selection, lit);
   };
   // 経路を計算し直して 0 秒から
   const setVariant = (nodeId: string, variantId: string, value: boolean) => {
@@ -286,6 +294,7 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     lit = selection ? select(index, state, selection) : null;
     choice.clear();
     render(true);
+    opts.onSelectionChange?.(selection, lit);
   };
   // view を選ぶ: 分岐を既定に戻して variants を当て、start から選ぶ。空の選択肢は分岐を既定に戻して選択の解除
   // （前の view の分岐を残さない）
@@ -297,6 +306,7 @@ export function mountWiring(opts: WiringOptions): WiringApp {
   const pickView = (id: string | null) => {
     applyPick(id);
     render(true);
+    opts.onSelectionChange?.(selection, lit);
   };
 
   const wireByKey = new Map(index.wires.map((w) => [w.key, w]));
@@ -403,6 +413,20 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     layout,
     debug,
     setAltLink: (link) => alt.set(link),
+    reveal() {
+      const r = selectionFocus(index, layout, selection);
+      const st = stage.getBoundingClientRect();
+      if (!r || st.width <= 0 || st.height <= 0) return;
+      const v = canvas.view;
+      const x0 = r.x * v.k + v.tx;
+      const y0 = r.y * v.k + v.ty;
+      const inside =
+        x0 >= 0 && y0 >= 44 && x0 + r.w * v.k <= st.width && y0 + r.h * v.k <= st.height;
+      if (inside) return;
+      v.tx = st.width / 2 - (r.x + Math.min(r.w, st.width / v.k) / 2) * v.k;
+      v.ty = Math.max(44, st.height / 2 - (r.h * v.k) / 2) - r.y * v.k;
+      canvas.apply();
+    },
     dispose() {
       offInteraction();
       issuesLink.dispose();

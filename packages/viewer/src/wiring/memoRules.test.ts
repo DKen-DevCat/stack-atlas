@@ -126,3 +126,21 @@ describe('group が継承したプロパティの名前（constructor・__proto_
     });
   }
 });
+
+describe('memoTargets: 地図の group の選択（8-6 のモック）', () => {
+  it('group の id（v1 の箱の id）のメモを 1 枚だけ出す（中の箱の札は出さない）', () => {
+    expect(
+      memoTargets(
+        index,
+        { kind: 'group', id: 'lib:web/src/feature/spend/request.ts', members: ['fn:getToday'] },
+        {},
+      ),
+    ).toEqual([
+      {
+        id: 'lib:web/src/feature/spend/request.ts',
+        label: 'lib:web/src/feature/spend/request.ts',
+        role: 'group',
+      },
+    ]);
+  });
+});
