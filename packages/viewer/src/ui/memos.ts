@@ -168,6 +168,7 @@ export class SharedMemoStore implements MemoStore {
   private readonly local: LocalMemoStore;
   private readonly deleted = new Set<string>();
   private merged: Memos = {};
+  private readonly listeners = new Set<() => void>();
 
   constructor(
     private readonly scope: string,
@@ -191,6 +192,19 @@ export class SharedMemoStore implements MemoStore {
     return memoOf(this.merged, id) ?? '';
   }
 
+  /**
+   * メモが変わったら呼ぶ（set・move・setShared のあと）。3D の地図と配線図の 2 面は 1 つの store を共有し、
+   * 片方で書いたメモの印をもう片方にも出す（docs/20 §5.1 #12）。戻り値で外す
+   */
+  subscribe(fn: () => void): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+
+  private notify(): void {
+    for (const fn of [...this.listeners]) fn();
+  }
+
   set(id: string, text: string): void {
     const sharedText = memoOf(this.shared, id);
     if (!text.trim()) {
@@ -203,6 +217,7 @@ export class SharedMemoStore implements MemoStore {
     }
     this.persistDeleted();
     this.recompute();
+    this.notify();
   }
 
   all(): Readonly<Memos> {
@@ -242,6 +257,7 @@ export class SharedMemoStore implements MemoStore {
   setShared(shared: Readonly<Memos>): void {
     this.shared = { ...shared };
     this.prune();
+    this.notify();
   }
 
   /**

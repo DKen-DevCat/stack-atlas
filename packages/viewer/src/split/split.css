@@ -1,0 +1,61 @@
+/* 2 面（Phase 8-6。docs/20 §2.2）: 左に 3D の地図、右に配線図。境目はドラッグと矢印キー */
+.split {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-columns: var(--left, 50%) 6px minmax(0, 1fr);
+}
+/*
+ * 面。地図（.stage・.top・.left …）と配線図（.wv …）の部品は position: fixed なので、transform で面を fixed の基準にして
+ * 面の中に閉じ込める（docs/20 §5.1 #11。iframe は使わない）
+ */
+.split-pane {
+  position: relative;
+  overflow: hidden;
+  min-width: 0;
+  transform: translateZ(0);
+}
+.split-divider {
+  cursor: col-resize;
+  background: #151922;
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  touch-action: none;
+}
+.split-divider:hover,
+.split-divider:focus-visible,
+.split.dragging .split-divider {
+  background: #2b3240;
+  outline: none;
+}
+/* ドラッグ中は面がポインタを奪わないように */
+.split.dragging .split-pane {
+  pointer-events: none;
+}
+/* 狭い画面: 面は 1 つ。両方を置いたまま隠す（WebGL の context を作り直さない。docs/20 §5.1 #9） */
+.split.narrow {
+  grid-template-columns: minmax(0, 1fr);
+}
+.split.narrow .split-divider {
+  display: none;
+}
+.split.narrow .split-pane {
+  grid-area: 1 / 1;
+}
+.split.narrow[data-pane='wiring'] .split-map,
+.split.narrow[data-pane='map'] .split-wiring {
+  visibility: hidden;
+}
+/* 見えている面を上に。配線図の球は visibility の属性を自分で持つ（隠した面から透けないように消す） */
+.split.narrow[data-pane='wiring'] .split-wiring,
+.split.narrow[data-pane='map'] .split-map {
+  z-index: 1;
+}
+.split.narrow[data-pane='map'] .split-wiring .balls {
+  display: none;
+}
+/* 配線図の面は窓より狭いので、メモの札は再生バーの上に（窓の幅 900px 以下と同じ）。幅は面に合わせる */
+.split-wiring .wv-memo {
+  bottom: 48px;
+  width: min(360px, calc(100% - 32px));
+}

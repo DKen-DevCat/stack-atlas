@@ -1,10 +1,10 @@
-// 【8-6 のモック（Q20）】提案の規則の見た目: 範囲は不透明度だけ、閉包の赤と橙を使わない、hover は沈めない
+// 2 面の地図の見た目（Q20 のモックの提案の規則。docs/20 §6）: 範囲は不透明度だけ、閉包の赤と橙を使わない、hover は沈めない
 import { describe, expect, it } from 'vitest';
 import type { Graph } from '@stack-atlas/schema';
 import { edgeKey } from '@stack-atlas/wiring';
 import { buildModel } from '../graph/model';
 import { HIGHLIGHT_COLORS, initialState } from '../state';
-import { DIM_EDGE_OPACITY, LIT_EDGE_OPACITY, proposedVisuals } from './visuals';
+import { DIM_EDGE_OPACITY, LIT_EDGE_OPACITY, linkedVisuals } from './visuals';
 
 const graph: Graph = {
   version: 1,
@@ -26,10 +26,10 @@ const graph: Graph = {
 };
 const model = buildModel(graph);
 
-describe('proposedVisuals（8-6 のモック）', () => {
+describe('linkedVisuals（8-6）', () => {
   it('配線図の選択を写したものだけが通常の色で光り、ほかは沈む。線は不透明度だけ（赤と橙にしない）', () => {
     const state = { ...initialState(2, 4), selectedId: 'route:/', hoverId: 'lib:other' };
-    const v = proposedVisuals(model, state, null, {
+    const v = linkedVisuals(model, state, null, {
       nodes: new Set(['route:/', 'lib:fetcher', 'endpoint:GET /a']),
       edges: new Set([
         edgeKey('route:/', 'lib:fetcher'),
@@ -54,9 +54,9 @@ describe('proposedVisuals（8-6 のモック）', () => {
 
   it('選択が無いときの hover は、つながる線を少し明るくするだけ（ほかを沈めない）', () => {
     const state = { ...initialState(2, 4), hoverId: 'lib:fetcher' };
-    const v = proposedVisuals(model, state, null, null);
+    const v = linkedVisuals(model, state, null, null);
     expect([...v.nodes.values()].every((n) => n.visual === 'normal')).toBe(true);
-    const base = proposedVisuals(model, initialState(2, 4), null, null);
+    const base = linkedVisuals(model, initialState(2, 4), null, null);
     expect(v.edges[0]!.opacity).toBeGreaterThan(base.edges[0]!.opacity);
     expect(v.edges[2]!.opacity).toBeGreaterThan(base.edges[2]!.opacity);
   });

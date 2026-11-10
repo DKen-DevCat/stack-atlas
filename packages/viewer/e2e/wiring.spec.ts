@@ -5,7 +5,9 @@ import { expect, test, type Page } from '@playwright/test';
 import { todayGraph } from '../../wiring/src/__tests__/fixture';
 import { collectErrors, openWithGraph, waitReady } from './helpers';
 
-const V2_URL = '?graph=samples/fixture-poly.today.v2.json';
+// 2026-11-10 変更（8-6）: v2 は WebGL があれば 2 面（左に 3D の地図、右に配線図）で開くので、配線図だけを確かめるテストは
+// `&pane=wiring`（docs/20 §5.1 #17）で 1 面にする。2 面は split.spec.ts
+const V2_URL = '?graph=samples/fixture-poly.today.v2.json&pane=wiring';
 
 function sampleV2(): { wires: { from: string; to: string }[] } {
   return JSON.parse(
@@ -274,7 +276,7 @@ test('分岐の表: date（項目の when）を切ると項目が薄く残り、
   page,
 }) => {
   const errors = collectErrors(page);
-  await openWithGraph(page, todayGraph(), 'mock-today.v2.json');
+  await openWithGraph(page, todayGraph(), 'mock-today.v2.json', '&pane=wiring');
   // 2026-11-09 変更（8-3a）: 全体を映してから操作する（openV2 と同じ）
   await page.keyboard.press('f');
   await clickBox(page, 'screen:/today');

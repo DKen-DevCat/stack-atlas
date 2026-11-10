@@ -1,5 +1,7 @@
-// 【8-6 のモック（Q20）】3D の地図に配線図の規則（docs/15 §3.6、D31）を当てた見た目（純関数）。
-// 範囲は不透明度だけ（赤と橙の閉包を使わない）。光るのは配線図の選択を地図に写したもの（litOnMap）だけ。
+// 2 面の地図（Phase 8-6）の見た目: 3D の地図に配線図の規則（docs/15 §3.6、D31）を当てる（純関数）。Q20 のモックの
+// 「提案の規則」をそのまま本実装にしたもの（2026-11-10 にユーザーが決定。docs/20 §6）。
+// 範囲は不透明度だけ（赤と橙の閉包を使わない）。光るのは配線図の選択を地図に写したもの（litOnMap）だけ（v1 の閉包は使わない。
+// 8-1 で直した「共有の箱でほぼ全部が光る」が戻るため。docs/20 §5.1 #6）。沈んだノードはラベルも消す（CSS の .viewer.linked）。
 // 選択が無いときの hover は、そのノードにつながる線を少し明るくするだけ（ほかを沈めない。配線図の hover と同じ強さ）
 import { edgeKey, type MapLit } from '@stack-atlas/wiring';
 import { NO_HIGHLIGHT } from '../graph/closure';
@@ -12,7 +14,7 @@ export const DIM_EDGE_OPACITY = 0.05;
 /** 光っている線（範囲）の不透明度。色は通常の色のまま */
 export const LIT_EDGE_OPACITY = 0.95;
 
-export function proposedVisuals(
+export function linkedVisuals(
   model: GraphModel,
   state: ViewState,
   marks: DiffMarks | null,

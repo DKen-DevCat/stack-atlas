@@ -173,6 +173,29 @@ describe('SharedMemoStore', () => {
     expect(orphanIds(s.all(), ids)).toEqual([]);
     expect(s.unsavedIds()).toEqual(['comp:Old', 'gone', 'type:Race']);
   });
+
+  // 2026-11-10 追加（8-6）: 2 面（3D の地図と配線図）は 1 つの store を共有し、変わったことを知らせる（docs/20 §5.1 #12）
+  it('subscribe: set・move・setShared のたびに知らせる。片方の面で書いたメモがもう片方からも読める。外すと止まる', () => {
+    const s = new SharedMemoStore('p', { a: 'A' }, fakeStorage());
+    const seen: string[] = [];
+    const offMap = s.subscribe(() => seen.push(`map:${s.get('lib:x')}`));
+    const offWiring = s.subscribe(() => seen.push(`wiring:${s.get('lib:x')}`));
+    s.set('lib:x', 'メモ');
+    expect(seen).toEqual(['map:メモ', 'wiring:メモ']);
+    seen.length = 0;
+    s.move('lib:x', 'lib:y');
+    // move は 2 回の set（移し先に書く・元を消す）
+    expect(seen).toHaveLength(4);
+    expect(s.get('lib:y')).toBe('メモ');
+    seen.length = 0;
+    s.setShared({ a: 'A2' });
+    expect(seen).toHaveLength(2);
+    offMap();
+    offWiring();
+    seen.length = 0;
+    s.set('lib:z', 'z');
+    expect(seen).toEqual([]);
+  });
 });
 
 describe('loadSharedMemos', () => {

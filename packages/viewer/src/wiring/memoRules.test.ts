@@ -127,7 +127,7 @@ describe('group が継承したプロパティの名前（constructor・__proto_
   }
 });
 
-describe('memoTargets: 地図の group の選択（8-6 のモック）', () => {
+describe('memoTargets・memoOrphans: 地図の group の選択と 2 面の孤立メモ（8-6）', () => {
   it('group の id（v1 の箱の id）のメモを 1 枚だけ出す（中の箱の札は出さない）', () => {
     expect(
       memoTargets(
@@ -141,6 +141,27 @@ describe('memoTargets: 地図の group の選択（8-6 のモック）', () => {
         label: 'lib:web/src/feature/spend/request.ts',
         role: 'group',
       },
+    ]);
+    // 2026-11-10 追加（8-6）: 札の見出しは地図のノードの名前（label）
+    expect(
+      memoTargets(
+        index,
+        { kind: 'group', id: 'lib:x', members: ['fn:getToday'], label: 'spend/request' },
+        {},
+      ),
+    ).toEqual([{ id: 'lib:x', label: 'spend/request', role: 'group' }]);
+  });
+
+  // 2026-11-10 追加（8-6）: 孤立の判定は v2 の箱 ∪ 型 ∪ group ∪ 地図のノード（docs/20 §5.1 #12）
+  it('memoOrphans: 地図のノードの id（@runtime の写し・group: の付いた id）を足すと孤立にならない', () => {
+    const memos = { 'group:web/src/app': 'a', 'lib:fetcher@server': 'b', 'lib:gone': 'c' };
+    expect(memoOrphans(index, memos)).toEqual([
+      'group:web/src/app',
+      'lib:fetcher@server',
+      'lib:gone',
+    ]);
+    expect(memoOrphans(index, memos, ['group:web/src/app', 'lib:fetcher@server'])).toEqual([
+      'lib:gone',
     ]);
   });
 });

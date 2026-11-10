@@ -1,4 +1,8 @@
-/** WebGLRenderer / CSS2DRenderer / camera / OrbitControls / ライト / リサイズ */
+/**
+ * WebGLRenderer / CSS2DRenderer / camera / OrbitControls / ライト / リサイズ。
+ * 大きさは窓ではなく stage（描く面）から取る（ResizeObserver。0 の大きさは無視）。3D の地図だけのページでは stage が窓いっぱい、
+ * 2 面（Phase 8-6）では左の面（docs/20 §5.1 #11）
+ */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
@@ -48,6 +52,22 @@ export function homePosition(
 }
 
 /**
+ * 2 面の地図（面が正方形に近い）で視点リセットの位置を引く倍率（板の横がはみ出さないように）。
+ * 縦横比 1.5 以上（と縦長）は 1。3D の地図だけのページは使わない（今までの位置のまま）
+ */
+export function paneHomeFactor(aspect: number): number {
+  if (!(aspect >= 1) || aspect >= 1.5) return 1;
+  return 1.5 / aspect;
+}
+
+export interface SceneContextOptions {
+  /** 2 面の地図（paneHomeFactor で視点リセットの位置を引く） */
+  pane?: boolean;
+  /** 描く面の大きさが変わった（0 の大きさは知らせない） */
+  onResize?: (width: number, height: number) => void;
+}
+
+/**
  * @param sceneScale プロトタイプ（板 41 幅・4 層）を 1 としたシーンの大きさ。カメラの距離に掛ける
  * @param plateAspect 板の幅 ÷ 奥行き（視点リセット位置の向きに使う）
  */
@@ -56,26 +76,30 @@ export function createSceneContext(
   labels: HTMLElement,
   sceneScale: number,
   plateAspect = BASE_PLATE_ASPECT,
+  opts: SceneContextOptions = {},
 ): SceneContext {
+  // 描く面の大きさ（まだ配置されていなければ窓の大きさ）
+  const size = {
+    w: stage.clientWidth || window.innerWidth,
+    h: stage.clientHeight || window.innerHeight,
+  };
   const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: false });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(size.w, size.h);
   renderer.setClearColor(BG_COLOR);
   stage.appendChild(renderer.domElement);
 
   const labelRenderer = new CSS2DRenderer({ element: labels });
-  labelRenderer.setSize(window.innerWidth, window.innerHeight);
+  labelRenderer.setSize(size.w, size.h);
 
   const scene = new THREE.Scene();
   scene.fog = new THREE.Fog(BG_COLOR, 80 * sceneScale, 150 * sceneScale);
-  const camera = new THREE.PerspectiveCamera(
-    38,
-    window.innerWidth / window.innerHeight,
-    0.1,
-    500 * sceneScale,
-  );
-  const home = () =>
-    homePosition(sceneScale, plateAspect, window.innerWidth / window.innerHeight < 1);
+  const camera = new THREE.PerspectiveCamera(38, size.w / size.h, 0.1, 500 * sceneScale);
+  const home = () => {
+    const aspect = size.w / size.h;
+    const p = homePosition(sceneScale, plateAspect, aspect < 1);
+    return opts.pane ? p.multiplyScalar(paneHomeFactor(aspect)) : p;
+  };
   camera.position.copy(home());
 
   const controls = new OrbitControls(camera, renderer.domElement);
@@ -90,13 +114,25 @@ export function createSceneContext(
   dl.position.set(10, 30, 20);
   scene.add(dl);
 
-  const onResize = () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
+  const resize = (w: number, h: number) => {
+    // 隠した面・まだ配置されていない面の 0 は無視する（camera の縦横比が NaN になる）
+    if (!(w > 0) || !(h > 0) || (w === size.w && h === size.h)) return;
+    size.w = w;
+    size.h = h;
+    camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    labelRenderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setSize(w, h);
+    labelRenderer.setSize(w, h);
+    opts.onResize?.(w, h);
   };
-  window.addEventListener('resize', onResize);
+  const ro =
+    typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(() => resize(stage.clientWidth, stage.clientHeight));
+  ro?.observe(stage);
+  // ResizeObserver の無い環境は窓の resize で
+  const onWindowResize = () => resize(stage.clientWidth, stage.clientHeight);
+  if (!ro) window.addEventListener('resize', onWindowResize);
 
   return {
     renderer,
@@ -111,7 +147,8 @@ export function createSceneContext(
       labelRenderer.render(scene, camera);
     },
     dispose() {
-      window.removeEventListener('resize', onResize);
+      ro?.disconnect();
+      window.removeEventListener('resize', onWindowResize);
       controls.dispose();
       scene.traverse((o) => {
         const mesh = o as Partial<THREE.Mesh>;

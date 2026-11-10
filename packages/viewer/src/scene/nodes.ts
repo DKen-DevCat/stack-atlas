@@ -56,6 +56,8 @@ export interface CreateNodesOptions {
   screenshotUrl(n: ModelNode): string | undefined;
   nameOf(id: string): string;
   makeLabel(n: ModelNode): { el: HTMLDivElement; memoBadge: HTMLSpanElement };
+  /** 画面のテクスチャが変わった（スクショを読んだ・描き直した。止まっている間は描かないので描き直しを頼む） */
+  onTextureUpdate?: () => void;
 }
 
 export function createSceneNodes(
@@ -85,6 +87,7 @@ export function createSceneNodes(
         nameOf: opts.nameOf,
         onUpdate: () => {
           if (texture) texture.needsUpdate = true;
+          opts.onTextureUpdate?.();
         },
       });
       texture = new THREE.CanvasTexture(screen.canvas);

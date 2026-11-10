@@ -76,7 +76,7 @@ describe('viewPick（メニューで選んだ view を当てる）', () => {
   });
 });
 
-describe('selectionFocus: 地図の group の選択（8-6 のモック）', () => {
+describe('selectionFocus: 地図の group の選択（8-6）', () => {
   it('中の箱のうち配置にある最初の箱。どれも無ければ null', () => {
     expect(
       selectionFocus(index, layout, {

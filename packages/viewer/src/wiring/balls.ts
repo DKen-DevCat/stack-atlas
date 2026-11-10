@@ -49,6 +49,10 @@ export interface BallPosition {
   visible: boolean;
 }
 
+/**
+ * 球と再生バー。2 面のとき（Phase 8-6、D106）はこれが時刻の正で、3D の地図は schedule と tau を写す。
+ * onClock は時刻の基準が変わったとき（新しい schedule・シーク・一時停止・再生・速さ・バーを離した）に呼ぶ
+ */
 export class Player {
   private speedMul = 1;
   private paused = false;
@@ -60,6 +64,8 @@ export class Player {
   private flows: Flow[] = [];
   private lit: LitSelection | null = null;
   private raf = 0;
+  /** 面が隠れている（2 面の狭い画面。描かず、項目も光らせない。時刻は進む） */
+  private hidden = false;
   private timers = new Set<ReturnType<typeof setTimeout>>();
   private readonly offs: (() => void)[] = [];
 
@@ -67,6 +73,7 @@ export class Player {
     private readonly svg: SVGSVGElement,
     private readonly layout: WiringLayout,
     private readonly ui: TimelineControls,
+    private readonly onClock: () => void = () => {},
   ) {
     const on = <K extends keyof HTMLElementEventMap>(
       el: HTMLElement | Window,
@@ -80,6 +87,7 @@ export class Player {
     on(ui.seek, 'pointerdown', () => {
       this.pausedAt = this.tau(performance.now());
       this.scrubbing = true;
+      this.onClock();
     });
     on(window, 'pointerup', () => {
       if (!this.scrubbing) return;
@@ -87,6 +95,7 @@ export class Player {
       // 離したら、再生中だったなら続きから
       if (!this.paused) this.flowStart = performance.now() - this.pausedAt * 1000;
       this.syncPhases();
+      this.onClock();
     });
     on(ui.seek, 'input', () => this.seek(Number(ui.seek.value)));
     on(ui.speed, 'input', () => this.setSpeed(Number(ui.speed.value)));
@@ -114,6 +123,7 @@ export class Player {
       this.sched = null;
       this.flows = [];
       this.updateBar();
+      this.onClock();
       return;
     }
     const routes = new Map(lit.segs.map((s) => [s.key, segmentRoute(this.layout, s)]));
@@ -143,6 +153,7 @@ export class Player {
     this.syncPhases();
     this.updateBar();
     this.draw(this.tau(performance.now()));
+    this.onClock();
   }
 
   /**
@@ -162,6 +173,7 @@ export class Player {
     this.ui.seek.value = String(t);
     this.syncPhases();
     this.draw(this.tau(now));
+    this.onClock();
   }
 
   get cycle() {
@@ -169,6 +181,10 @@ export class Player {
   }
   get isPaused() {
     return this.paused;
+  }
+  /** 球が動いている（流れる選択で、止めてもバーを動かしてもいない） */
+  get isPlaying() {
+    return !!this.sched && this.flows.length > 0 && !this.paused && !this.scrubbing;
   }
   get schedule() {
     return this.sched;
@@ -187,6 +203,7 @@ export class Player {
     else this.flowStart = performance.now() - v * 1000;
     this.syncPhases();
     this.draw(this.tau(performance.now()));
+    this.onClock();
   }
 
   setPaused(v: boolean) {
@@ -198,6 +215,22 @@ export class Player {
     this.paused = v;
     this.syncPhases();
     this.updateBar();
+    this.onClock();
+  }
+
+  /**
+   * 面を隠す・出す（2 面の狭い画面。docs/20 §5.1 #9）。隠れている間は描かず、項目も光らせない。時刻（tau）は
+   * performance.now から出すので進み続け、3D の地図はそれを写す。出したら今の時刻から描き直す
+   */
+  setHidden(v: boolean) {
+    if (v === this.hidden) return;
+    this.hidden = v;
+    cancelAnimationFrame(this.raf);
+    if (!v) {
+      this.syncPhases();
+      this.draw(this.tau(performance.now()));
+      this.raf = requestAnimationFrame(this.tick);
+    }
   }
 
   positions(): BallPosition[] {
@@ -251,7 +284,7 @@ export class Player {
     }
     if (!this.scrubbing && !this.ui.seek.hidden) this.ui.seek.value = String(tau);
     this.draw(tau);
-    this.raf = requestAnimationFrame(this.tick);
+    if (!this.hidden) this.raf = requestAnimationFrame(this.tick);
   };
 
   private draw(tau: number) {

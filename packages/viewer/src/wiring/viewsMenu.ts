@@ -131,7 +131,7 @@ export function selectionFocus(
     case 'host':
       return layout.hosts.get(sel.id) ?? layout.boxes.get(sel.id) ?? null;
     case 'group': {
-      // 地図の group（8-6 のモック）: 中の最初の箱
+      // 地図の group（8-6）: 中の最初の箱
       const id = sel.members.find((m) => layout.boxes.has(m));
       return id === undefined ? null : (layout.boxes.get(id) ?? null);
     }

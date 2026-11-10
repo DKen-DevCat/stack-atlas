@@ -11,6 +11,7 @@ import {
   variantKey,
   type GraphIndex,
   type LitSelection,
+  type Schedule,
   type Selection,
   type VariantState,
   type WiringLayout,
@@ -76,17 +77,36 @@ export interface WiringDebug {
   ballPositions(): BallPosition[];
 }
 
+/** 球の時刻の正（Phase 8-6、D106）。2 面のとき 3D の地図はこれを写して同じ時刻に球を動かす */
+export interface WiringClock {
+  /** 今の選択の球の時刻（流れない選択なら null） */
+  readonly schedule: Schedule | null;
+  /** 今の時刻（1 周回の中。止めていれば止めた時刻） */
+  tau(now: number): number;
+  /** 球が動いている（止めてもバーを動かしてもいない） */
+  readonly playing: boolean;
+}
+
 export interface WiringApp {
   readonly index: GraphIndex;
   readonly layout: WiringLayout;
   readonly debug: WiringDebug;
+  /** 今の選択と光っているもの */
+  readonly selection: Selection | null;
+  readonly lit: LitSelection | null;
+  /** 球の時刻の正（D106） */
+  readonly clock: WiringClock;
+  /** 選ぶ（null で解く）。onSelectionChange を呼ぶ */
+  select(sel: Selection | null): void;
   /**
-   * 左上の題名の横に、隣の graph（build の graph.v1.json = 3D の地図）を開く小さなリンクを出す。null で消す。
-   * 凡例やバッジは置かない（docs/15 §3.6 の表示の規則）。文字のリンク 1 つだけ
+   * 左上の題名の横に、隣の graph（build の graph.v1.json = 3D の地図）か、2 面の狭い画面でもう片方の面を開く小さなリンクを出す。
+   * null で消す。凡例やバッジは置かない（docs/15 §3.6 の表示の規則）。文字のリンク 1 つだけ
    */
   setAltLink(link: AltLink | null): void;
-  /** 【8-6 のモック（Q20）用】選択の始点が面の外なら、倍率はそのままで始点を面の真ん中へ動かす（地図から選んだとき） */
+  /** 選択の始点が面の外なら、倍率はそのままで始点を面の真ん中へ動かす（2 面で地図から選んだとき。docs/20 §5.1 #7） */
   reveal(): void;
+  /** 面を隠す・出す（2 面の狭い画面。隠れている間は球を描かない。時刻は進む。docs/20 §5.1 #9） */
+  setHidden(hidden: boolean): void;
   dispose(): void;
 }
 
@@ -99,22 +119,38 @@ export interface WiringOptions {
   baseUrl?: string;
   /** 検証の一覧（題名の横の「警告 N 件」から開く。D64） */
   issues?: readonly ValidationIssue[];
-  /** 共有メモ（memos.json ＋ このブラウザの編集）と、`serve` の API の URL */
-  memos?: { store: SharedMemoStore; apiUrl?: string };
+  /**
+   * 共有メモ（memos.json ＋ このブラウザの編集）と、`serve` の API の URL。2 面のときは store を 3D の地図と共有し、
+   * extraTargets（地図のノード）を孤立メモの判定と「移す…」の候補に足す（docs/20 §5.1 #12）
+   */
+  memos?: {
+    store: SharedMemoStore;
+    apiUrl?: string;
+    extraTargets?: readonly { id: string; name: string }[];
+  };
   /** 前回の graph（?prev=）。v2 なら差分を描き、v1 なら題名の横に「前の graph が v1 です」 */
   prev?: { v2: GraphV2 } | { v1: true };
   /** 開いた直後に当てる view の id（?view=）。開いた直後の表示はその始点のあたり */
   view?: string;
+  /**
+   * 開いた直後の選択（2 面の ?sel=。docs/20 §5.1 #16）。開いた直後の表示はその始点のあたり。view があれば view が勝つ。
+   * 解けない選択は無視する
+   */
+  select?: Selection;
   /**
    * views のメニューで view を選んだ・外れた（main.ts が URL の ?view= を書き換える）。
    * opts.view が graph に無いときも、警告を出したあと null で呼ぶ（URL から外す）
    */
   onViewChange?: (id: string | null) => void;
   /**
-   * 【8-6 のモック（Q20）用】選択が変わった（クリック・Esc・views・debug.select のどれでも）。3D の地図に選択を写すのに使う。
-   * 本実装は docs/20 §5.1 #8 の「Esc は 1 か所で受けて両方を 1 回だけ解く」に合わせて作り直す
+   * 選択が変わった（クリック・Esc・views・分岐・select のどれでも）。2 面のとき 3D の地図に選択を写す（docs/20 §5.1 #6）。
+   * 描き直した後に 1 回だけ呼ぶ
    */
   onSelectionChange?: (selection: Selection | null, lit: LitSelection | null) => void;
+  /** 球の時刻の基準が変わった（新しい schedule・シーク・一時停止・再生・速さ）。2 面の地図が写し直す（D106） */
+  onClock?: () => void;
+  /** キー（Esc・F）を受けるか。2 面のときは最後に触った面だけ（docs/20 §5.1 #8）。省略時は常に受ける */
+  keys?: () => boolean;
 }
 
 const sortedSets = (s: { nodes: Set<string>; items: Set<string>; wires: Set<string> }) => ({
@@ -196,6 +232,7 @@ export function mountWiring(opts: WiringOptions): WiringApp {
         index,
         store: opts.memos.store,
         ...(opts.memos.apiUrl ? { apiUrl: opts.memos.apiUrl } : {}),
+        ...(opts.memos.extraTargets ? { extraTargets: opts.memos.extraTargets } : {}),
         onMarksChange: () => render(false),
       })
     : null;
@@ -247,7 +284,7 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     ignore: (t) => t instanceof Element && !!t.closest(TABLE),
     onApply: (v) => screens.setView(v),
   });
-  const player = new Player(svg, layout, { play, seek, speed, speedLabel });
+  const player = new Player(svg, layout, { play, seek, speed, speedLabel }, () => opts.onClock?.());
   const table = new VariantTable({
     index,
     layout,
@@ -325,16 +362,18 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     showTable: (id) => table.show(id),
     hideTable: () => table.hide(),
     fitAll: () => canvas.fit(),
+    ...(opts.keys ? { keys: opts.keys } : {}),
   });
 
   // ?view= は描く前に当て（開いた直後に描くのは 1 回だけ）、その始点のあたりを映す（無ければ最初の画面の箱のあたり）。
   // graph に無い id は警告を出して URL から外す
   if (initialView) applyPick(initialView.id);
   else if (opts.view) opts.onViewChange?.(null);
+  if (!initialView && opts.select) applySelection(opts.select, false);
   // 配置は graph ごとにここで 1 回だけ（選択・分岐の切り替えは描き直すだけで、箱を動かさない。docs/18 §3.1）
   render(true);
   canvas.open(
-    (initialView && selectionFocus(index, layout, selection)) || openingFocus(index, layout),
+    (selection && selectionFocus(index, layout, selection)) || openingFocus(index, layout),
   );
 
   const debug: WiringDebug = {
@@ -408,11 +447,30 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     ballPositions: () => player.positions(),
   };
 
+  const clock: WiringClock = {
+    get schedule() {
+      return player.schedule;
+    },
+    tau: (now) => player.tau(now),
+    get playing() {
+      return player.isPlaying;
+    },
+  };
+
   return {
     index,
     layout,
     debug,
+    get selection() {
+      return selection;
+    },
+    get lit() {
+      return lit;
+    },
+    clock,
+    select: (sel) => doSelect(sel),
     setAltLink: (link) => alt.set(link),
+    setHidden: (v) => player.setHidden(v),
     reveal() {
       const r = selectionFocus(index, layout, selection);
       const st = stage.getBoundingClientRect();

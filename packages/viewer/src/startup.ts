@@ -19,18 +19,27 @@ export function startPlan(hasGraphUrl: boolean, webgl: boolean): StartPlan {
 }
 
 export type ViewKind =
-  /** 配線図（v2） */
+  /** 2 面（v2 で WebGL がある。左に 3D の地図、右に配線図。Phase 8-6、docs/20） */
+  | 'split'
+  /** 配線図だけ（v2 で WebGL が無い・`?pane=wiring`） */
   | 'wiring'
-  /** 3D の地図（v1） */
+  /** 3D の地図だけ（v1。ドロップ・`--v1`・race-site・`?graph=graph.v1.json`。今までどおり） */
   | 'map'
   /** v1 だが WebGL が無い */
   | 'no-webgl'
   /** 描ける graph が無い（一覧のエラーを見る） */
   | 'unrenderable';
 
-/** 読んだ graph をどこで開くか */
-export function viewFor(res: { v2?: boolean; graph?: unknown }, webgl: boolean): ViewKind {
-  if (res.v2) return 'wiring';
+/**
+ * 読んだ graph をどこで開くか。v2 は WebGL があれば 2 面（wiringOnly = `?pane=wiring` なら配線図だけ）、無ければ配線図だけ。
+ * v1 は今までどおり 3D の地図だけ（docs/20 §5.1 #14）
+ */
+export function viewFor(
+  res: { v2?: boolean; graph?: unknown },
+  webgl: boolean,
+  wiringOnly = false,
+): ViewKind {
+  if (res.v2) return webgl && !wiringOnly ? 'split' : 'wiring';
   if (!res.graph) return 'unrenderable';
   return webgl ? 'map' : 'no-webgl';
 }
