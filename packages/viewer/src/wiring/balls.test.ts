@@ -12,7 +12,7 @@ import {
   select,
 } from '@stack-atlas/wiring';
 import { SAMPLE_V2_PATH } from '../graph/testSample';
-import { layoutFlow, rescaleTime, timing, type FlowRules } from './balls';
+import { cycleTime, layoutFlow, rescaleTime, stepKind, timing, type FlowRules } from './balls';
 
 describe('rescaleTime', () => {
   it('周回の中の割合を保つ（速さ 2 倍で周期が半分なら時刻も半分）', () => {
@@ -136,5 +136,28 @@ describe('球の規則（線の時間と描く球。場面から読む 2 つの�
     };
     expect(few.drawn(a).size).toBe(3);
     expect(base.drawn(a).size).toBeGreaterThan(3);
+  });
+});
+
+describe('再生の時刻（rAF の時刻から 1 周回の中へ。2026-11-10、8-7 の計測で見つけた）', () => {
+  it('cycleTime: 始まりより前（フレームの始まりの時刻がクリックで決めた始まりより前）は 0。周回の末尾へ回り込まない', () => {
+    // 直す前は ((t % c) + c) % c で、-0.004 秒が 4.996 秒（周回の末尾）になり、全部の球が出て着いた扱いになっていた
+    expect(cycleTime(1000 - 4, 1000, 5)).toBe(0);
+    expect(cycleTime(1000, 1000, 5)).toBe(0);
+    expect(cycleTime(1000 + 1500, 1000, 5)).toBeCloseTo(1.5, 9);
+    expect(cycleTime(1000 + 6500, 1000, 5)).toBeCloseTo(1.5, 9);
+    expect(cycleTime(5000, 1000, 0)).toBe(0);
+  });
+  it('stepKind: 進んだ・周回の始まりに戻った・少しだけ戻った（シーク・再開の直後）を分ける', () => {
+    expect(stepKind(-1, 0, 5)).toBe('forward'); // まだ前のフレームが無い
+    expect(stepKind(1.2, 1.216, 5)).toBe('forward');
+    expect(stepKind(1.2, 1.2, 5)).toBe('forward');
+    expect(stepKind(4.98, 0.01, 5)).toBe('wrap');
+    // seek(1.2) のあと、次のフレームの始まりの時刻が 4ms 前: 周回の始まりに戻ったとは読まない（直す前は戻ったと読み、
+    // 1.2 秒までの球を全部もう一度出して光らせていた）
+    expect(stepKind(1.2, 1.196, 5)).toBe('jitter');
+    // 速さ ×4 で周回が短くても、1 フレームぶんの戻りは jitter
+    expect(stepKind(0.3, 0.25, 1.2)).toBe('jitter');
+    expect(stepKind(1.15, 0.02, 1.2)).toBe('wrap');
   });
 });

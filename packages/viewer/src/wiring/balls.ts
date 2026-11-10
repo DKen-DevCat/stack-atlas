@@ -272,7 +272,7 @@ export class Player {
   /** 今の時刻（1 周回の中） */
   tau(now: number) {
     if (this.paused || this.scrubbing) return Math.min(this.pausedAt, this.cycle);
-    return ((((now - this.flowStart) / 1000) % this.cycle) + this.cycle) % this.cycle;
+    return cycleTime(now, this.flowStart, this.cycle);
   }
 
   /** 好きな時刻へ（止めていれば止めたまま、再生中ならそこから続ける） */
@@ -347,17 +347,22 @@ export class Player {
   }
 
   private tick = (now: number) => {
-    const tau = this.tau(now);
+    let tau = this.tau(now);
     if (this.paused || this.scrubbing)
       this.syncPhases(); // 止めている間は光らせない（位相だけ合わせる）
     else {
-      if (tau < this.prevTau) for (const x of this.flows) x.phase = 0; // 最初から繰り返す
-      this.prevTau = tau;
-      for (const x of this.flows) {
-        const ph = phaseOf(frac(tau, x.ball));
-        if (ph >= 1 && x.phase < 1) this.onDepart(x);
-        if (ph === 2 && x.phase < 2) this.onArrive(x);
-        x.phase = ph;
+      const step = stepKind(this.prevTau, tau, this.cycle);
+      // 少しだけ戻った（シーク・再開の直後のフレームの時刻）: 進まなかったことにする（光らせない・球を戻さない）
+      if (step === 'jitter') tau = this.prevTau;
+      else {
+        if (step === 'wrap') for (const x of this.flows) x.phase = 0; // 最初から繰り返す
+        this.prevTau = tau;
+        for (const x of this.flows) {
+          const ph = phaseOf(frac(tau, x.ball));
+          if (ph >= 1 && x.phase < 1) this.onDepart(x);
+          if (ph === 2 && x.phase < 2) this.onArrive(x);
+          x.phase = ph;
+        }
       }
     }
     if (!this.scrubbing && !this.ui.seek.hidden) this.ui.seek.value = String(tau);
@@ -409,6 +414,32 @@ export class Player {
       ...col.filter((r): r is string => !!r && r.startsWith(ref + '.')),
     ]);
   }
+}
+
+/**
+ * 再生の始まり（start。performance.now の ms）から now までの時刻を、1 周回（cycle 秒）の中に収める。始まりより前は 0。
+ * rAF の時刻はフレームの始まりなので、クリックのハンドラで決めた始まりより前になることがある。そこで周回の末尾へ
+ * 回り込ませると、最初のフレームで全部の球が「出て着いた」扱いになり、光る項目を全部一度に点滅させてしまう
+ * （2026-11-10。合成 300 箱・密な選択で animate 5,982 回、最初のフレームが 100〜370ms。docs/18 §11.14）
+ */
+export function cycleTime(now: number, start: number, cycle: number): number {
+  if (!(cycle > 0)) return 0;
+  const t = (now - start) / 1000;
+  return t > 0 ? t % cycle : 0;
+}
+
+/**
+ * 前のフレームの時刻（prevTau。まだ無ければ負）から今の時刻へ: forward = 進んだ、wrap = 周回の始まりに戻った（位相を
+ * 0 からやり直す）、jitter = 少しだけ戻った（シーク・再生の再開で決めた時刻より、次のフレームの始まりの時刻が少し前に
+ * なる。周回の始まりに戻ったと読むと、そこまでの球を全部もう一度出して光らせてしまう）。周回の半分より大きく戻ったら wrap
+ */
+export function stepKind(
+  prevTau: number,
+  tau: number,
+  cycle: number,
+): 'forward' | 'wrap' | 'jitter' {
+  if (prevTau < 0 || tau >= prevTau) return 'forward';
+  return prevTau - tau > cycle / 2 ? 'wrap' : 'jitter';
 }
 
 /**
