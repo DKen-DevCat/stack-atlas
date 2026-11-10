@@ -21,7 +21,8 @@ const boxG = (svg: string, id: string, attr = 'data-box') => {
   const from = svg.lastIndexOf('<g class="box', start);
   const next = svg.indexOf('<g class="box', start);
   const rest = svg.slice(start);
-  const m = /<\/g><g class="(?:hosts|base-boxes|lit-wires|lit-boxes|regions|balls)">/.exec(rest);
+  // 2026-11-10 変更（8-7、D116）: 箱の層は boxes の 1 つ（前は base-boxes と lit-boxes）
+  const m = /<\/g><g class="(?:hosts|lit-wires|boxes|regions|balls)">/.exec(rest);
   const layerEnd = m ? start + m.index : -1;
   const end = Math.min(...[next, layerEnd].filter((x) => x > 0));
   return svg.slice(from, end);
@@ -98,14 +99,23 @@ describe('差分の印（?prev= が v2）', () => {
       expect(svg).toMatch(new RegExp(`class="wire thin[^"]* added[^"]*" data-key="${k}"`));
   });
 
-  it('選択（今の索引）: 幽霊は光らず沈む。光る層に幽霊の箱・線は入らない（光る箱の中の消えた項目は灰の行のまま）', () => {
+  it('選択（今の索引）: 幽霊は光らない（class は選択で変わらない。根の has-sel と CSS で沈む）。光る線の層に幽霊の線は入らない', () => {
     const lit = select(index, state, { kind: 'box', id: 'fn:toTodayView' })!;
     const s = renderScene({ index: ui, layout: ul, state, lit, diff: ov });
-    const litLayer = s.slice(s.indexOf('<g class="lit-wires">'), s.indexOf('<g class="regions">'));
-    expect(litLayer).not.toContain('data-ghost=');
-    expect(litLayer).not.toContain('data-ghost-wire=');
-    expect(litLayer).toContain(`<g class="item ghost" data-ghost-item="${E.removedItem}">`);
-    expect(boxG(s, E.ghostNode, 'data-ghost')).toMatch(/^<g class="box ghost dim"/);
-    expect(s).toContain('class="wire thin ghost dimmed"');
+    // 2026-11-10 変更（8-7、D116・D122）: 前は「光る層（lit-wires と lit-boxes）に幽霊が入らない」「幽霊に dim・dimmed が付く」
+    // を見ていた。今は箱が 1 つの層で、幽霊の要素の class は選択の有無で同じ（lit・on・under が付かない）
+    const litWires = s.slice(s.indexOf('<g class="lit-wires">'), s.indexOf('<g class="boxes">'));
+    expect(litWires).not.toContain('data-ghost');
+    expect(boxG(s, 'fn:getToday')).toMatch(/^<g class="box lit"/);
+    expect(boxG(s, 'fn:getToday')).toContain(
+      `<g class="item ghost" data-ghost-item="${E.removedItem}">`,
+    );
+    expect(boxG(s, E.ghostNode, 'data-ghost')).toMatch(/^<g class="box ghost" data-ghost=/);
+    expect(count(s, /class="wire thin ghost" data-ghost-wire=/g)).toBe(ov.ghost.wires.size);
+    // 幽霊の箱・項目・線の markup は、選択が無いときと 1 文字も変わらない
+    const ghosts = (x: string) =>
+      [...x.matchAll(/<(?:g|path) class="[^"]*\bghost\b[^"]*"[^>]*>/g)].map((m) => m[0]);
+    expect(ghosts(s)).toEqual(ghosts(svg));
+    expect(ghosts(s).length).toBeGreaterThan(0);
   });
 });

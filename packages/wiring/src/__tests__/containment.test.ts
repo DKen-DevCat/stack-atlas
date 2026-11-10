@@ -10,7 +10,7 @@ import {
   type Containment,
 } from '../containment.js';
 import { deepFreeze, fbox, load } from './fold-fixture.js';
-import { synthetic } from './synthetic.js';
+import { synthetic } from '../synthetic.js';
 
 const g = (nodes: GraphV2['nodes'], groups?: GraphV2['groups']): GraphV2 => ({
   version: 2,

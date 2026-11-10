@@ -14,7 +14,7 @@ import {
 } from '../cut.js';
 import { indexGraph } from '../graph-index.js';
 import { boxIds, fbox, load, visibleUnits } from './fold-fixture.js';
-import { synthetic } from './synthetic.js';
+import { synthetic } from '../synthetic.js';
 
 const C = (id: string, parent?: string): Container => ({
   id,

@@ -1,48 +1,44 @@
-// 配線図の SVG（文字列）。光るものは常に手前の層へ置き、選択は「関係ないものを沈める」だけで形は変えない（docs/15 §3.6）。
+// 配線図の SVG（文字列）。場面（索引・配置・差分とメモの印）ごとに 1 回だけ作る（docs/18 §11.3、D114）。
+// 選択と分岐で変わる class は塗りの計画（paint.ts の paintPlan）から書く。選択が変わったときは sceneView.ts が
+// 同じ計画の差だけを付け替えるので、ここと付け替えの結果は同じになる（D115）。光る線は箱の下・host の上の層に置き、
+// 箱は 1 つの層のまま動かさない（D116）。選択は「関係ないものを沈める」だけで形は変えない（docs/15 §3.6）。
 // 規則（何が光るか・分岐・経路）は @stack-atlas/wiring が決め、ここは描くだけ。DOM に触らない（単体テストできる）
 import {
-  itemActive,
-  segmentRoute,
-  wireActive,
-  type DiffOverlayV2,
   type GraphIndex,
   type IndexedItem,
-  type LitSelection,
-  type Point,
   type Rect,
   type VariantState,
   type WiringLayout,
 } from '@stack-atlas/wiring';
+import { esc, n1, pathD } from './markup';
 import { memoFold } from './memoRules';
+import {
+  dyn,
+  inactiveOf,
+  NONE_INACTIVE,
+  paintPlan,
+  type DiffMarks,
+  type PaintLit,
+  type PaintPlan,
+} from './paint';
 import { KIND, KIND_LABEL, LANE_TINT } from './theme';
 
-/**
- * 前の graph との差分の印（docs/18 §3.4。@stack-atlas/wiring の diffOverlayV2）。幽霊（前にしか無いもの）は灰の点線で、
- * クリックも hover も受けない（data-box・data-item・data-wire を付けない）。今だけのもの・型の変わった項目は緑の縁
- */
-export type DiffMarks = Pick<DiffOverlayV2, 'ghost' | 'added' | 'changed'>;
+export type { DiffMarks } from './paint';
 
 export interface SceneInput {
   index: GraphIndex;
   layout: WiringLayout;
-  state: VariantState;
-  lit: LitSelection | null;
+  /** 分岐の状態と光るもの（描く索引の語彙）。plan を渡したときは読まない */
+  state?: VariantState;
+  lit?: PaintLit | null;
   /** 部品の領域の枠（`<g class="regions">` の中身。screens.ts の renderRegions）。無ければ空 */
   regions?: string;
   /** メモのある箱（右下の角を折る。docs/18 §3.4。memoRules.ts の memoBoxIds） */
   memos?: ReadonlySet<string>;
   /** 差分の印。index と layout は今の graph に幽霊を足した graph（diffOverlayV2 の graph） */
   diff?: DiffMarks;
-}
-
-export const esc = (s: string) =>
-  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-
-const n1 = (v: number) => Math.round(v * 10) / 10;
-
-/** 折れ線を path の d にする */
-export function pathD(points: readonly Point[]): string {
-  return points.map((p, i) => `${i ? 'L' : 'M'}${n1(p.x)},${n1(p.y)}`).join(' ');
+  /** 塗りの計画。省くと state・lit・diff からここで作る（描く索引で分岐を解く）。sceneView は自分の持つ計画を渡す */
+  plan?: PaintPlan;
 }
 
 /** 文字の幅の見積り（等幅の英数は 0.6em、全角は 1em） */
@@ -86,7 +82,6 @@ export function fitLabel(
 }
 
 /** 項目が光っているか（たどった結果に入っているものだけ。子が光れば親も光る、は wiring が入れている） */
-export const itemLit = (lit: LitSelection | null, ref: string) => !!lit && lit.items.has(ref);
 
 /** 角の丸い矩形の外周と、内側の矩形の穴（fill-rule evenodd で「箱の中の画面の領域だけ抜いた」塗り） */
 export function frameWithHole(b: Rect, rx: number, hole: Rect): string {
@@ -103,19 +98,39 @@ export function frameWithHole(b: Rect, rx: number, hole: Rect): string {
 /** 画面の領域を抜く clip-path（レーンの背景が画面の HTML に色を載せない）の id */
 export const SCREEN_CUT_ID = 'wv-screen-cut';
 
+/** `<g class="view">` の中の層（この順に重なる。後ろが手前） */
+export const LAYERS = [
+  'lanes',
+  'base-wires',
+  'hosts',
+  'lit-wires',
+  'boxes',
+  'regions',
+  'balls',
+] as const;
+
 /**
- * `<g class="view">` の中身。層の順: レーン → 沈んだ線 → host の枠 → 沈んだ箱 → 光る線 → 光る箱 → 部品の領域の枠 → 球。
- * 何も選んでいないときは全部が下の層（線は細く薄く）。画面の箱（画面の領域を持つ箱）は画面の領域を塗らず、
+ * `<g class="view">` の中身。層の順: レーン → 線（全部。光る線の下の基の線は `under` で隠す）→ host の枠 → 光る線 → 箱（全部）→
+ * 部品の領域の枠 → 球。選択と分岐で変わる class（lit・on・under・inactive）は塗りの計画から、markup の class の末尾に書く
+ * （沈める側には class を付けない。根の has-sel と CSS で沈む。D122）。画面の箱（画面の領域を持つ箱）は画面の領域を塗らず、
  * 下の層（ScreenLayer の iframe）が透けて見える。読んでいない間はプレースホルダ（文言は ScreenLayer が入れる）
  */
 export function renderScene(input: SceneInput): string {
-  const { index, layout, state, lit, regions, memos, diff } = input;
+  const { index, layout, regions, memos, diff } = input;
+  const plan =
+    input.plan ??
+    paintPlan({
+      index,
+      layout,
+      lit: input.lit ?? null,
+      inactive: input.state ? inactiveOf(index, input.state) : NONE_INACTIVE,
+      diff: diff ?? null,
+    });
   let lanes = '';
   let baseWires = '';
   let hosts = '';
-  let baseBoxes = '';
-  let litWires = '';
-  let litBoxes = '';
+  let boxes = '';
+  let litWires = plan.litWires;
 
   // レーンの背景（左右は通り道の中央まで、上下は十分に伸ばす）・名前・境目
   const holes = [...layout.boxes.values()].flatMap((b) => (b.screen ? [b.screen] : []));
@@ -136,47 +151,30 @@ export function renderScene(input: SceneInput): string {
       lanes += `<line class="lane-sep" x1="${n1(l.x0)}" y1="${layout.titleY - 12}" x2="${n1(l.x0)}" y2="${n1(layout.height)}"/>`;
   }
 
-  // すべての線（項目のピンからピンへ）。光っている線は上の層で描く
-  const litWireKeys = new Set<string>();
-  if (lit) for (const s of lit.segs) if (s.kind === 'wire' && s.wire) litWireKeys.add(s.wire.key);
+  // すべての線（項目のピンからピンへ）。光っている線も基の層に残し（under で隠す）、光る区間は上の層に描く
   for (const w of index.wires) {
     const r = layout.routes.get(w.key);
-    if (!r || litWireKeys.has(w.key)) continue;
+    if (!r) continue;
     if (diff?.ghost.wires.has(w.key)) {
-      baseWires += `<path class="wire thin ghost${lit ? ' dimmed' : ''}" data-ghost-wire="${w.key}" d="${pathD(r.points)}"/>`;
+      baseWires += `<path class="wire thin ghost" data-ghost-wire="${w.key}" d="${pathD(r.points)}"/>`;
       continue;
     }
     const added = diff?.added.wires.has(w.key) ? ' added' : '';
-    const cls = `wire thin via-${esc(w.wire.via)}${added}${lit ? ' dimmed' : ''}${wireActive(index, state, w) ? '' : ' inactive'}`;
+    const cls = `wire thin via-${esc(w.wire.via)}${added}${dyn(plan, 'wires', w.key)}`;
     baseWires += `<path class="${cls}" data-key="${w.key}" data-ends="${esc(w.fromNode.id)}|${esc(w.toNode.id)}" d="${pathD(r.points)}"/>`;
   }
-  if (lit) {
-    for (const s of lit.segs) {
-      const r = segmentRoute(layout, s);
-      if (!r) continue;
-      if (s.kind === 'wire' && s.wire) {
-        const d = pathD(r.points);
-        const sel = s.key === lit.startSeg ? ' sel' : '';
-        litWires += `<path class="wire lit via-${esc(s.wire.wire.via)}${sel}" data-seg="${esc(s.key)}" d="${d}"/>`;
-        litWires += `<path class="wire hitarea" data-wire="${s.wire.key}" d="${d}"/>`;
-      } else if (s.node && s.node.node.kind === 'cache') {
-        // 箱の中の対応線はキャッシュだけ描く（HIT の折り返しが見えるように。§8 #9）
-        litWires += `<path class="wire lit inner" data-seg="${esc(s.key)}" d="${pathD(r.points)}"/>`;
-      }
-    }
-  }
 
-  // 切れている線（コードの事実。選択に関係なく常に赤の破線。受ける側の箱の手前で切れた端を描く）
+  // 切れている線（コードの事実。受ける側の箱の手前で切れた端を描く）。選択が無いときは全部が赤の破線で基の層、
+  // 選択中は送り側の箱が光るものだけ赤（lit）で光る線の層、ほかは薄く基の層（付け替えでは要素ごと層を移す）
   for (const b of layout.broken) {
-    const fromNode = index.items.get(b.from)?.node.id ?? '';
-    const on = !lit || lit.boxes.has(fromNode);
-    const cls = `wire broken ${esc(b.level)}${on ? ' lit' : ' dimmed'}`;
+    const st = dyn(plan, 'broken', b.key);
+    const cls = `wire broken ${esc(b.level)}`;
     const pts = b.route.points;
     const end = pts[pts.length - 1]!;
     const cut =
-      `<path class="${cls}" data-broken="${b.key}" data-path="${esc(b.path)}" d="${pathD(pts)}"><title>${esc(b.path ? `${b.path}: ${b.reason}` : b.reason)}</title></path>` +
-      `<path class="${cls} cut" d="M${n1(end.x)},${n1(end.y - 5)} L${n1(end.x)},${n1(end.y + 5)}"/>`;
-    if (lit && on) litWires += cut;
+      `<path class="${cls}${st}" data-broken="${b.key}" data-path="${esc(b.path)}" d="${pathD(pts)}"><title>${esc(b.path ? `${b.path}: ${b.reason}` : b.reason)}</title></path>` +
+      `<path class="${cls} cut${st}" data-cut="${b.key}" d="M${n1(end.x)},${n1(end.y - 5)} L${n1(end.x)},${n1(end.y + 5)}"/>`;
+    if (plan.hasSel && st) litWires += cut;
     else baseWires += cut;
   }
 
@@ -185,9 +183,8 @@ export function renderScene(input: SceneInput): string {
   for (const h of layout.hosts.values()) {
     const name = index.nodes.get(h.id)?.node.name ?? h.id;
     const ghost = !!diff?.ghost.nodes.has(h.id);
-    const on = !ghost && (!lit || h.members.some((id) => lit.boxes.has(id)));
     const attr = ghost ? 'data-ghost-host' : 'data-host';
-    const st = ghost ? ` ghost${lit ? ' dim' : ''}` : lit ? (on ? ' lit' : ' dim') : '';
+    const st = ghost ? ' ghost' : dyn(plan, 'hosts', h.id);
     const g = `<g class="host${st}" ${attr}="${esc(h.id)}"><rect class="frame" x="${n1(h.x)}" y="${n1(h.y)}" width="${n1(h.w)}" height="${n1(h.h)}" rx="6"/><text class="hname" x="${n1(h.x + 8)}" y="${n1(h.y + 15)}">${esc(name)}</text></g>`;
     hosts += g;
   }
@@ -199,17 +196,10 @@ export function renderScene(input: SceneInput): string {
     const k = KIND[n.node.kind] ?? KIND.infra;
     // 幽霊の箱（前にしか無い）は光らず、選択中は沈む。data-box を付けないのでクリック・hover・分岐の表を受けない
     const ghost = !!diff?.ghost.nodes.has(b.id);
-    const on = !ghost && (!lit || lit.boxes.has(b.id));
-    const st = ghost
-      ? ` ghost${lit ? ' dim' : ''}`
-      : !lit
-        ? ''
-        : on
-          ? ` lit${lit.startBoxes.has(b.id) ? ' start' : ''}`
-          : ' dim';
     const added = !ghost && diff?.added.nodes.has(b.id) ? ' added' : '';
     const scr = b.screen;
-    let g = `<g class="box${scr ? ' scr' : ''}${st}${added}" ${ghost ? 'data-ghost' : 'data-box'}="${esc(b.id)}" data-kind="${esc(n.node.kind)}" style="--c:${k.c}">`;
+    const cls = `box${scr ? ' scr' : ''}${ghost ? ' ghost' : ''}${added}${ghost ? '' : dyn(plan, 'boxes', b.id)}`;
+    let g = `<g class="${cls}" ${ghost ? 'data-ghost' : 'data-box'}="${esc(b.id)}" data-kind="${esc(n.node.kind)}" style="--c:${k.c}">`;
     const dash = k.dash ? ` stroke-dasharray="${k.dash}"` : '';
     // 丸い端（actor・trigger）は rx と ry を高さの半分に揃える（rx だけだと横長の箱が楕円になる）
     const rx = Math.min(k.rx, b.h / 2, b.w / 2);
@@ -249,28 +239,28 @@ export function renderScene(input: SceneInput): string {
       const other = p.side === 'in' ? outYs : inYs;
       const shared = other.some((y) => Math.abs(y - p.y) < 9);
       const avail = (shared ? b.w / 2 - 12 : b.w - 24) - it.depth * 10;
-      g += itemSvg(input, it, b.w, avail, ghost);
+      g += itemSvg(input, plan, it, b.w, avail, ghost);
     }
     g += '</g>';
-    if (lit && on) litBoxes += g;
-    else baseBoxes += g;
+    boxes += g;
   }
 
   const cut = defs ? ` clip-path="url(#${SCREEN_CUT_ID})"` : '';
   if (memoDefs) defs += `<defs>${memoDefs}</defs>`;
   return (
-    `${defs}<g class="lanes"${cut}>${lanes}</g><g class="base-wires">${baseWires}</g><g class="hosts">${hosts}</g><g class="base-boxes">${baseBoxes}</g>` +
-    `<g class="lit-wires">${litWires}</g><g class="lit-boxes">${litBoxes}</g><g class="regions">${regions ?? ''}</g><g class="balls"></g>`
+    `${defs}<g class="lanes"${cut}>${lanes}</g><g class="base-wires">${baseWires}</g><g class="hosts">${hosts}</g>` +
+    `<g class="lit-wires">${litWires}</g><g class="boxes">${boxes}</g><g class="regions">${regions ?? ''}</g><g class="balls"></g>`
   );
 }
 
 /**
  * 項目の行（ピン・名前・型）。型に typeRef があれば下線を付け、クリックで型の横断面。
  * 幽霊の行（幽霊の箱の項目と、前にしか無い項目）はクリックを受けない（data-item・data-type を付けない）。
- * 今だけの項目と型の変わった項目は行の枠（hit）に緑の縁
+ * 今だけの項目と型の変わった項目は行の枠（hit）に緑の縁。ピンは最後の子、文字はその直前（点滅が要素をこの順で引く）
  */
 function itemSvg(
-  { index, layout, state, lit, diff }: SceneInput,
+  { layout, diff }: SceneInput,
+  plan: PaintPlan,
   it: IndexedItem,
   boxW: number,
   avail: number,
@@ -278,23 +268,15 @@ function itemSvg(
 ): string {
   const p = layout.pins.get(it.ref)!;
   const ghost = ghostBox || !!diff?.ghost.items.has(it.ref);
-  let st = '';
-  if (ghost) st = ' ghost';
-  else if (!itemActive(index, state, it))
-    st = ' off inactive'; // 今の分岐には無い項目（薄く残す）
-  else if (lit) {
-    const on = itemLit(lit, it.ref);
-    st = on
-      ? ` on${lit.startItems.has(it.ref) && lit.selection.kind !== 'type' ? ' start' : ''}`
-      : ' off';
-  }
   const indent = it.depth * 10;
   const ref = ghost ? undefined : it.item.typeRef;
   const ty = `<tspan class="ty${ref ? ' ref' : ''}"${ref ? ` data-type="${esc(ref)}"` : ''}>`;
   const label = fitLabel(it.item.name, it.item.type, avail);
   const mark =
     !ghost && (diff?.added.items.has(it.ref) || diff?.changed.has(it.ref)) ? ' added' : '';
-  let s = `<g class="item${st}${mark}${it.parent ? ' child' : ''}" ${ghost ? 'data-ghost-item' : 'data-item'}="${esc(it.ref)}">`;
+  // 選択と分岐で変わる class（on・off inactive）は末尾（幽霊には付かない）
+  const st = ghost ? '' : dyn(plan, 'items', it.ref);
+  let s = `<g class="item${ghost ? ' ghost' : ''}${mark}${it.parent ? ' child' : ''}${st}" ${ghost ? 'data-ghost-item' : 'data-item'}="${esc(it.ref)}">`;
   // 収まらずに削ったときだけ、元の文字をブラウザの吹き出しに入れる
   if (label.cut) s += `<title>${esc(`${it.item.name} ${it.item.type}`)}</title>`;
   // 当たり判定は文字の下に置く（型の文字のクリックを奪わないように）

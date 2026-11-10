@@ -13,6 +13,7 @@ import { measureComponents, settle } from './measure';
 import {
   frameBox,
   layerTransform,
+  MAX_LIVE,
   placeholderText,
   planLive,
   screenOpacity,
@@ -28,6 +29,7 @@ export interface ScreenLayerOptions {
   stage: HTMLElement;
   svg: SVGSVGElement;
   index: GraphIndex;
+  /** 開いたときの配置（場面を差し替えたら setLayout） */
   layout: WiringLayout;
   /** graph.json の URL（ファイルで開いたときは無い） */
   baseUrl: string | undefined;
@@ -40,9 +42,14 @@ interface Live {
   frame: HTMLIFrameElement;
 }
 
+/** 隠して残す iframe の上限（生かす iframe の上限と同じ。畳む・開くを繰り返しても増え続けない） */
+const PARKED_MAX = MAX_LIVE;
+
 /** e2e・デバッグ用 */
 export interface ScreenDebug {
   live: string[];
+  /** 配置に箱が無いので隠して残している iframe（箱が戻ったら読み直さずに置き直す） */
+  parked: string[];
   state: Record<string, ScreenState>;
   measured: Record<string, ScreenRegion[]>;
   regions: Record<string, ScreenRegion[]>;
@@ -50,9 +57,15 @@ export interface ScreenDebug {
 
 export class ScreenLayer {
   readonly el: HTMLDivElement;
-  readonly specs: ScreenSpec[];
-  private readonly byId: Map<string, ScreenSpec>;
+  /** 画面の箱（今の配置での画面の領域）。setLayout で入れ替わる */
+  specs: ScreenSpec[];
+  private byId: Map<string, ScreenSpec>;
   private readonly live = new Map<string, Live>();
+  /**
+   * 配置から箱が消えた画面の iframe（畳んだ場面など。docs/18 §11.11、docs/21 §2.9）。壊さずに隠して残し、
+   * 箱が戻ったら読み直さずに置き直す。古い順に PARKED_MAX 個まで（超えた分は外す）
+   */
+  private readonly parked = new Map<string, Live>();
   private readonly state = new Map<string, ScreenState>();
   private readonly measured = new Map<string, ScreenRegion[]>();
   private readonly nodeIds: Set<string>;
@@ -69,6 +82,39 @@ export class ScreenLayer {
     this.el = document.createElement('div');
     this.el.className = 'wv-screens';
     this.el.setAttribute('aria-hidden', 'true');
+  }
+
+  /**
+   * 配置が変わった（場面を差し替えた。docs/18 §11.3）。画面の領域を計算し直し、生きている iframe は読み直さずに置き直す。
+   * 配置に箱が無くなった画面の iframe は壊さずに隠して残し（parked）、箱が戻った画面の iframe は元の位置に戻す。
+   * 状態と測った領域は消さない（索引は変わらず、測った領域は画面のビューポートの座標なので、配置が変わっても使える）
+   */
+  setLayout(layout: WiringLayout) {
+    this.specs = screenSpecs(this.opts.index, layout, this.opts.baseUrl, location.href);
+    this.byId = new Map(this.specs.map((s) => [s.id, s]));
+    for (const s of this.specs)
+      if (!this.state.has(s.id)) this.state.set(s.id, s.refusal ?? 'idle');
+    for (const [id, l] of [...this.live]) {
+      const s = this.byId.get(id);
+      if (s?.src) {
+        place(l, s);
+        continue;
+      }
+      this.live.delete(id);
+      l.wrap.style.visibility = 'hidden';
+      this.parked.set(id, l);
+    }
+    for (const [id, l] of [...this.parked]) {
+      const s = this.byId.get(id);
+      if (!s?.src) continue;
+      this.parked.delete(id);
+      place(l, s);
+      l.wrap.style.visibility = '';
+      l.wrap.style.opacity = String(screenOpacity(this.lit, id));
+      this.live.set(id, l);
+    }
+    for (const id of [...this.parked.keys()].slice(0, -PARKED_MAX)) this.unmount(id);
+    this.setView(this.view);
   }
 
   /** canvas の変換が変わった（毎回すぐに変換を当て、どれを生かすかは次のフレームで決める） */
@@ -109,6 +155,7 @@ export class ScreenLayer {
       Object.fromEntries([...m].sort(([a], [b]) => (a < b ? -1 : 1)));
     return {
       live: [...this.live.keys()].sort(),
+      parked: [...this.parked.keys()].sort(),
       state: rec(this.state),
       measured: rec(this.measured),
       regions: rec(this.regions()),
@@ -118,7 +165,7 @@ export class ScreenLayer {
   dispose() {
     this.disposed = true;
     if (this.raf) cancelAnimationFrame(this.raf);
-    for (const id of [...this.live.keys()]) this.unmount(id);
+    for (const id of [...this.live.keys(), ...this.parked.keys()]) this.unmount(id);
     this.el.remove();
   }
 
@@ -145,17 +192,10 @@ export class ScreenLayer {
   }
 
   private mount(s: ScreenSpec) {
-    const b = frameBox(s.area, s.viewport);
     const wrap = document.createElement('div');
     wrap.className = 'wv-screen';
     wrap.dataset.screen = s.id;
-    Object.assign(wrap.style, {
-      left: `${b.left}px`,
-      top: `${b.top}px`,
-      width: `${b.width}px`,
-      height: `${b.height}px`,
-      opacity: String(screenOpacity(this.lit, s.id)),
-    });
+    wrap.style.opacity = String(screenOpacity(this.lit, s.id));
     const frame = document.createElement('iframe');
     // sandbox は src より先に付ける（最初の読み込みから効かせる）
     frame.setAttribute('sandbox', 'allow-same-origin');
@@ -163,12 +203,8 @@ export class ScreenLayer {
     frame.setAttribute('scrolling', 'no');
     frame.setAttribute('tabindex', '-1');
     frame.title = `画面: ${s.name}`;
-    Object.assign(frame.style, {
-      width: `${b.frameWidth}px`,
-      height: `${b.frameHeight}px`,
-      transform: `scale(${b.scale})`,
-    });
     const live: Live = { wrap, frame };
+    place(live, s);
     frame.addEventListener('load', () => void this.loaded(s, live));
     frame.src = s.src!;
     wrap.append(frame);
@@ -187,15 +223,21 @@ export class ScreenLayer {
   }
 
   private unmount(id: string) {
-    const l = this.live.get(id);
+    const l = this.live.get(id) ?? this.parked.get(id);
     if (!l) return;
     this.live.delete(id);
+    this.parked.delete(id);
     l.wrap.remove();
     if (this.state.get(id) !== 'blocked') this.state.set(id, 'idle');
   }
 
+  /** まだ持っている iframe か（生きているか、隠して残している） */
+  private holds(id: string, live: Live) {
+    return this.live.get(id) === live || this.parked.get(id) === live;
+  }
+
   private async loaded(s: ScreenSpec, live: Live) {
-    if (this.live.get(s.id) !== live) return; // 外したあとに届いた
+    if (!this.holds(s.id, live)) return; // 外したあとに届いた
     const doc = readableDocument(live.frame);
     if (!doc) {
       // 別の origin（応答ヘッダの sandbox に allow-same-origin が無い、など）。プレースホルダと graph の regions で描く
@@ -208,10 +250,26 @@ export class ScreenLayer {
     this.state.set(s.id, 'ready');
     this.decorate();
     await settle(doc, SETTLE_MS);
-    if (this.disposed || this.live.get(s.id) !== live) return;
+    if (this.disposed || !this.holds(s.id, live)) return;
     this.measured.set(s.id, this.measure(doc, s));
     this.opts.onRegions();
   }
+}
+
+/** iframe とその枠を、画面の領域（配置の座標）に置く */
+function place(l: Live, s: ScreenSpec) {
+  const b = frameBox(s.area, s.viewport);
+  Object.assign(l.wrap.style, {
+    left: `${b.left}px`,
+    top: `${b.top}px`,
+    width: `${b.width}px`,
+    height: `${b.height}px`,
+  });
+  Object.assign(l.frame.style, {
+    width: `${b.frameWidth}px`,
+    height: `${b.frameHeight}px`,
+    transform: `scale(${b.scale})`,
+  });
 }
 
 /** iframe の文書（別の origin で読めなければ null） */

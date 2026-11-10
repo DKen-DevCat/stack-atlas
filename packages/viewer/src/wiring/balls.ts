@@ -1,5 +1,6 @@
 // 球（流れるデータ）と再生バー。1 通信 = 1 球（docs/15 §3.5、D33）。時刻は @stack-atlas/wiring の schedule が決め、
 // 線の長さはレイアウトの経路の長さ（getTotalLength は使わない）。球が出る瞬間に送り側、着いた瞬間に受け側の項目を光らせる
+// （点滅は flash.ts の Flasher。配置と球の層は今の場面から読む。docs/18 §11.3・§11.6）
 import {
   drawnBalls,
   pointAt,
@@ -9,6 +10,7 @@ import {
   type LitSelection,
   type Route,
   type Schedule,
+  type Segment,
   type WiringLayout,
 } from '@stack-atlas/wiring';
 
@@ -16,8 +18,6 @@ import {
 const SPEED = 420;
 const INNER = 0.25;
 const REST = 0.6;
-/** 子の項目を順に光らせる間隔 */
-const STAGGER_MS = 60;
 
 /** 速さの倍率から、球の時刻の決め方（線の速さ・箱の中の所要・末端で止まる時間）。どれも倍率に反比例する */
 export function timing(speedMul: number): { speed: number; inner: number; rest: number } {
@@ -31,6 +31,8 @@ interface Flow {
   /** 球を描く経路（線と、キャッシュの箱の中の対応）。それ以外の対応は時間だけ持つ */
   route: Route | null;
   dot: SVGCircleElement | null;
+  /** 球のまわりの半透明の円（ぼかしの代わり。filter を使わない。D118） */
+  halo: SVGCircleElement | null;
   /** 0: 出発前、1: 走っている、2: 着いた */
   phase: number;
 }
@@ -40,6 +42,55 @@ export interface TimelineControls {
   seek: HTMLInputElement;
   speed: HTMLInputElement;
   speedLabel: HTMLElement;
+}
+
+/**
+ * 球の規則（Player が場面から読む 2 つの入力。docs/18 §11.3 の「折りたたみへの継ぎ目」、docs/21 §2.3）:
+ * 線の時間と、描く球。既定は配置の経路（layoutFlow）。畳んだ場面は、見えている線の経路長と、見えている線の上の球に差し替える
+ */
+export interface FlowRules {
+  /** 区間の長さ（px）。球の時刻（schedule の lengthOf）はこれ ÷ 速さ */
+  lengthOf(seg: Segment): number;
+  /** 描く球と、その球が通る道。描かない球（時刻と項目の点滅だけに使う）は入れない */
+  drawn(sched: Schedule): ReadonlyMap<Ball, Route>;
+}
+
+/**
+ * 既定の球の規則: 区間の長さは配置の経路の長さ（getTotalLength は使わない）。描くのは線ごとに 1 球
+ * （同じ線を子の区間で何度も通るときは最も早い球だけ。drawnBalls）と、キャッシュの箱の中の対応
+ */
+export function layoutFlow(layout: WiringLayout): FlowRules {
+  const routes = new Map<string, Route | null>();
+  const routeOf = (s: Segment): Route | null => {
+    let r = routes.get(s.key);
+    if (r === undefined) routes.set(s.key, (r = segmentRoute(layout, s)));
+    return r;
+  };
+  return {
+    lengthOf: (s) => routeOf(s)?.length ?? 0,
+    drawn(sched) {
+      const out = new Map<Ball, Route>();
+      for (const ball of drawnBalls(sched)) {
+        const s = ball.seg;
+        if (s.kind !== 'wire' && s.node?.node.kind !== 'cache') continue;
+        const r = routeOf(s);
+        if (r) out.set(ball, r);
+      }
+      return out;
+    },
+  };
+}
+
+/** Player が今の場面から読むもの（場面を差し替えても同じ Player を使う） */
+export interface PlayerScene {
+  /** 今の配置（点滅させる項目の列を引く） */
+  layout(): WiringLayout;
+  /** 今の場面の球の規則（setup・速さの変更のたびに読む） */
+  flow(): FlowRules;
+  /** 球の層（`<g class="balls">`。全体を作り直すと要素が変わる） */
+  balls(): SVGGElement | null;
+  /** 項目の点滅（flash.ts）。setup のたびに取り消す */
+  flasher: { flash(refs: readonly string[]): void; cancel(): void };
 }
 
 export interface BallPosition {
@@ -60,18 +111,18 @@ export class Player {
   private pausedAt = 0;
   private flowStart = performance.now();
   private prevTau = -1;
+  /** 前のフレームの rAF の時刻（まだ無ければ負） */
+  private lastFrame = -1;
   private sched: Schedule | null = null;
   private flows: Flow[] = [];
   private lit: LitSelection | null = null;
   private raf = 0;
   /** 面が隠れている（2 面の狭い画面。描かず、項目も光らせない。時刻は進む） */
   private hidden = false;
-  private timers = new Set<ReturnType<typeof setTimeout>>();
   private readonly offs: (() => void)[] = [];
 
   constructor(
-    private readonly svg: SVGSVGElement,
-    private readonly layout: WiringLayout,
+    private readonly scene: PlayerScene,
     private readonly ui: TimelineControls,
     private readonly onClock: () => void = () => {},
   ) {
@@ -102,21 +153,45 @@ export class Player {
     this.raf = requestAnimationFrame(this.tick);
   }
 
-  /** 光るものが変わった（描き直した）。restart なら 0 秒から再生し直す */
+  /**
+   * 光るものが変わった（付け替えた）か、場面を当て直した（全体を作り直した）。前の選択の点滅は取り消す。
+   * restart なら 0 秒から再生し直す。restart でなければ続きから: 周期が変わっていたら（配置の違う場面）、
+   * 速さを変えたときと同じく周回の中の同じ割合の位置から続ける
+   */
   setup(lit: LitSelection | null, restart: boolean) {
+    this.scene.flasher.cancel();
     this.lit = lit;
     if (restart) {
       this.flowStart = performance.now();
       this.paused = false;
       this.scrubbing = false;
       this.pausedAt = 0;
+      this.build();
+      return;
     }
+    this.rebuildKeepingRatio();
+  }
+
+  /** 球と時刻を作り直し、周期が変わっていたら周回の中の同じ割合の位置に置き直す */
+  private rebuildKeepingRatio() {
+    const now = performance.now();
+    const had = !!this.sched;
+    const oldCycle = this.cycle;
+    const tau = this.tau(now);
     this.build();
+    if (!had || !this.sched || this.cycle === oldCycle) return;
+    const t = rescaleTime(tau, oldCycle, this.cycle);
+    if (this.paused || this.scrubbing) this.pausedAt = t;
+    else this.flowStart = now - t * 1000;
+    this.ui.seek.value = String(t);
+    this.syncPhases();
+    this.draw(this.tau(now));
+    this.onClock();
   }
 
   private build() {
     this.prevTau = -1;
-    const layer = this.svg.querySelector<SVGGElement>('g.balls');
+    const layer = this.scene.balls();
     layer?.replaceChildren();
     const lit = this.lit;
     if (!lit || !lit.flows || !lit.segs.length) {
@@ -126,28 +201,33 @@ export class Player {
       this.onClock();
       return;
     }
-    const routes = new Map(lit.segs.map((s) => [s.key, segmentRoute(this.layout, s)]));
+    // 線の時間と描く球は場面の規則から（既定は配置の経路: 線ごとに 1 球と、キャッシュの箱の中の対応）
+    const flow = this.scene.flow();
     this.sched = schedule(lit, lit.flowStarts, {
-      lengthOf: (s) => routes.get(s.key)?.length ?? 0,
+      lengthOf: (s) => flow.lengthOf(s),
       ...timing(this.speedMul),
       startBoxes: lit.startBoxes,
     });
-    // 線ごとに 1 球（同じ線を子の区間で何度も通るときは最も早い球だけ描く）。キャッシュの箱の中の対応も描く
-    const visible = new Set(drawnBalls(this.sched));
+    const drawn = flow.drawn(this.sched);
     this.flows = this.sched.balls.map((ball) => {
       const s = ball.seg;
-      const drawn = visible.has(ball) && (s.kind === 'wire' || s.node?.node.kind === 'cache');
-      const route = drawn ? (routes.get(s.key) ?? null) : null;
+      const route = drawn.get(ball) ?? null;
       let dot: SVGCircleElement | null = null;
+      let halo: SVGCircleElement | null = null;
       if (route && layer) {
+        // 球の数を数える・位置を読むのは .ball（data-seg を持つ）。まわりの円は別の class で、球の下に置く
+        halo = document.createElementNS(SVG_NS, 'circle');
+        halo.setAttribute('class', 'ball-halo');
+        halo.setAttribute('r', '8');
+        halo.setAttribute('visibility', 'hidden');
         dot = document.createElementNS(SVG_NS, 'circle');
         dot.setAttribute('class', 'ball');
         dot.setAttribute('r', '4');
         dot.setAttribute('visibility', 'hidden');
         dot.dataset.seg = s.key;
-        layer.append(dot);
+        layer.append(halo, dot);
       }
-      return { ball, route, dot, phase: 0 };
+      return { ball, route, dot, halo, phase: 0 };
     });
     this.pausedAt = Math.min(this.pausedAt, this.cycle);
     this.syncPhases();
@@ -166,6 +246,7 @@ export class Player {
     const tau = this.tau(now);
     this.speedMul = mul;
     this.ui.speedLabel.textContent = `×${mul.toFixed(mul < 1 ? 2 : 1)}`;
+    this.scene.flasher.cancel();
     this.build(); // 周期を計算し直す
     const t = rescaleTime(tau, oldCycle, this.cycle);
     if (this.paused || this.scrubbing) this.pausedAt = t;
@@ -193,7 +274,7 @@ export class Player {
   /** 今の時刻（1 周回の中） */
   tau(now: number) {
     if (this.paused || this.scrubbing) return Math.min(this.pausedAt, this.cycle);
-    return ((((now - this.flowStart) / 1000) % this.cycle) + this.cycle) % this.cycle;
+    return cycleTime(now, this.flowStart, this.cycle);
   }
 
   /** 好きな時刻へ（止めていれば止めたまま、再生中ならそこから続ける） */
@@ -247,8 +328,7 @@ export class Player {
 
   dispose() {
     cancelAnimationFrame(this.raf);
-    for (const t of this.timers) clearTimeout(t);
-    this.timers.clear();
+    this.scene.flasher.cancel();
     for (const off of this.offs) off();
   }
 
@@ -269,17 +349,25 @@ export class Player {
   }
 
   private tick = (now: number) => {
-    const tau = this.tau(now);
+    // 前のフレームからの実時間（回り込みの判定に使う。最初のフレームは 0）
+    const dt = this.lastFrame < 0 ? 0 : Math.max(0, (now - this.lastFrame) / 1000);
+    this.lastFrame = now;
+    let tau = this.tau(now);
     if (this.paused || this.scrubbing)
       this.syncPhases(); // 止めている間は光らせない（位相だけ合わせる）
     else {
-      if (tau < this.prevTau) for (const x of this.flows) x.phase = 0; // 最初から繰り返す
-      this.prevTau = tau;
-      for (const x of this.flows) {
-        const ph = phaseOf(frac(tau, x.ball));
-        if (ph >= 1 && x.phase < 1) this.onDepart(x);
-        if (ph === 2 && x.phase < 2) this.onArrive(x);
-        x.phase = ph;
+      const step = stepKind(this.prevTau, tau, this.cycle, dt);
+      // 少しだけ戻った（シーク・再開の直後のフレームの時刻）: 進まなかったことにする（光らせない・球を戻さない）
+      if (step === 'jitter') tau = this.prevTau;
+      else {
+        if (step === 'wrap') for (const x of this.flows) x.phase = 0; // 最初から繰り返す
+        this.prevTau = tau;
+        for (const x of this.flows) {
+          const ph = phaseOf(frac(tau, x.ball));
+          if (ph >= 1 && x.phase < 1) this.onDepart(x);
+          if (ph === 2 && x.phase < 2) this.onArrive(x);
+          x.phase = ph;
+        }
       }
     }
     if (!this.scrubbing && !this.ui.seek.hidden) this.ui.seek.value = String(tau);
@@ -293,12 +381,16 @@ export class Player {
       const f = frac(tau, x.ball);
       if (f < 0 || f >= 1) {
         x.dot.setAttribute('visibility', 'hidden');
+        x.halo?.setAttribute('visibility', 'hidden');
         continue;
       }
       const p = pointAt(x.route.points, f * x.route.length);
-      x.dot.setAttribute('cx', String(p.x));
-      x.dot.setAttribute('cy', String(p.y));
-      x.dot.setAttribute('visibility', 'visible');
+      for (const c of [x.halo, x.dot]) {
+        if (!c) continue;
+        c.setAttribute('cx', String(p.x));
+        c.setAttribute('cy', String(p.y));
+        c.setAttribute('visibility', 'visible');
+      }
     }
   }
 
@@ -317,24 +409,49 @@ export class Player {
       this.flash(s.to.ref);
   }
 
-  /** 項目を白く光らせて 0.4 秒で戻す。親の線で届いたなら子を 60ms ずつずらして上から順に */
+  /** 項目を白く光らせて 0.4 秒で戻す。親の線で届いたなら子を 60ms ずつずらして上から順に（Flasher） */
   private flash(ref: string) {
     const nodeId = ref.slice(0, ref.indexOf('#'));
-    const box = this.layout.boxes.get(nodeId);
+    const box = this.scene.layout().boxes.get(nodeId);
     const col = box ? [...box.ins, ...box.outs] : [];
-    const targets = [ref, ...col.filter((r): r is string => !!r && r.startsWith(ref + '.'))];
-    targets.forEach((r, i) => {
-      const t = setTimeout(() => {
-        this.timers.delete(t);
-        const el = this.svg.querySelector(`[data-item="${CSS.escape(r)}"]`);
-        if (!el) return;
-        el.classList.remove('flash');
-        void el.getBoundingClientRect(); // アニメーションをやり直す
-        el.classList.add('flash');
-      }, i * STAGGER_MS);
-      this.timers.add(t);
-    });
+    this.scene.flasher.flash([
+      ref,
+      ...col.filter((r): r is string => !!r && r.startsWith(ref + '.')),
+    ]);
   }
+}
+
+/**
+ * 再生の始まり（start。performance.now の ms）から now までの時刻を、1 周回（cycle 秒）の中に収める。始まりより前は 0。
+ * rAF の時刻はフレームの始まりなので、クリックのハンドラで決めた始まりより前になることがある。そこで周回の末尾へ
+ * 回り込ませると、最初のフレームで全部の球が「出て着いた」扱いになり、光る項目を全部一度に点滅させてしまう
+ * （2026-11-10。合成 300 箱・密な選択で animate 5,982 回、最初のフレームが 100〜370ms。docs/18 §11.14）
+ */
+export function cycleTime(now: number, start: number, cycle: number): number {
+  if (!(cycle > 0)) return 0;
+  const t = (now - start) / 1000;
+  return t > 0 ? t % cycle : 0;
+}
+
+/** これより小さい戻りは、フレームの始まりの時刻とハンドラで決めた時刻のずれと見る（秒） */
+export const JITTER_S = 0.05;
+
+/**
+ * 前のフレームの時刻（prevTau。まだ無ければ負）から今の時刻へ: forward = 進んだ、wrap = 周回の始まりに戻った（位相を
+ * 0 からやり直す）、jitter = 少しだけ戻った（シーク・再生の再開・選び直しで決めた時刻より、次のフレームの始まりの時刻が
+ * 少し前になる。周回の始まりに戻ったと読むと、そこまでの球を全部もう一度出して光らせてしまう）。
+ * wrap は「前のフレームからの実時間（dt 秒）で周回の終わりを越えられる」かつ「JITTER_S より大きく戻った」とき。
+ * 長いフレーム（裏のタブ・重い描画）のあとの本当の回り込みも wrap になる（2026-11-10 のレビュー指摘。最初の版は
+ * 周回の半分で分けていて、周回の短い ×4 で 300ms のフレームのあとを jitter と読み、球が止まっていた）
+ */
+export function stepKind(
+  prevTau: number,
+  tau: number,
+  cycle: number,
+  dt: number,
+): 'forward' | 'wrap' | 'jitter' {
+  if (prevTau < 0 || tau >= prevTau) return 'forward';
+  return prevTau + dt >= cycle && prevTau - tau > JITTER_S ? 'wrap' : 'jitter';
 }
 
 /**

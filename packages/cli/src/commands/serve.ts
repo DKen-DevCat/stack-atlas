@@ -5,7 +5,8 @@
  * - outDir を静的配信する。outDir に index.html が無ければ、ワークスペースのビューア（packages/viewer/dist）を
  *   後ろに重ねて配信する（graph.json などは outDir が優先）
  * - `/` は `/index.html?graph=./graph.json` へリダイレクト（build の graph.json は v2 で配線図が開く。3D の地図は
- *   同じディレクトリの graph.v1.json。ビューアの左上の「3D の地図」から開ける）
+ *   同じディレクトリの graph.v1.json。ビューアの左上の「3D の地図」から開ける）。`/?pane=wiring&sel=…` のクエリは
+ *   付けたまま渡す（行き先のパスは固定。rootRedirect）
  * - `GET /api/memos`: メモを返す（--repo があれば <repo>/.stack-atlas/memos.json、無ければ outDir/memos.json）
  * - `POST /api/memos`: body（`Record<string,string>`、Content-Type: application/json）を
  *   <repo>/.stack-atlas/memos.json と outDir/memos.json に書く。--repo が無ければ 405
@@ -96,6 +97,18 @@ export function resolveStaticPath(root: string, urlPath: string): string | null 
   if (rel === '' || rel.startsWith('..') || isAbsolute(rel) || rel.split(sep).includes('..'))
     return null;
   return target;
+}
+
+/**
+ * `/` のリダイレクト先。クエリ（`?pane=`・`?sel=`・`?view=` など）を付けたまま渡す（2026-11-10、8-7: 前は捨てていたので
+ * `http://host/?pane=wiring` が 2 面で開いていた）。行き先のパスは固定（`/index.html`。同じ origin の外へは飛ばせない）で、
+ * クエリは読んでから書き直す（改行などは % で符号化される）。`graph=` が無ければ `./graph.json` を足す
+ */
+export function rootRedirect(url: string): string {
+  const q = url.indexOf('?');
+  const params = new URLSearchParams(q < 0 ? '' : (url.slice(q + 1).split('#')[0] ?? ''));
+  const parts = [params.has('graph') ? '' : 'graph=./graph.json', params.toString()];
+  return `/index.html?${parts.filter(Boolean).join('&')}`;
 }
 
 export interface ServeOptions {
@@ -223,7 +236,7 @@ export function createAtlasServer(opts: ServeOptions): Server {
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method Not Allowed');
     if (pathname === '/') {
-      res.writeHead(302, { Location: '/index.html?graph=./graph.json' });
+      res.writeHead(302, { Location: rootRedirect(url) });
       return res.end();
     }
     for (const root of roots) {

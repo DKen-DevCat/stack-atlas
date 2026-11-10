@@ -14,7 +14,7 @@ import { select } from '../select.js';
 import { defaultState } from '../variants.js';
 import { I, N, P, W } from './fixture.js';
 import { boxIds, deepFreeze, fbox, load, pathCut, spikeCuts, viewJson } from './fold-fixture.js';
-import { synthetic } from './synthetic.js';
+import { synthetic } from '../synthetic.js';
 
 const setup = (graph: GraphV2) => {
   const index = indexGraph(graph);

@@ -29,7 +29,7 @@ import { select, type LitSelection } from '../select.js';
 import { defaultState } from '../variants.js';
 import { boxIds, load, pathCut, spikeCuts } from './fold-fixture.js';
 import { boxOverlaps, hostOverlaps } from './metrics.js';
-import { synthetic } from './synthetic.js';
+import { synthetic } from '../synthetic.js';
 
 // ビューアと同じ定数（packages/viewer の配線図の再生。SPEED 420・INNER 0.25・REST 0.6）
 const SPEED = 420;

@@ -154,7 +154,7 @@ resource "aws_cloudfront_distribution" "atlas" {
 stack-atlas serve out --host 0.0.0.0 --port 4173 --repo /srv/my-app --allowed-host atlas.internal
 ```
 
-- `/` は `index.html?graph=./graph.json` にリダイレクトされる。
+- `/` は `index.html?graph=./graph.json` にリダイレクトされる。`/?pane=wiring&sel=…` のようにクエリを付けて開くと、クエリは付いたまま渡る（`graph=` を自分で書いたときはそれを使う）。
 - `--repo` を付けると「サーバーに保存」が使える。誰でも書き込めるので、社内ネットワーク内か、前段に認証を置く。
 - ブラウザがアドレスバーに入れる名前（`atlas.internal` など）は `--allowed-host` で許可する。許可していない Host ヘッダは 403 になる（下記「セキュリティ」）。
 

@@ -1,6 +1,7 @@
 // 操作（docs/15 §3.5・§3.6）: クリックで選ぶ（型 → 項目 → 光っている線 → 箱 → 枠 → 空白の順に見る）、Esc で解く
 // （文字を打つ欄の中では欄から焦点を外すだけ）、`F` キーで全体表示（docs/18 §3.2。画面に文字は出さない）。
-// hover は何も選んでいないときだけ箱とその線を少し明るくする（選択中は hover が効かない）。分岐の表だけは選択中でも出る
+// hover は何も選んでいないときだけ箱とその線を少し明るくする（選択中は hover が効かない）。分岐の表だけは選択中でも出る。
+// hover の class を付け外すのは場面の DOM（sceneView.ts）。ここはポインタがどの箱の上にいるかを知らせるだけ（docs/18 §11.3）
 import type { Selection } from '@stack-atlas/wiring';
 import { createTableHover } from './tableHover';
 
@@ -13,6 +14,11 @@ export interface InteractionDeps {
   /** 線のキー → 線の from / to */
   wireEnds: (key: string) => { from: string; to: string } | null;
   select: (sel: Selection | null) => void;
+  /**
+   * ポインタが箱の上に来た（id）・箱の外へ出た（null）。選択中も呼ぶ（明るくするかは受ける側が決める。要素を作り直さなく
+   * なったので、解除したときにポインタの下の箱を出し直せるよう、最後に入った箱を受ける側が覚える）
+   */
+  hover: (boxId: string | null) => void;
   /** 直前の操作がドラッグだったか（クリックにしない） */
   consumeDrag: () => boolean;
   /** 分岐の表 */
@@ -113,21 +119,16 @@ export function installInteraction(d: InteractionDeps): () => void {
     const boxEl = closest(ev.target, '[data-box]');
     const fo = closest(ev.target, TABLE);
     tableHover.over(boxEl?.dataset.box ?? null, !!fo);
-    // hover の明るさは何も選んでいないときだけ
-    if (d.selected() || !boxEl?.dataset.box) return;
-    boxEl.classList.add('hov');
-    const id = boxEl.dataset.box;
-    svg.querySelectorAll<SVGPathElement>('[data-ends]').forEach((p) => {
-      const [a, b] = (p.dataset.ends ?? '').split('|');
-      if (a === id || b === id) p.classList.add('hov');
-    });
+    // 箱の外（空白・線）に来たら null（作り直しで消えた要素には mouseout が来ないので、ここでも外す）。
+    // 分岐の表と橋の上では変えない（表の持ち主の箱の hover を残す。2026-11-10 のレビュー指摘）
+    if (!fo) d.hover(boxEl?.dataset.box ?? null);
   };
   const onOut = (ev: MouseEvent) => {
     const boxEl = closest(ev.target, '[data-box]');
     if (!boxEl) return;
     if (ev.relatedTarget instanceof Node && boxEl.contains(ev.relatedTarget)) return;
-    boxEl.classList.remove('hov');
-    svg.querySelectorAll('.wire.hov').forEach((p) => p.classList.remove('hov'));
+    if (closest(ev.relatedTarget, TABLE)) return; // 自分の分岐の表へ移った（hover は残す）
+    d.hover(null);
   };
   const onKey = (ev: KeyboardEvent) => {
     if (d.keys && !d.keys()) return;
@@ -137,7 +138,11 @@ export function installInteraction(d: InteractionDeps): () => void {
       else if (a === 'blur' && ev.target instanceof HTMLElement) ev.target.blur();
     } else if (isFitKey(ev)) d.fitAll();
   };
-  const onLeave = () => tableHover.leave();
+  // 図の外へ出た: 表を消し、hover も外す（表の上から外へ出たときは箱の mouseout が来ない）
+  const onLeave = () => {
+    tableHover.leave();
+    d.hover(null);
+  };
 
   svg.addEventListener('click', onClick);
   svg.addEventListener('mouseover', onOver);

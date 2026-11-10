@@ -312,8 +312,14 @@ test('差分（?prev= が v2）: 前にしか無い箱・項目・線は灰の�
   await clickBox(page, 'fn:toTodayView');
   const lit = (await dbg(page, 'lit'))!;
   for (const id of d.ghost.nodes) expect(lit.boxes, id).not.toContain(id);
-  await expect(page.locator(`[data-ghost="${E.ghostNode}"]`)).toHaveClass(/\bdim\b/);
-  await expect(page.locator('g.lit-boxes [data-ghost]')).toHaveCount(0);
+  // 2026-11-10 変更（8-7。docs/18 §11.5）: 沈める側に class（dim）は付かない。幽霊は lit にならず、根の has-sel で沈む
+  // （g.lit-boxes は無くなった。光る箱は g.boxes の中で class lit）
+  await expect(page.locator('.wv')).toHaveClass(/\bhas-sel\b/);
+  await expect(page.locator(`[data-ghost="${E.ghostNode}"] .shape`)).toHaveCSS(
+    'stroke-opacity',
+    '0.15',
+  );
+  await expect(page.locator('[data-ghost].lit')).toHaveCount(0);
   await expect(page.locator('g.lit-wires [data-ghost-wire]')).toHaveCount(0);
   await clickBox(page, E.ghostNode, 'data-ghost');
   expect(await dbg(page, 'selection')).toBeNull();

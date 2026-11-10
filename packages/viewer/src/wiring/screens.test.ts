@@ -13,6 +13,7 @@ import {
   type ScreenRegion,
 } from '@stack-atlas/wiring';
 import { todayGraph, withScreenHtml } from '../../../wiring/src/__tests__/fixture';
+import { DIM } from './dim';
 import {
   DIM_OPACITY,
   frameBox,
@@ -217,10 +218,13 @@ describe('graph と配置から', () => {
     expect(Number(m[1]) + Number(m[3])).toBeLessThanOrEqual(a.y + a.h + 0.1);
   });
 
-  it('沈んだ画面は iframe の不透明度も箱の .dim と同じに下げる', () => {
+  it('沈んだ画面は iframe の不透明度も沈んだ箱と同じに下げる', () => {
+    // 2026-11-10 変更（8-7、D117・D122）: 前は style.css の `.wv .box.dim { opacity }` と突き合わせていた。
+    // 沈んだ箱は class を持たず、根の has-sel と :not(.lit) で箱の係数（--bo）が決まる。値の正は dim.ts（CSS との整合は dim.test.ts）
     const css = readFileSync(new URL('./style.css', import.meta.url), 'utf8');
-    const m = /\.wv \.box\.dim \{[^}]*opacity:\s*([\d.]+)/.exec(css);
+    const m = /\.wv\.has-sel \.box:not\(\.lit\) \{[^}]*--bo:\s*([\d.]+)/.exec(css);
     expect(Number(m?.[1])).toBe(DIM_OPACITY);
+    expect(DIM_OPACITY).toBe(DIM.box);
     expect(screenOpacity(null, 'screen:/today')).toBe(1);
     const on = select(index, defaultState(index), { kind: 'box', id: 'screen:/today' })!;
     expect(screenOpacity(on, 'screen:/today')).toBe(1);

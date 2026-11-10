@@ -20,6 +20,7 @@ import {
   isAllowedHost,
   isScreensPath,
   resolveStaticPath,
+  rootRedirect,
 } from '../commands/serve.js';
 
 describe('resolveStaticPath', () => {
@@ -103,6 +104,64 @@ describe('createAtlasServer', () => {
     expect(await g.text()).toBe('{"version":1}');
     expect((await fetch(`${url}/missing.js`)).status).toBe(404);
     expect((await fetch(`${url}/..%2fsecret.txt`)).status).not.toBe(200);
+  });
+
+  it('/ のリダイレクトはクエリを付けたまま渡す（?pane=・?sel=・?view=。行き先のパスは固定）', async () => {
+    // 2026-11-10（8-7）: 前はクエリを捨てていたので、`/?pane=wiring&sel=…` が 2 面・選択なしで開いていた
+    const { url } = await start();
+    const loc = async (path: string) => {
+      const r = await fetch(`${url}${path}`, { redirect: 'manual' });
+      expect(r.status, path).toBe(302);
+      return r.headers.get('location');
+    };
+    expect(await loc('/?pane=wiring')).toBe('/index.html?graph=./graph.json&pane=wiring');
+    expect(await loc('/?pane=wiring&sel=route%3A%2F&view=today')).toBe(
+      '/index.html?graph=./graph.json&pane=wiring&sel=route%3A%2F&view=today',
+    );
+    // graph= を自分で書いたときはそれを使う（足さない）
+    expect(await loc('/?graph=./graph.v1.json&pane=map')).toBe(
+      '/index.html?graph=.%2Fgraph.v1.json&pane=map',
+    );
+    expect(await loc('/?')).toBe('/index.html?graph=./graph.json');
+    // リダイレクト先を開くと、ビューアはクエリを同じ値で読める
+    const to = new URL((await loc('/?sel=endpoint%3AGET%20%2Ftoday&x=a%26b'))!, url);
+    expect(to.origin).toBe(url);
+    expect(to.pathname).toBe('/index.html');
+    expect(Object.fromEntries(to.searchParams)).toEqual({
+      graph: './graph.json',
+      sel: 'endpoint:GET /today',
+      x: 'a&b',
+    });
+    expect(await (await fetch(to)).text()).toBe('<p>viewer</p>');
+  });
+
+  it('/ のリダイレクト先は同じ origin の固定のパスだけ（クエリに何を書かれても外へ飛ばない・ヘッダを割り込ませない）', () => {
+    for (const q of [
+      '/?//evil.example/',
+      '/?https://evil.example/',
+      '/?next=https%3A%2F%2Fevil.example%2F',
+      '/?graph=https%3A%2F%2Fevil.example%2Fg.json',
+      '/?a=%0d%0aSet-Cookie:%20x=1',
+      '/?a=\r\nLocation: https://evil.example/',
+      '/?%00=%00',
+      '/?a=b#/../../etc',
+      '/?' + 'a=b&'.repeat(200),
+    ]) {
+      const to = rootRedirect(q);
+      expect(to.startsWith('/index.html?'), q).toBe(true);
+      // 符号化していない制御文字・空白・# が無い（Location に生の改行が入らない）
+      expect(to, q).toMatch(/^\/index\.html\?[A-Za-z0-9\-._~%+=&*/]*$/);
+      const u = new URL(to, 'http://127.0.0.1:4173');
+      expect(u.origin, q).toBe('http://127.0.0.1:4173');
+      expect(u.pathname, q).toBe('/index.html');
+      expect(u.searchParams.has('graph'), q).toBe(true);
+    }
+    expect(rootRedirect('/')).toBe('/index.html?graph=./graph.json');
+    expect(rootRedirect('/?a=%0d%0aX:%201')).toBe('/index.html?graph=./graph.json&a=%0D%0AX%3A+1');
+    // graph= を外の URL にしても、行き先は自分の index.html のまま（読むかどうかはビューアが決める。今までと同じ）
+    expect(rootRedirect('/?graph=https%3A%2F%2Fevil.example%2Fg.json')).toBe(
+      '/index.html?graph=https%3A%2F%2Fevil.example%2Fg.json',
+    );
   });
 
   it('build の graph.v1.json（3D の地図）も配信し、HEAD に答える（ビューアは HEAD で有無を見る）', async () => {

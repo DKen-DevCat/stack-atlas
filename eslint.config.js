@@ -32,4 +32,11 @@ export default tseslint.config(
       globals: { ...globals.browser },
     },
   },
+  {
+    // 計測のスクリプトは Node で動き、page.evaluate に渡す関数はブラウザで動く
+    files: ['packages/viewer/scripts/**/*.mjs'],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.browser },
+    },
+  },
 );
