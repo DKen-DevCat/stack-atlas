@@ -2,7 +2,7 @@
   "name": "@stack-atlas/viewer",
   "version": "0.0.0",
   "private": true,
-  "description": "Stack Atlas の 3D ビューア（graph.json を読んで描画する静的アプリ）",
+  "description": "Stack Atlas のビューア（graph.json v1 は 3D の地図、v2 は配線図。静的アプリ）",
   "type": "module",
   "scripts": {
     "predev": "node ../../scripts/sync-samples.mjs",
@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@stack-atlas/schema": "workspace:*",
+    "@stack-atlas/wiring": "workspace:*",
     "three": "0.187.0"
   },
   "devDependencies": {

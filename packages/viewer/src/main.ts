@@ -1,5 +1,6 @@
 /**
  * エントリポイント: graph.json の入力（?graph=、ドロップ、ファイル選択）→ 検証 → Viewer。
+ * - `version: 2` の graph は validateGraphV2 で検証し、3D の Viewer ではなく配線図（wiring/）で開く（SVG なので WebGL は要らない）
  * - `?prev=<URL>`（または「開く ▾ → 前回と比較…」）で前回の graph.json を読み、差分を色分けする
  * - graph.json と同じディレクトリの memos.json（と serve の GET /api/memos）を共有メモとして読む
  */
@@ -15,6 +16,8 @@ import {
   type LoadResult,
 } from './graph/load';
 import { hasWebGL } from './scene/renderer';
+import { startPlan, viewFor } from './startup';
+import { mountWiring, type WiringApp, type WiringDebug } from './wiring/app';
 import { h } from './ui/dom';
 import { createEmptyState, installDropTarget, type SampleEntry } from './ui/emptyState';
 import { createIssuesBox } from './ui/issues';
@@ -29,6 +32,8 @@ import {
 type Status = 'loading' | 'empty' | 'ready' | 'error';
 interface DebugHandle {
   viewer: Viewer | null;
+  /** 配線図（v2）を開いているときのデバッグ用の口 */
+  wiring: WiringDebug | null;
   status: Status;
 }
 
@@ -44,9 +49,10 @@ const overlays = h('div', { class: 'overlays' });
 document.body.append(overlays);
 
 let viewer: Viewer | null = null;
+let wiring: WiringApp | null = null;
 /** 今表示している graph（「前回と比較…」で作り直すため） */
 let current: { res: LoadResult; shared: SharedMemoSource } | null = null;
-const debug: DebugHandle = { viewer: null, status: 'loading' };
+const debug: DebugHandle = { viewer: null, wiring: null, status: 'loading' };
 window.__stackAtlas = debug;
 
 function setStatus(s: Status) {
@@ -69,12 +75,26 @@ async function fetchSamples(): Promise<SampleEntry[]> {
   }
 }
 
-async function showEmpty(message?: string) {
+/** 3D の地図と配線図のどちらも片付ける */
+function disposeAll() {
   viewer?.dispose();
   viewer = null;
   debug.viewer = null;
+  wiring?.dispose();
+  wiring = null;
+  debug.wiring = null;
+}
+
+async function showEmpty(message?: string, note?: string) {
+  disposeAll();
   const samples = await fetchSamples();
-  app.replaceChildren(createEmptyState(openFile, { ...(message ? { message } : {}), samples }));
+  app.replaceChildren(
+    createEmptyState(openFile, {
+      ...(message ? { message } : {}),
+      ...(note ? { note } : {}),
+      samples,
+    }),
+  );
   setStatus(message ? 'error' : 'empty');
 }
 
@@ -100,17 +120,26 @@ function prevFrom(r: LoadResult): PrevGraph {
 function showResult(res: LoadResult, shared: SharedMemoSource, prev: PrevGraph = {}) {
   overlays.replaceChildren();
   const allIssues = prev.issue ? [...res.issues, prev.issue] : res.issues;
-  const issues = createIssuesBox(allIssues, res.versionWarning, !!res.graph);
+  const issues = createIssuesBox(allIssues, res.versionWarning, !!(res.graph ?? res.graphV2));
   if (issues) overlays.append(issues);
-  if (!res.graph) {
+  const view = viewFor(res, hasWebGL());
+  if (view === 'wiring') {
+    showWiring(res);
+    return;
+  }
+  if (view === 'unrenderable' || !res.graph) {
     void showEmpty('graph.json を描画できませんでした。上の一覧を確認してください。');
+    return;
+  }
+  if (view === 'no-webgl') {
+    showNoWebGL();
     return;
   }
   const model = buildModel(res.graph);
   console.info(
     `[stack-atlas] ${res.source}: ノード ${model.nodes.length}、エッジ ${model.edges.length}、フロー ${model.flows.length}`,
   );
-  viewer?.dispose();
+  disposeAll();
   app.replaceChildren();
   const scope = storageScope(res.graph.project?.name, res.source);
   current = { res, shared };
@@ -130,6 +159,58 @@ function showResult(res: LoadResult, shared: SharedMemoSource, prev: PrevGraph =
     ? `${res.graph.project.name} — Stack Atlas`
     : 'Stack Atlas';
   setStatus('ready');
+}
+
+/** graph v2 を配線図で開く（メモ・差分は v2 ではまだ扱わない） */
+function showWiring(res: LoadResult) {
+  if (!res.graphV2) {
+    void showEmpty('graph.json（version 2）を描画できませんでした。上の一覧を確認してください。');
+    return;
+  }
+  disposeAll();
+  current = null;
+  try {
+    wiring = mountWiring({ root: app, graph: res.graphV2, source: res.source });
+  } catch (e) {
+    // 参照が解けない graph は索引が作れない（一覧のエラーを見て直す）
+    void showEmpty(
+      `graph.json（version 2）を描画できませんでした: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    return;
+  }
+  debug.wiring = wiring.debug;
+  document.title = res.graphV2.project?.name
+    ? `${res.graphV2.project.name} — 配線図 — Stack Atlas`
+    : '配線図 — Stack Atlas';
+  const { nodes, wires } = res.graphV2;
+  console.info(`[stack-atlas] ${res.source}: 箱 ${nodes.length}、線 ${wires.length}（配線図）`);
+  setStatus('ready');
+}
+
+function showNoWebGL() {
+  disposeAll();
+  app.replaceChildren(
+    h(
+      'div',
+      { class: 'empty' },
+      h(
+        'div',
+        { class: 'card' },
+        h('h1', {}, 'Stack Atlas'),
+        h(
+          'p',
+          { class: 'emsg' },
+          'このブラウザでは WebGL が使えないため、3D マップを表示できません。',
+        ),
+        h(
+          'p',
+          {},
+          'ブラウザの設定でハードウェアアクセラレーション（WebGL）を有効にするか、別のブラウザで開いてください。',
+        ),
+      ),
+    ),
+  );
+  setStatus('error');
 }
 
 /** URL から指定のクエリを外す（再読み込みで別の graph に戻らないように） */
@@ -156,38 +237,17 @@ async function openPrevFile(f: File) {
 }
 
 async function start() {
-  if (!hasWebGL()) {
-    app.replaceChildren(
-      h(
-        'div',
-        { class: 'empty' },
-        h(
-          'div',
-          { class: 'card' },
-          h('h1', {}, 'Stack Atlas'),
-          h(
-            'p',
-            { class: 'emsg' },
-            'このブラウザでは WebGL が使えないため、3D マップを表示できません。',
-          ),
-          h(
-            'p',
-            {},
-            'ブラウザの設定でハードウェアアクセラレーション（WebGL）を有効にするか、別のブラウザで開いてください。',
-          ),
-        ),
-      ),
-    );
-    setStatus('error');
-    return;
-  }
-  installDropTarget(openFile);
   const url = graphUrlFromSearch(location.search, location.href);
-  if (!url) {
-    await showEmpty();
+  // ドロップとファイル選択は WebGL が無くても受け付ける（配線図の v2 は SVG なので開ける）。
+  // 3D の地図（v1）は、読んでから WebGL が無ければ showNoWebGL
+  installDropTarget(openFile);
+  const plan = startPlan(!!url, hasWebGL());
+  if (plan.kind === 'empty' || !url) {
+    await showEmpty(undefined, plan.kind === 'empty' ? plan.note : undefined);
     return;
   }
   app.replaceChildren(h('div', { class: 'loading' }, 'graph.json を読み込み中…'));
+  // 差分（?prev=）は v1 の地図だけ
   const prevUrl = prevUrlFromSearch(location.search, location.href);
   const [res, prevRes] = await Promise.all([
     loadGraphFromUrl(url),

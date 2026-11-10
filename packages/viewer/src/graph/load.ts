@@ -2,13 +2,25 @@
  * graph.json の入力（?graph=URL、ドラッグ＆ドロップ、ファイル選択）と検証。
  * ここにある関数は DOM 要素に触らない（fetch と File は使う）。画面への表示は ui/ 側。
  */
-import { validateGraph, type Graph, type ValidationIssue } from '@stack-atlas/schema';
+import {
+  validateGraph,
+  validateGraphV2,
+  type Graph,
+  type GraphV2,
+  type ValidationIssue,
+} from '@stack-atlas/schema';
 
+/** 3D の地図が読む version。`version: 2` は配線図（wiring/）で読む */
 export const SUPPORTED_VERSION = 1;
+export const WIRING_VERSION = 2;
 
 export interface LoadResult {
-  /** スキーマを通った graph。参照エラーがあっても返す（docs/08 D7） */
+  /** スキーマを通った graph（v1）。参照エラーがあっても返す（docs/08 D7） */
   graph?: Graph;
+  /** `version: 2` の JSON だったか（スキーマを通らなくても true。配線図の側で扱う） */
+  v2?: boolean;
+  /** スキーマを通った graph v2（docs/16）。参照エラーがあっても返す */
+  graphV2?: GraphV2;
   /** 検証で見つかった問題（エラー・警告） */
   issues: ValidationIssue[];
   /** 未知の version だったときの警告文 */
@@ -21,7 +33,8 @@ export interface LoadResult {
 
 /**
  * JSON テキストを検証して LoadResult にする。
- * 未知の version は警告を出し、v1 として読めるか試す（前方互換）。
+ * `version: 2` は validateGraphV2 で検証し、エラーと警告を 1 列にする（配線図で開く）。
+ * それ以外の未知の version は警告を出し、v1 として読めるか試す（前方互換）。
  */
 export function parseGraphText(text: string, source: string, baseUrl?: string): LoadResult {
   let json: unknown;
@@ -33,6 +46,13 @@ export function parseGraphText(text: string, source: string, baseUrl?: string): 
       source,
       ...(baseUrl ? { baseUrl } : {}),
     };
+  }
+  if (isRecord(json) && json.version === WIRING_VERSION) {
+    const r = validateGraphV2(json);
+    const out: LoadResult = { issues: [...r.errors, ...r.warnings], source, v2: true };
+    if (r.graph) out.graphV2 = r.graph;
+    if (baseUrl) out.baseUrl = baseUrl;
+    return out;
   }
   let versionWarning: string | undefined;
   if (isRecord(json) && json.version !== SUPPORTED_VERSION) {

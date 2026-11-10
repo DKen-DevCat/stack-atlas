@@ -19,7 +19,7 @@
   "types": [ { "id": "type:Entry", "name": "Entry", "file": "platform/openapi/today.yaml", "line": 40 } ],
   "nodes": [ { "id": "comp:TodayIsland", "kind": "component", "name": "TodayIsland", "runtime": "browser", "ports": [ ... ] } ],
   "wires": [ { "from": "hook:useToday#out/entries", "to": "comp:TodayIsland#in/entries", "via": "return", "reply": true } ],
-  "views": [ { "id": "today", "name": "今日の画面を開く", "start": "screen:/today", "variants": { "cache:swr.hit": false } } ]
+  "views": [ { "id": "today", "name": "今日の画面を開く", "start": "screen:/today", "variants": { "cache:swr#hit": false } } ]
 }
 ```
 
@@ -41,6 +41,8 @@
 
 **v1 の箱 id は変えない**（`route:` `lib:` `handler:` `type:` のまま）。id はメモ・overrides・views の結合キーなので、kind の名前（§4）が変わっても id の接頭辞は据え置く。
 
+**関数の単位の箱の id**（8-0a で判明。v1 の `lib:` / `handler:` はファイル・パッケージの単位だが、v2 の底は関数）: 言語アダプタが作る関数の箱は `fn:<名前>`（TS は export 名、Go は `<パッケージ相対パス>.<関数名>`。例 `fn:getToday`、`fn:internal/api.handleToday`）。名前が衝突したら `fn:<repo 相対ファイル>~<名前>`。部品と hook は v1 と同じ `comp:` / `hook:`。v1 のファイル・パッケージの箱（`lib:web/src/feature/spend/request`）は、関数の箱が出たら **`group`** になり（箱としては消える）、その id に付いていたメモは group に出す。
+
 ## 4. 箱（node）
 
 ```jsonc
@@ -50,7 +52,7 @@
   "name": "api.handleToday",
   "runtime": "server",          // 必須。user | time | browser | edge | build | server | data | external
   "file": "platform/internal/api/today.go", "line": 12, "code": "...",
-  "host": "infra:lambda_api/api",       // 任意。この箱を動かしているインフラの箱（kind infra）の id
+  "host": "infra:lambda_api/api",       // 任意。この箱が動く・置かれる場所のインフラの箱（kind infra）の id
   "group": "platform/internal/api",     // 任意。折りたたみの単位（§3.8）。省略時は file のディレクトリ
   "ports": [ ... ],                     // §5
   "links": [ ... ],                     // §6。省略時は既定（全 in → 全 out。table は key → read）
@@ -63,7 +65,8 @@
 
 - `runtime` は固定の 8 値。`build` は「ビルド時に動く」（静的エクスポートのサーバー部品）。v1 の `layer` は無い
 - **`runtime` の決め方**（優先順）: ① `host` の deploy 先（Lambda / ECS → `server`、Lambda@Edge → `edge`）② フレームワーク規約（`'use client'` → `browser`、App Router の server component → `server`、静的エクスポートなら `build`、`route.ts` → `server`）③ kind の既定（§10 の表）。両側で使われる TS モジュール（shared）は**使う側の runtime ごとに箱を複製**し、id に `@<runtime>` を付ける（`lib:src/lib/fetcher@server`）。`meta.sharedOf` に元の id
-- **`kind: "infra"` の扱い**: コードを載せているインフラ（v1 の `deploy` の `from`。Lambda / ECS / S3 の静的サイト）は線上に置かず `host` の枠になる。それ以外（CloudFront、API Gateway、SQS、Cognito、Aurora）は普通の箱で、口は `in/_`・`out/_` の 1 項目ずつ。インフラどうしの関係（CloudFront → S3 など）は v1 の `flow` エッジを `via: "http"` の線にして残す
+- **`kind: "infra"` の扱い**（D42 改訂）: **箱が動く・置かれる場所**になるインフラだけが線上に置かれず `host` の枠になる。Lambda / ECS / Cloud Run は関数の、Aurora / RDS / DynamoDB はテーブルの枠。枠だけの infra は `ports: []` でよい。**S3 の静的サイトは枠ではなく配信元の箱**（画面はブラウザで動くので枠を持たない。S3 は HTML を配るだけ）。これで CloudFront の HIT でも、CloudFront が画面の `in/html` へ折り返して画面以下が光る。それ以外（CloudFront、API Gateway、SQS、Cognito、S3）は普通の箱で、口は `in/_`・`out/_` の 1 項目ずつ。インフラどうしの関係は v1 の `flow` エッジを `via: "http"` の線にして残す
+- `kind` は enum で固定（validate のエラー）。v1 の箱をそのまま使うときも id は変えず kind だけ v2 の語彙にする（例: CloudFront の `infra:static_site/this` は `kind: "cache"`）
 - `kind: "cache"` の箱は `variants` に `hit` を持つのが規約。`links` は `when` で hit / miss を分ける（§6）
 - `kind` の語彙は固定: `screen` `component` `hook` `helper` `fn` `endpoint` `table` `cache` `trigger` `actor` `external` `infra` `queue`。v1 の `handler` は `fn`（ルートは `meta.route`）、`layout` は `screen`、`service` / `db` / `cron` はそれぞれ `infra` / `table`（行型を持つ DB は `infra` のまま）/ `trigger`
 
@@ -94,6 +97,10 @@
 | `when` | | この状態のときだけ存在する（§7） |
 | `confidence` | | `links` と同じ。`exact` / `crude` / `unknown` |
 
+**引数の無い呼び出しと props の無い部品**: 呼ばれる側に合成項目 `in/call`（name `()`、type `void`）を置き、`A#out/call_n → B#in/call` を引く。props の無い部品は `in/props`（name `{}`）。
+
+**HTTP 呼び出しの線**: パスのリテラルを持つ呼び出し元（`getToday`）から endpoint へ直接引く。ラッパー（`fetcher`）は呼び出し元の脇に call / return で置き、戻りは呼び出し元の `ret_n` に fetcher と endpoint の両方から入る（fan-in）。ラッパーを線上に置くと、共有されたラッパーの先で全部の endpoint に広がる（前向きの文脈は reply では絞れない）ため。言語アダプタの規則。
+
 **呼び出しの合成項目**（線の端点の規約を守るために要る。レビューで判明: 型 API のスパイクは `A#in/x → B#in/x` の in → in の線を出していた）: 箱 A が B を呼ぶとき、A の `out` 口に項目 `call_<n>`（name は `B()`）を作り、その子に渡す引数を B の引数名で置く。戻り値は A の `in` 口に `ret_<n>`（name は `B() の戻り`）。線は `A#out/call_1.x → B#in/x`（via call）と `B#out/ret → A#in/ret_1`（via return、reply）。A の引数から `call_1.x` への対応は `links`。部品が子部品に props を渡すのも同じ（`out/render_<n>` の子が props）。hook の戻りは `in/ret_<n>` の子。
 
 **endpoint（合流点）の 4 つの口**: OpenAPI の path / query / body のフィールドを `in`（クライアントから）と `req`（実装へ）の両方に同じ項目で置き、response を `res`（実装から）と `out`（クライアントへ）に置く。`links` は `in/x → req/x`、`res/y → out/y` の恒等（省略可。既定で生成）。
@@ -112,7 +119,12 @@
 
 - `from` は **`dir: out` の口の項目**、`to` は **`dir: in` の口の項目**。向きはデータが流れる向き。validate が `dir` を検査する（in → in の線はエラー。§5 の合成項目で解く）
 - **最も粗い単位で引く**（D34 改訂）: 受ける側の子が送る側の子に**名前で全部写る**（子を再帰、配列は要素で）なら親 1 本。`typeRef` の一致は条件にしない（合流点では TS の `type:Today`・OpenAPI の `schema:Today`・Go の `type:Transaction` と名前が違い、一致を条件にすると HTTP の線が項目ごとに分かれてしまう）。子の線を別に引くのは改名や一部だけが渡るとき
-- `broken` は配列。`path` は `from` の項目からの相対パス。`level` は `error`（名前が相手に無い、`wireType` が互換でない）/ `warn`（nullable → 必須）
+- `broken` は配列。`path` は「送る側にあれば送る側の、無ければ受ける側の」項目からの相対パス。`level` は `error` / `warn`
+- **照合の規則**（`detectBroken`）:
+  - 子を宣言していない側（`RequestInit`、generic の `T`、`*http.Request` など）は不透明として照合しない
+  - 送る側だけにある子は error（「受ける側に無い」）。受ける側だけにある**必須**の子は error（「送る側に無い」）、`optional` なら無視
+  - `nullable → 必須` と `optional → 必須` は warn
+  - `wireType` の互換表: `integer → number` は互換、`number → integer` は **warn**（送る側が広い。TS の `number` を OpenAPI の `integer` に送るなど）、`datetime → string` は互換、`string → datetime` は **`via: sql` のときだけ互換**（DB が変換する）でそれ以外は error、`unknown` はどちらにあっても照合しない
 - 同じ `(from, to)` の線は 1 本（マージで重複排除）
 - `links` は箱の中:
 
@@ -125,7 +137,8 @@
 ]
 ```
 
-- `links` を省略した箱は「全 in → 全 out」（不透明）。`kind: table` の既定は `key → read` だけ
+- `links` の `from` は `dir: in` の口の項目、`to` は `dir: out` の口の項目（validate のエラー）
+- `links` を省略した箱は「全 in → 全 out」（不透明）。既定の例外: `kind: table` は `key → read` だけ、`kind: endpoint` は `in → req` と `res → out` の id が同じ項目どうし
 - 親の単位の `links` は子に写る（docs/15 §3.4 の親子の写し）。写らない子（改名）だけ明示する
 - `links[].confidence`: `exact`（型 API で確定）/ `crude`（state・ローカル変数経由の推定）/ `unknown`。`from` が分からない links は書かず、箱を不透明に落とす
 
@@ -140,16 +153,19 @@
 
 ```jsonc
 "types": [ { "id": "type:Entry", "name": "Entry", "file": "platform/openapi/today.yaml", "line": 40, "source": "openapi" } ],
-"views": [ { "id": "today-hit", "name": "今日の画面（SWR HIT）", "start": "screen:/today", "variants": { "cache:swr.hit": true } } ]
+"views": [ { "id": "today-hit", "name": "今日の画面（SWR HIT）", "start": "screen:/today", "variants": { "cache:swr#hit": true } },
+           { "id": "resp", "name": "レスポンスから", "start": { "from": "fn:internal/api.handleToday#out/resp", "to": "endpoint:GET /today#res/body" } } ]
 ```
 
 - `types[]` は `typeRef` の宛先。同じ型の写しが複数の言語にある（OpenAPI の Entry、TS の Entry、Go の Entry）ときは **契約側を正**にして 1 つにし、`typeRef` は全部それを指す。写しの場所は `meta.copies` に
-- `views[]` は flows.yaml の置き換え（docs/15 §3.9）。`start` は箱・項目・線のどれかの参照
+- `views[]` は flows.yaml の置き換え（docs/15 §3.9）。`start` は箱 id か項目の参照（文字列）、線なら `{ from, to }`（線に id は無い）。`variants` のキーは必ず `<nodeId>#<variantId>`
 
 ## 9. 検証（validateGraph v2）
 
 エラー（止める）:
-- 参照が解けない（`wires[].from/to`、`links[].from/to`、`host`、`typeRef`、`views[].start`、`when` のキー）
+- 参照が解けない（`wires[].from/to`、`links[].from/to`、`host`、`views[].start`、`when` のキー）。`typeRef` が `types[]` に無いのは警告
+- `host` の先が `kind: infra` でない、`wires[].via` が無い、`kind` が語彙に無い
+- `links` の `from` が `dir: out`、`to` が `dir: in`
 - `from` が `dir: in` の口、`to` が `dir: out` の口
 - 同じ `(from, to)` の線の重複、項目 `id` の衝突、`.` を含む項目 `id`
 - `kind: cache` に `hit` の分岐が無い
@@ -198,6 +214,11 @@
 | D39 | `runtime` は 8 値固定（`build` を追加） | 静的エクスポートのサーバー部品の置き場 |
 | D40 | 線の端点は `out` → `in` に限り、呼び出し・props・戻りは合成項目（`call_n` / `render_n` / `ret_n`）で表す | 型 API の出力をそのまま線にすると in → in になり、たどれない（レビュー #1） |
 | D41 | D34 の「親 1 本」の条件は名前の写しだけ。`typeRef` の一致は要らない | 合流点では型の名前が言語ごとに違う（レビュー #5） |
-| D42 | コードを載せる infra だけ `host` の枠。他の infra は箱 | 枠と箱の規則の矛盾（レビュー #4） |
+| D42 | 箱が動く・置かれる場所の infra（Lambda / ECS / Aurora など）だけ `host` の枠。S3 の静的サイトを含む他の infra は箱（2026-11-08 改訂。当初は「コードを載せる infra」で S3 も枠だったが、CloudFront の HIT で画面以下が光らなくなった） | 枠と箱の規則の矛盾（レビュー #4、8-0a #4・#5） |
 | D43 | たどりは 2 段（範囲を不動点まで求めてから戻りを絞る）。球は同じ線を 1 周回に 2 回流さない | 順序依存と循環（レビュー #7） |
 | D44 | たどる規則とレイアウト前処理は `@stack-atlas/wiring` に置き、レイアウトは build 時に埋める | ビューアの依存規則と、選択ごとの再レイアウトの重さ（レビュー #8・B） |
+| D45 | HTTP 呼び出しの線はパスのリテラルを持つ呼び出し元から endpoint へ直接引き、共有ラッパーは脇に置く | 共有ラッパーを線上に置くと前向きに全 endpoint へ広がる（8-0a #3） |
+| D46 | `wireType` の互換表: `number → integer` は warn、`string → datetime` は sql の境界だけ互換、子を宣言しない側は照合しない | 規則どおりだと TS の数値や SQL のパラメータが全部切れる（8-0a #9） |
+| D47 | 関数の箱は `fn:<名前>`（衝突時はファイルで修飾）、v1 のファイル・パッケージの箱は group になる | 底を関数にしたときの id とメモの扱い（8-0a #15） |
+
+8-0a（`claude/phase8-0-slice`）で実装して分かった残りの決定（たどりの細部）は docs/15 §3.5 に書いた。

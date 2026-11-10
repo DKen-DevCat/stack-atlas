@@ -120,3 +120,25 @@
 - 層内の線の不透明度はプロトタイプの値（flow .6 / deploy .3 / uses .28 / http .5 / schema .35）。未知の kind は uses と同じ灰色。
 - 追加: 検証結果の一覧（エラー赤・警告黄、閉じられる）、未知の `version` の警告（v1 として読める範囲で描画）、graph 未指定時の案内（ファイル選択・サンプル一覧）、トップバーの「開く」、Esc で選択解除、WebGL がないときのメッセージ。
 - パネル: `code` がなければコード欄を出さない。`file` に `line` があれば `file:line` で出す。
+
+## 配線図（graph.json v2。Phase 8-0b）
+
+`version: 2` の graph.json（契約は `docs/16-graph-v2-contract.md`）を開くと、3D の地図ではなく **配線図**（SVG）で描く。v1 はこれまでどおり 3D の地図。
+入口は `packages/viewer/src/main.ts`（`graph/load.ts` が `version` を見て `validateGraphV2` で検証し、エラーと警告を既存の一覧に出す）。配線図は WebGL を使わない。
+
+- **規則はすべて `@stack-atlas/wiring`**（たどる・選ぶ・球の時刻・切れている線・レイアウト）。ビューアは描画と入力だけ（docs/16 D44）
+- 操作と表示の規則は `docs/15-design-dataflow-model.md` §3.4b（分岐の表）・§3.5（たどる規則・球・項目の光り）・§3.6（表示の規則・レイアウト）。モック第 6 版（`prototype/dataflow-mock.html`）と同じ体験
+- レイアウト: `layoutWiring(index)`（`packages/wiring/src/layout.ts`）。レーン（runtime。箱のあるレーンだけ）× 重心、項目は常に全部開き、口の中だけで相手側の並びに合わせて並べ替える、隙間と通り道の幅は線の数で決める、直交配線、host の枠、左に錨の無い成分を上に詰める。分岐を切り替えても箱は動かない。ELK と build 時の埋め込み（`position` / `route`）は後のフェーズ
+- 球: 時刻は `schedule`（線の長さはレイアウトの経路の長さ）、描くのは `drawnBalls`（線ごとに 1 球）。親の項目に着いた時刻は子から出る線にも効く
+- 切れている線: graph.json に書かれた `broken` を正にする（`brokenEnds`）。選択に関係なく赤の破線（warn は黄）で、受ける側の箱の手前で切れた端を描く
+
+| モジュール（`packages/viewer/src/wiring/`） | 役目 |
+|---|---|
+| `app.ts` | 組み立て（索引 → レイアウト → 描画）、選択と分岐の状態、`window.__stackAtlas.wiring`（e2e・デバッグ用: `selection` / `lit` / `schedule` / `state` / `select()` / `setVariant()` / `seek()` / `setPaused()` / `ballPositions()`） |
+| `render.ts` | SVG の文字列（DOM 無し・単体テスト可）。層の順はレーン → 沈んだ線 → host の枠 → 沈んだ箱 → 光る線 → 光る箱 → 球。文字は箱の幅に収める |
+| `interaction.ts` | クリック（型 → 項目 → 光る線 → 箱 → 枠 → 空白）、hover（何も選んでいないときだけ）、Esc |
+| `balls.ts` | 球、項目の光り（出発・到着、子は 60ms ずつ）、再生バー（▶/❚❚・シーク）と速さ（0.25〜4 倍） |
+| `variantTable.ts` | 分岐の表（左「ない」・右「ある」。選択中でも hover で出る） |
+| `canvas.ts` | 無限の平面（ドラッグ・ホイールで移動、ctrl/⌘ ＋ ホイールとピンチで拡大縮小、初期表示は全体） |
+
+モックから変えた点: 丸い端の箱（actor・trigger）は楕円ではなく角丸（rx と ry を高さの半分に揃える）。光る host の枠は箱より下の層（中の沈んだ箱のクリックを奪わない）。項目の当たり判定は文字の下（型の文字をクリックできるように）。同じレーンの上の箱とつながる箱は「つながっている箱のすぐ下」（docs/15 §8 #13 どおり。モックは直前の箱の下）。

@@ -1,0 +1,2383 @@
+{
+  "$schema": "../packages/schema/graph-v2.schema.json",
+  "version": 2,
+  "project": {
+    "name": "fixture-poly（/today の縦スライス）",
+    "description": "画面 / → TodayIsland → getToday → GET /today → handleToday → ListByDate → transactions。手で組んだ v2（Phase 8-0）。HTML は CloudFront（MISS は S3 から）が画面へ配る。POST /transactions の経路は契約の食い違いを出すために含めた",
+    "repo": "examples/fixture-poly",
+    "sources": [
+      "web",
+      "platform"
+    ]
+  },
+  "types": [
+    {
+      "id": "type:Today",
+      "name": "Today",
+      "file": "platform/openapi/today.yaml",
+      "line": 111,
+      "source": "openapi",
+      "meta": {
+        "copies": [
+          "web/src/feature/spend/types.ts:7"
+        ]
+      }
+    },
+    {
+      "id": "type:Entry",
+      "name": "Entry",
+      "file": "platform/openapi/today.yaml",
+      "line": 120,
+      "source": "openapi",
+      "meta": {
+        "copies": [
+          "web/src/feature/spend/types.ts:1"
+        ]
+      }
+    },
+    {
+      "id": "type:Transaction",
+      "name": "Transaction",
+      "file": "platform/openapi/today.yaml",
+      "line": 127,
+      "source": "openapi",
+      "meta": {
+        "copies": [
+          "platform/internal/domain/transaction.go:7"
+        ]
+      }
+    },
+    {
+      "id": "type:TodayView",
+      "name": "TodayView",
+      "file": "web/src/feature/spend/types.ts",
+      "line": 12,
+      "source": "typescript"
+    },
+    {
+      "id": "table:transactions",
+      "name": "transactions",
+      "file": "platform/migrations/000001_init.up.sql",
+      "line": 1,
+      "source": "sql"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "actor:user",
+      "kind": "actor",
+      "name": "利用者（ブラウザ）",
+      "runtime": "user",
+      "ports": [
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "open",
+              "name": "GET /",
+              "type": "url",
+              "wireType": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "infra:static_site/this",
+      "kind": "cache",
+      "name": "CloudFront",
+      "runtime": "edge",
+      "file": "platform/infra/modules/static-site/main.tf",
+      "variants": [
+        {
+          "id": "hit",
+          "name": "cache hit",
+          "default": false
+        }
+      ],
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "key",
+              "name": "key",
+              "type": "path",
+              "wireType": "string"
+            },
+            {
+              "id": "value",
+              "name": "value",
+              "type": "text/html",
+              "wireType": "string"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "key",
+              "name": "key",
+              "type": "path",
+              "wireType": "string"
+            },
+            {
+              "id": "value",
+              "name": "value",
+              "type": "text/html",
+              "wireType": "string"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": "in/key",
+          "to": "out/value",
+          "when": {
+            "hit": true
+          }
+        },
+        {
+          "from": "in/key",
+          "to": "out/key",
+          "when": {
+            "hit": false
+          }
+        },
+        {
+          "from": "in/value",
+          "to": "out/value",
+          "when": {
+            "hit": false
+          }
+        }
+      ],
+      "cache": {
+        "tone": "ok",
+        "badge": "TTL 86400s",
+        "rules": [
+          {
+            "key": "default behavior",
+            "value": "CachingOptimized"
+          },
+          {
+            "key": "viewer-request",
+            "value": "CloudFront Function が /index.html を補完"
+          }
+        ]
+      }
+    },
+    {
+      "id": "infra:static_site/site",
+      "kind": "infra",
+      "name": "S3 site（静的サイト）",
+      "runtime": "edge",
+      "file": "platform/infra/modules/static-site/main.tf",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "path",
+              "name": "path",
+              "type": "string",
+              "wireType": "string"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "html",
+              "name": "index.html",
+              "type": "text/html",
+              "wireType": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "route:/",
+      "kind": "screen",
+      "name": "/",
+      "runtime": "browser",
+      "file": "web/src/app/page.tsx",
+      "line": 3,
+      "group": "web/src/app",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "html",
+              "name": "html",
+              "type": "text/html",
+              "wireType": "string"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "render_1",
+              "name": "TodayIsland()",
+              "type": "JSX.Element",
+              "wireType": "object"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": "in/html",
+          "to": "out/render_1",
+          "confidence": "exact"
+        }
+      ]
+    },
+    {
+      "id": "comp:TodayIsland",
+      "kind": "component",
+      "name": "TodayIsland",
+      "runtime": "browser",
+      "file": "web/src/components/today-island.tsx",
+      "line": 10,
+      "group": "web/src/components",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "props",
+              "name": "props",
+              "type": "{}",
+              "wireType": "object"
+            },
+            {
+              "id": "ret_1",
+              "name": "getToday() の戻り",
+              "type": "Today",
+              "wireType": "object",
+              "typeRef": "type:Today",
+              "children": [
+                {
+                  "id": "total",
+                  "name": "total",
+                  "type": "number",
+                  "wireType": "number",
+                  "typeRef": "type:Today"
+                },
+                {
+                  "id": "entries",
+                  "name": "entries",
+                  "type": "Entry[]",
+                  "wireType": "array",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "ret_2",
+              "name": "toTodayView() の戻り",
+              "type": "TodayView",
+              "wireType": "object",
+              "typeRef": "type:TodayView",
+              "children": [
+                {
+                  "id": "totalLabel",
+                  "name": "totalLabel",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:TodayView"
+                },
+                {
+                  "id": "rows",
+                  "name": "rows",
+                  "type": "Entry[]",
+                  "wireType": "array",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "call_1",
+              "name": "getToday()",
+              "type": "Promise<Today>",
+              "wireType": "object"
+            },
+            {
+              "id": "call_2",
+              "name": "toTodayView()",
+              "type": "TodayView",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "today",
+                  "name": "today",
+                  "type": "Today",
+                  "wireType": "object",
+                  "typeRef": "type:Today",
+                  "children": [
+                    {
+                      "id": "total",
+                      "name": "total",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:Today"
+                    },
+                    {
+                      "id": "entries",
+                      "name": "entries",
+                      "type": "Entry[]",
+                      "wireType": "array",
+                      "typeRef": "type:Entry",
+                      "children": [
+                        {
+                          "id": "id",
+                          "name": "id",
+                          "type": "string",
+                          "wireType": "string",
+                          "typeRef": "type:Entry"
+                        },
+                        {
+                          "id": "merchant",
+                          "name": "merchant",
+                          "type": "string",
+                          "wireType": "string",
+                          "typeRef": "type:Entry"
+                        },
+                        {
+                          "id": "amount",
+                          "name": "amount",
+                          "type": "number",
+                          "wireType": "number",
+                          "typeRef": "type:Entry"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "render_1",
+              "name": "TotalCard()",
+              "type": "JSX.Element",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "view",
+                  "name": "view",
+                  "type": "TodayView",
+                  "wireType": "object",
+                  "typeRef": "type:TodayView",
+                  "children": [
+                    {
+                      "id": "totalLabel",
+                      "name": "totalLabel",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:TodayView"
+                    },
+                    {
+                      "id": "rows",
+                      "name": "rows",
+                      "type": "Entry[]",
+                      "wireType": "array",
+                      "typeRef": "type:Entry",
+                      "children": [
+                        {
+                          "id": "id",
+                          "name": "id",
+                          "type": "string",
+                          "wireType": "string",
+                          "typeRef": "type:Entry"
+                        },
+                        {
+                          "id": "merchant",
+                          "name": "merchant",
+                          "type": "string",
+                          "wireType": "string",
+                          "typeRef": "type:Entry"
+                        },
+                        {
+                          "id": "amount",
+                          "name": "amount",
+                          "type": "number",
+                          "wireType": "number",
+                          "typeRef": "type:Entry"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "render_2",
+              "name": "EntryList()",
+              "type": "JSX.Element",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "entries",
+                  "name": "entries",
+                  "type": "Entry[]",
+                  "wireType": "array",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": "in/props",
+          "to": "out/call_1",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/ret_1",
+          "to": "out/call_2.today",
+          "confidence": "exact"
+        },
+        {
+          "from": "in/ret_2",
+          "to": "out/render_1.view",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/ret_2.rows",
+          "to": "out/render_2.entries",
+          "confidence": "crude"
+        }
+      ]
+    },
+    {
+      "id": "comp:TotalCard",
+      "kind": "component",
+      "name": "TotalCard",
+      "runtime": "browser",
+      "file": "web/src/components/total-card.tsx",
+      "line": 3,
+      "group": "web/src/components",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "view",
+              "name": "view",
+              "type": "TodayView",
+              "wireType": "object",
+              "typeRef": "type:TodayView",
+              "children": [
+                {
+                  "id": "totalLabel",
+                  "name": "totalLabel",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:TodayView"
+                },
+                {
+                  "id": "rows",
+                  "name": "rows",
+                  "type": "Entry[]",
+                  "wireType": "array",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "comp:EntryList",
+      "kind": "component",
+      "name": "EntryList",
+      "runtime": "browser",
+      "file": "web/src/components/entry-list.tsx",
+      "line": 3,
+      "group": "web/src/components",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "entries",
+              "name": "entries",
+              "type": "Entry[]",
+              "wireType": "array",
+              "typeRef": "type:Entry",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "id",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Entry"
+                },
+                {
+                  "id": "merchant",
+                  "name": "merchant",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Entry"
+                },
+                {
+                  "id": "amount",
+                  "name": "amount",
+                  "type": "number",
+                  "wireType": "number",
+                  "typeRef": "type:Entry"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fn:getToday",
+      "kind": "fn",
+      "name": "getToday",
+      "runtime": "browser",
+      "file": "web/src/feature/spend/request.ts",
+      "line": 4,
+      "group": "web/src/feature/spend",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "call",
+              "name": "()",
+              "type": "void"
+            },
+            {
+              "id": "ret_1",
+              "name": "fetcher() の戻り",
+              "type": "Today",
+              "wireType": "object",
+              "typeRef": "type:Today",
+              "children": [
+                {
+                  "id": "total",
+                  "name": "total",
+                  "type": "number",
+                  "wireType": "number",
+                  "typeRef": "type:Today"
+                },
+                {
+                  "id": "entries",
+                  "name": "entries",
+                  "type": "Entry[]",
+                  "wireType": "array",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "call_1",
+              "name": "fetcher('/today')",
+              "type": "Promise<Today>",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "url",
+                  "name": "url",
+                  "type": "string",
+                  "wireType": "string"
+                }
+              ]
+            },
+            {
+              "id": "return",
+              "name": "return",
+              "type": "Promise<Today>",
+              "wireType": "object",
+              "typeRef": "type:Today",
+              "children": [
+                {
+                  "id": "total",
+                  "name": "total",
+                  "type": "number",
+                  "wireType": "number",
+                  "typeRef": "type:Today"
+                },
+                {
+                  "id": "entries",
+                  "name": "entries",
+                  "type": "Entry[]",
+                  "wireType": "array",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": "in/call",
+          "to": "out/call_1",
+          "confidence": "exact"
+        },
+        {
+          "from": "in/ret_1",
+          "to": "out/return",
+          "confidence": "exact"
+        }
+      ],
+      "meta": {
+        "http": [
+          {
+            "method": "GET",
+            "path": "/today"
+          }
+        ]
+      }
+    },
+    {
+      "id": "fn:toTodayView",
+      "kind": "fn",
+      "name": "toTodayView",
+      "runtime": "browser",
+      "file": "web/src/feature/spend/transformer.ts",
+      "line": 3,
+      "group": "web/src/feature/spend",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "today",
+              "name": "today",
+              "type": "Today",
+              "wireType": "object",
+              "typeRef": "type:Today",
+              "children": [
+                {
+                  "id": "total",
+                  "name": "total",
+                  "type": "number",
+                  "wireType": "number",
+                  "typeRef": "type:Today"
+                },
+                {
+                  "id": "entries",
+                  "name": "entries",
+                  "type": "Entry[]",
+                  "wireType": "array",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "return",
+              "name": "return",
+              "type": "TodayView",
+              "wireType": "object",
+              "typeRef": "type:TodayView",
+              "children": [
+                {
+                  "id": "totalLabel",
+                  "name": "totalLabel",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:TodayView"
+                },
+                {
+                  "id": "rows",
+                  "name": "rows",
+                  "type": "Entry[]",
+                  "wireType": "array",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": "in/today.total",
+          "to": "out/return.totalLabel",
+          "confidence": "exact"
+        },
+        {
+          "from": "in/today.entries",
+          "to": "out/return.rows",
+          "confidence": "exact"
+        }
+      ]
+    },
+    {
+      "id": "lib:fetcher",
+      "kind": "helper",
+      "name": "fetcher",
+      "runtime": "browser",
+      "file": "web/src/lib/fetcher/index.ts",
+      "line": 3,
+      "group": "web/src/lib/fetcher",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "url",
+              "name": "url",
+              "type": "string",
+              "wireType": "string"
+            },
+            {
+              "id": "init",
+              "name": "init",
+              "type": "RequestInit | undefined",
+              "wireType": "object",
+              "optional": true
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "return",
+              "name": "return",
+              "type": "Promise<T>",
+              "wireType": "unknown"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": "in/url",
+          "to": "out/return",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/init",
+          "to": "out/return",
+          "confidence": "crude"
+        }
+      ]
+    },
+    {
+      "id": "endpoint:GET /today",
+      "kind": "endpoint",
+      "name": "GET /today",
+      "runtime": "server",
+      "file": "platform/openapi/today.yaml",
+      "line": 6,
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "path",
+              "name": "GET /today",
+              "type": "string",
+              "wireType": "string"
+            }
+          ]
+        },
+        {
+          "id": "req",
+          "dir": "out",
+          "items": [
+            {
+              "id": "path",
+              "name": "GET /today",
+              "type": "string",
+              "wireType": "string"
+            }
+          ]
+        },
+        {
+          "id": "res",
+          "dir": "in",
+          "items": [
+            {
+              "id": "body",
+              "name": "body",
+              "type": "Today",
+              "wireType": "object",
+              "typeRef": "type:Today",
+              "children": [
+                {
+                  "id": "total",
+                  "name": "total",
+                  "type": "integer (int64)",
+                  "wireType": "integer",
+                  "typeRef": "type:Today"
+                },
+                {
+                  "id": "entries",
+                  "name": "entries",
+                  "type": "Entry[]",
+                  "wireType": "array",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "integer (int64)",
+                      "wireType": "integer",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "body",
+              "name": "body",
+              "type": "Today",
+              "wireType": "object",
+              "typeRef": "type:Today",
+              "children": [
+                {
+                  "id": "total",
+                  "name": "total",
+                  "type": "integer (int64)",
+                  "wireType": "integer",
+                  "typeRef": "type:Today"
+                },
+                {
+                  "id": "entries",
+                  "name": "entries",
+                  "type": "Entry[]",
+                  "wireType": "array",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "integer (int64)",
+                      "wireType": "integer",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "operationId": "getToday",
+        "auth": "internal/auth.Verifier.Middleware（Authorization ヘッダ）"
+      },
+      "variants": [
+        {
+          "id": "login",
+          "name": "ログイン済み",
+          "default": true
+        }
+      ],
+      "links": [
+        {
+          "from": "in/path",
+          "to": "req/path",
+          "when": {
+            "login": true
+          }
+        },
+        {
+          "from": "res/body",
+          "to": "out/body"
+        }
+      ]
+    },
+    {
+      "id": "endpoint:POST /transactions",
+      "kind": "endpoint",
+      "name": "POST /transactions",
+      "runtime": "server",
+      "file": "platform/openapi/today.yaml",
+      "line": 60,
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "path",
+              "name": "POST /transactions",
+              "type": "string",
+              "wireType": "string"
+            },
+            {
+              "id": "body",
+              "name": "body",
+              "type": "Transaction",
+              "wireType": "object",
+              "typeRef": "type:Transaction",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "id",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Transaction"
+                },
+                {
+                  "id": "merchant",
+                  "name": "merchant",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Transaction"
+                },
+                {
+                  "id": "amount",
+                  "name": "amount",
+                  "type": "integer (int64)",
+                  "wireType": "integer",
+                  "typeRef": "type:Transaction"
+                },
+                {
+                  "id": "occurredAt",
+                  "name": "occurredAt",
+                  "type": "string (date-time)",
+                  "wireType": "datetime",
+                  "typeRef": "type:Transaction"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "req",
+          "dir": "out",
+          "items": [
+            {
+              "id": "path",
+              "name": "POST /transactions",
+              "type": "string",
+              "wireType": "string"
+            },
+            {
+              "id": "body",
+              "name": "body",
+              "type": "Transaction",
+              "wireType": "object",
+              "typeRef": "type:Transaction",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "id",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Transaction"
+                },
+                {
+                  "id": "merchant",
+                  "name": "merchant",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Transaction"
+                },
+                {
+                  "id": "amount",
+                  "name": "amount",
+                  "type": "integer (int64)",
+                  "wireType": "integer",
+                  "typeRef": "type:Transaction"
+                },
+                {
+                  "id": "occurredAt",
+                  "name": "occurredAt",
+                  "type": "string (date-time)",
+                  "wireType": "datetime",
+                  "typeRef": "type:Transaction"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "res",
+          "dir": "in",
+          "items": [
+            {
+              "id": "status",
+              "name": "status",
+              "type": "201 Created",
+              "wireType": "integer"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "status",
+              "name": "status",
+              "type": "201 Created",
+              "wireType": "integer"
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "operationId": "createTransaction"
+      }
+    },
+    {
+      "id": "fn:internal/api.handleToday",
+      "kind": "fn",
+      "name": "api.handleToday",
+      "runtime": "server",
+      "file": "platform/internal/api/today.go",
+      "line": 11,
+      "host": "infra:lambda_api/api",
+      "group": "platform/internal/api",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "r",
+              "name": "r",
+              "type": "*http.Request"
+            },
+            {
+              "id": "ret_1",
+              "name": "store.ListByDate() の戻り",
+              "type": "[]domain.Transaction",
+              "wireType": "array",
+              "typeRef": "type:Transaction",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "ID",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Transaction",
+                  "meta": {
+                    "json": "id"
+                  }
+                },
+                {
+                  "id": "merchant",
+                  "name": "Merchant",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Transaction",
+                  "meta": {
+                    "json": "merchant"
+                  }
+                },
+                {
+                  "id": "amount",
+                  "name": "Amount",
+                  "type": "int64",
+                  "wireType": "integer",
+                  "typeRef": "type:Transaction",
+                  "meta": {
+                    "json": "amount"
+                  }
+                },
+                {
+                  "id": "occurredAt",
+                  "name": "OccurredAt",
+                  "type": "time.Time",
+                  "wireType": "datetime",
+                  "typeRef": "type:Transaction",
+                  "meta": {
+                    "json": "occurredAt"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "call_1",
+              "name": "store.ListByDate()",
+              "type": "[]domain.Transaction",
+              "wireType": "array",
+              "children": [
+                {
+                  "id": "day",
+                  "name": "day",
+                  "type": "time.Time",
+                  "wireType": "datetime"
+                }
+              ]
+            },
+            {
+              "id": "resp",
+              "name": "response",
+              "type": "map[string]any",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "total",
+                  "name": "total",
+                  "type": "int64",
+                  "wireType": "integer",
+                  "typeRef": "type:Today"
+                },
+                {
+                  "id": "entries",
+                  "name": "entries",
+                  "type": "[]domain.Transaction",
+                  "wireType": "array",
+                  "typeRef": "type:Transaction",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "ID",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Transaction",
+                      "meta": {
+                        "json": "id"
+                      }
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "Merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Transaction",
+                      "meta": {
+                        "json": "merchant"
+                      }
+                    },
+                    {
+                      "id": "amount",
+                      "name": "Amount",
+                      "type": "int64",
+                      "wireType": "integer",
+                      "typeRef": "type:Transaction",
+                      "meta": {
+                        "json": "amount"
+                      }
+                    },
+                    {
+                      "id": "occurredAt",
+                      "name": "OccurredAt",
+                      "type": "time.Time",
+                      "wireType": "datetime",
+                      "typeRef": "type:Transaction",
+                      "meta": {
+                        "json": "occurredAt"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": "in/r",
+          "to": "out/call_1.day",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/ret_1",
+          "to": "out/resp.entries",
+          "confidence": "exact"
+        },
+        {
+          "from": "in/ret_1.amount",
+          "to": "out/resp.total",
+          "confidence": "crude"
+        }
+      ],
+      "meta": {
+        "route": "GET /today"
+      }
+    },
+    {
+      "id": "fn:internal/store.ListByDate",
+      "kind": "fn",
+      "name": "store.ListByDate",
+      "runtime": "server",
+      "file": "platform/internal/store/store.go",
+      "line": 31,
+      "host": "infra:lambda_api/api",
+      "group": "platform/internal/store",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "day",
+              "name": "day",
+              "type": "time.Time",
+              "wireType": "datetime"
+            },
+            {
+              "id": "row",
+              "name": "SELECT の 1 行",
+              "type": "pgx.Row",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "id",
+                  "type": "TEXT",
+                  "wireType": "string",
+                  "typeRef": "table:transactions"
+                },
+                {
+                  "id": "merchant",
+                  "name": "merchant",
+                  "type": "TEXT",
+                  "wireType": "string",
+                  "typeRef": "table:transactions"
+                },
+                {
+                  "id": "amount",
+                  "name": "amount",
+                  "type": "BIGINT",
+                  "wireType": "integer",
+                  "typeRef": "table:transactions"
+                },
+                {
+                  "id": "occurred_at",
+                  "name": "occurred_at",
+                  "type": "TIMESTAMPTZ",
+                  "wireType": "datetime",
+                  "typeRef": "table:transactions"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "query_1",
+              "name": "queryByDate",
+              "type": "SELECT … WHERE occurred_at::date = $1",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "occurred_at",
+                  "name": "occurred_at",
+                  "type": "date",
+                  "wireType": "datetime"
+                }
+              ]
+            },
+            {
+              "id": "return",
+              "name": "return",
+              "type": "[]domain.Transaction",
+              "wireType": "array",
+              "typeRef": "type:Transaction",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "ID",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Transaction",
+                  "meta": {
+                    "json": "id"
+                  }
+                },
+                {
+                  "id": "merchant",
+                  "name": "Merchant",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Transaction",
+                  "meta": {
+                    "json": "merchant"
+                  }
+                },
+                {
+                  "id": "amount",
+                  "name": "Amount",
+                  "type": "int64",
+                  "wireType": "integer",
+                  "typeRef": "type:Transaction",
+                  "meta": {
+                    "json": "amount"
+                  }
+                },
+                {
+                  "id": "occurredAt",
+                  "name": "OccurredAt",
+                  "type": "time.Time",
+                  "wireType": "datetime",
+                  "typeRef": "type:Transaction",
+                  "meta": {
+                    "json": "occurredAt"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": "in/day",
+          "to": "out/query_1.occurred_at",
+          "confidence": "exact"
+        },
+        {
+          "from": "in/row",
+          "to": "out/return",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/row.occurred_at",
+          "to": "out/return.occurredAt",
+          "confidence": "crude"
+        }
+      ]
+    },
+    {
+      "id": "fn:internal/api.handleCreateTransaction",
+      "kind": "fn",
+      "name": "api.handleCreateTransaction",
+      "runtime": "server",
+      "file": "platform/internal/api/transactions.go",
+      "line": 10,
+      "host": "infra:lambda_api/api",
+      "group": "platform/internal/api",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "body",
+              "name": "body",
+              "type": "domain.Transaction",
+              "wireType": "object",
+              "typeRef": "type:Transaction",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "ID",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Transaction",
+                  "meta": {
+                    "json": "id"
+                  }
+                },
+                {
+                  "id": "merchant",
+                  "name": "Merchant",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Transaction",
+                  "meta": {
+                    "json": "merchant"
+                  }
+                },
+                {
+                  "id": "amount",
+                  "name": "Amount",
+                  "type": "int64",
+                  "wireType": "integer",
+                  "typeRef": "type:Transaction",
+                  "meta": {
+                    "json": "amount"
+                  }
+                },
+                {
+                  "id": "occurredAt",
+                  "name": "OccurredAt",
+                  "type": "time.Time",
+                  "wireType": "datetime",
+                  "typeRef": "type:Transaction",
+                  "meta": {
+                    "json": "occurredAt"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "ret_1",
+              "name": "store.InsertTransaction() の戻り",
+              "type": "error",
+              "nullable": true
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "call_1",
+              "name": "store.InsertTransaction()",
+              "type": "error",
+              "children": [
+                {
+                  "id": "tx",
+                  "name": "tx",
+                  "type": "domain.Transaction",
+                  "wireType": "object",
+                  "typeRef": "type:Transaction",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "ID",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Transaction",
+                      "meta": {
+                        "json": "id"
+                      }
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "Merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Transaction",
+                      "meta": {
+                        "json": "merchant"
+                      }
+                    },
+                    {
+                      "id": "amount",
+                      "name": "Amount",
+                      "type": "int64",
+                      "wireType": "integer",
+                      "typeRef": "type:Transaction",
+                      "meta": {
+                        "json": "amount"
+                      }
+                    },
+                    {
+                      "id": "occurredAt",
+                      "name": "OccurredAt",
+                      "type": "time.Time",
+                      "wireType": "datetime",
+                      "typeRef": "type:Transaction",
+                      "meta": {
+                        "json": "occurredAt"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "status",
+              "name": "status",
+              "type": "http.StatusCreated",
+              "wireType": "integer"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": "in/body",
+          "to": "out/call_1.tx",
+          "confidence": "exact"
+        },
+        {
+          "from": "in/ret_1",
+          "to": "out/status",
+          "confidence": "crude"
+        }
+      ],
+      "meta": {
+        "route": "POST /transactions"
+      }
+    },
+    {
+      "id": "fn:internal/store.InsertTransaction",
+      "kind": "fn",
+      "name": "store.InsertTransaction",
+      "runtime": "server",
+      "file": "platform/internal/store/store.go",
+      "line": 49,
+      "host": "infra:lambda_api/api",
+      "group": "platform/internal/store",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "tx",
+              "name": "tx",
+              "type": "domain.Transaction",
+              "wireType": "object",
+              "typeRef": "type:Transaction",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "ID",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Transaction",
+                  "meta": {
+                    "json": "id"
+                  }
+                },
+                {
+                  "id": "merchant",
+                  "name": "Merchant",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Transaction",
+                  "meta": {
+                    "json": "merchant"
+                  }
+                },
+                {
+                  "id": "amount",
+                  "name": "Amount",
+                  "type": "int64",
+                  "wireType": "integer",
+                  "typeRef": "type:Transaction",
+                  "meta": {
+                    "json": "amount"
+                  }
+                },
+                {
+                  "id": "occurredAt",
+                  "name": "OccurredAt",
+                  "type": "time.Time",
+                  "wireType": "datetime",
+                  "typeRef": "type:Transaction",
+                  "meta": {
+                    "json": "occurredAt"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "insert_1",
+              "name": "insertTx",
+              "type": "INSERT INTO transactions (id, merchant, amount, occurred_at)",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "id",
+                  "type": "TEXT",
+                  "wireType": "string",
+                  "typeRef": "table:transactions"
+                },
+                {
+                  "id": "merchant",
+                  "name": "merchant",
+                  "type": "TEXT",
+                  "wireType": "string",
+                  "typeRef": "table:transactions"
+                },
+                {
+                  "id": "amount",
+                  "name": "amount",
+                  "type": "BIGINT",
+                  "wireType": "integer",
+                  "typeRef": "table:transactions"
+                },
+                {
+                  "id": "occurred_at",
+                  "name": "occurred_at",
+                  "type": "TIMESTAMPTZ",
+                  "wireType": "datetime",
+                  "typeRef": "table:transactions"
+                }
+              ]
+            },
+            {
+              "id": "return",
+              "name": "return",
+              "type": "error",
+              "nullable": true
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": "in/tx",
+          "to": "out/insert_1",
+          "confidence": "crude"
+        },
+        {
+          "from": "in/tx.id",
+          "to": "out/insert_1.id",
+          "confidence": "exact"
+        },
+        {
+          "from": "in/tx.merchant",
+          "to": "out/insert_1.merchant",
+          "confidence": "exact"
+        },
+        {
+          "from": "in/tx.amount",
+          "to": "out/insert_1.amount",
+          "confidence": "exact"
+        },
+        {
+          "from": "in/tx.occurredAt",
+          "to": "out/insert_1.occurred_at",
+          "confidence": "exact"
+        },
+        {
+          "from": "in/tx",
+          "to": "out/return",
+          "confidence": "crude"
+        }
+      ]
+    },
+    {
+      "id": "schema:transactions",
+      "kind": "table",
+      "name": "transactions",
+      "runtime": "data",
+      "file": "platform/migrations/000001_init.up.sql",
+      "line": 1,
+      "host": "infra:aurora/this",
+      "ports": [
+        {
+          "id": "key",
+          "dir": "in",
+          "items": [
+            {
+              "id": "occurred_at",
+              "name": "WHERE occurred_at::date",
+              "type": "TIMESTAMPTZ",
+              "wireType": "datetime",
+              "typeRef": "table:transactions"
+            }
+          ]
+        },
+        {
+          "id": "write",
+          "dir": "in",
+          "items": [
+            {
+              "id": "row",
+              "name": "row",
+              "type": "record",
+              "wireType": "object",
+              "typeRef": "table:transactions",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "id",
+                  "type": "TEXT",
+                  "wireType": "string",
+                  "typeRef": "table:transactions"
+                },
+                {
+                  "id": "merchant",
+                  "name": "merchant",
+                  "type": "TEXT",
+                  "wireType": "string",
+                  "typeRef": "table:transactions"
+                },
+                {
+                  "id": "amount",
+                  "name": "amount",
+                  "type": "BIGINT",
+                  "wireType": "integer",
+                  "typeRef": "table:transactions"
+                },
+                {
+                  "id": "occurred_at",
+                  "name": "occurred_at",
+                  "type": "TIMESTAMPTZ",
+                  "wireType": "datetime",
+                  "typeRef": "table:transactions"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "read",
+          "dir": "out",
+          "items": [
+            {
+              "id": "row",
+              "name": "row",
+              "type": "record",
+              "wireType": "object",
+              "typeRef": "table:transactions",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "id",
+                  "type": "TEXT",
+                  "wireType": "string",
+                  "typeRef": "table:transactions"
+                },
+                {
+                  "id": "merchant",
+                  "name": "merchant",
+                  "type": "TEXT",
+                  "wireType": "string",
+                  "typeRef": "table:transactions"
+                },
+                {
+                  "id": "amount",
+                  "name": "amount",
+                  "type": "BIGINT",
+                  "wireType": "integer",
+                  "typeRef": "table:transactions"
+                },
+                {
+                  "id": "occurred_at",
+                  "name": "occurred_at",
+                  "type": "TIMESTAMPTZ",
+                  "wireType": "datetime",
+                  "typeRef": "table:transactions"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "infra:lambda_api/api",
+      "kind": "infra",
+      "name": "Lambda api",
+      "runtime": "server",
+      "file": "platform/infra/modules/lambda-api/main.tf",
+      "ports": []
+    },
+    {
+      "id": "infra:aurora/this",
+      "kind": "infra",
+      "name": "Aurora PostgreSQL",
+      "runtime": "data",
+      "file": "platform/infra/modules/aurora/main.tf",
+      "ports": []
+    },
+    {
+      "id": "fn:createTransaction",
+      "kind": "fn",
+      "name": "createTransaction",
+      "runtime": "browser",
+      "file": "web/src/feature/spend/request.ts",
+      "line": 12,
+      "group": "web/src/feature/spend",
+      "ports": [
+        {
+          "id": "in",
+          "dir": "in",
+          "items": [
+            {
+              "id": "body",
+              "name": "body",
+              "type": "Entry",
+              "wireType": "object",
+              "typeRef": "type:Entry",
+              "children": [
+                {
+                  "id": "id",
+                  "name": "id",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Entry"
+                },
+                {
+                  "id": "merchant",
+                  "name": "merchant",
+                  "type": "string",
+                  "wireType": "string",
+                  "typeRef": "type:Entry"
+                },
+                {
+                  "id": "amount",
+                  "name": "amount",
+                  "type": "number",
+                  "wireType": "number",
+                  "typeRef": "type:Entry"
+                }
+              ]
+            },
+            {
+              "id": "ret_1",
+              "name": "fetcher() の戻り",
+              "type": "void"
+            }
+          ]
+        },
+        {
+          "id": "out",
+          "dir": "out",
+          "items": [
+            {
+              "id": "call_1",
+              "name": "fetcher('/transactions', { method: 'POST', body })",
+              "type": "Promise<void>",
+              "wireType": "object",
+              "children": [
+                {
+                  "id": "url",
+                  "name": "url",
+                  "type": "string",
+                  "wireType": "string"
+                },
+                {
+                  "id": "body",
+                  "name": "body",
+                  "type": "Entry",
+                  "wireType": "object",
+                  "typeRef": "type:Entry",
+                  "children": [
+                    {
+                      "id": "id",
+                      "name": "id",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "merchant",
+                      "name": "merchant",
+                      "type": "string",
+                      "wireType": "string",
+                      "typeRef": "type:Entry"
+                    },
+                    {
+                      "id": "amount",
+                      "name": "amount",
+                      "type": "number",
+                      "wireType": "number",
+                      "typeRef": "type:Entry"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "return",
+              "name": "return",
+              "type": "Promise<void>"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "from": "in/body",
+          "to": "out/call_1.body",
+          "confidence": "exact"
+        },
+        {
+          "from": "in/ret_1",
+          "to": "out/return",
+          "confidence": "exact"
+        }
+      ],
+      "meta": {
+        "http": [
+          {
+            "method": "POST",
+            "path": "/transactions"
+          }
+        ]
+      }
+    }
+  ],
+  "wires": [
+    {
+      "from": "actor:user#out/open",
+      "to": "infra:static_site/this#in/key",
+      "via": "http"
+    },
+    {
+      "from": "infra:static_site/this#out/key",
+      "to": "infra:static_site/site#in/path",
+      "via": "http"
+    },
+    {
+      "from": "infra:static_site/site#out/html",
+      "to": "infra:static_site/this#in/value",
+      "via": "deliver",
+      "reply": true
+    },
+    {
+      "from": "infra:static_site/this#out/value",
+      "to": "route:/#in/html",
+      "via": "deliver",
+      "reply": true
+    },
+    {
+      "from": "route:/#out/render_1",
+      "to": "comp:TodayIsland#in/props",
+      "via": "render"
+    },
+    {
+      "from": "comp:TodayIsland#out/call_1",
+      "to": "fn:getToday#in/call",
+      "via": "call"
+    },
+    {
+      "from": "fn:getToday#out/return",
+      "to": "comp:TodayIsland#in/ret_1",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "comp:TodayIsland#out/call_2.today",
+      "to": "fn:toTodayView#in/today",
+      "via": "call"
+    },
+    {
+      "from": "fn:toTodayView#out/return",
+      "to": "comp:TodayIsland#in/ret_2",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "comp:TodayIsland#out/render_1.view",
+      "to": "comp:TotalCard#in/view",
+      "via": "render"
+    },
+    {
+      "from": "comp:TodayIsland#out/render_2.entries",
+      "to": "comp:EntryList#in/entries",
+      "via": "render"
+    },
+    {
+      "from": "fn:getToday#out/call_1.url",
+      "to": "lib:fetcher#in/url",
+      "via": "call"
+    },
+    {
+      "from": "lib:fetcher#out/return",
+      "to": "fn:getToday#in/ret_1",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "fn:getToday#out/call_1.url",
+      "to": "endpoint:GET /today#in/path",
+      "via": "http",
+      "label": "GET /today"
+    },
+    {
+      "from": "endpoint:GET /today#req/path",
+      "to": "fn:internal/api.handleToday#in/r",
+      "via": "call"
+    },
+    {
+      "from": "fn:internal/api.handleToday#out/call_1.day",
+      "to": "fn:internal/store.ListByDate#in/day",
+      "via": "call"
+    },
+    {
+      "from": "fn:internal/store.ListByDate#out/query_1.occurred_at",
+      "to": "schema:transactions#key/occurred_at",
+      "via": "sql"
+    },
+    {
+      "from": "schema:transactions#read/row",
+      "to": "fn:internal/store.ListByDate#in/row",
+      "via": "sql",
+      "reply": true
+    },
+    {
+      "from": "fn:internal/store.ListByDate#out/return",
+      "to": "fn:internal/api.handleToday#in/ret_1",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "fn:internal/api.handleToday#out/resp",
+      "to": "endpoint:GET /today#res/body",
+      "via": "return",
+      "reply": true,
+      "broken": [
+        {
+          "path": "entries.occurredAt",
+          "level": "error",
+          "reason": "受ける側（OpenAPI の Entry）に無い。Go は domain.Transaction をそのまま返している"
+        }
+      ]
+    },
+    {
+      "from": "endpoint:GET /today#out/body",
+      "to": "fn:getToday#in/ret_1",
+      "via": "http",
+      "reply": true,
+      "label": "200 Today"
+    },
+    {
+      "from": "fn:createTransaction#out/call_1.url",
+      "to": "lib:fetcher#in/url",
+      "via": "call"
+    },
+    {
+      "from": "fn:createTransaction#out/call_1.body",
+      "to": "lib:fetcher#in/init",
+      "via": "call"
+    },
+    {
+      "from": "lib:fetcher#out/return",
+      "to": "fn:createTransaction#in/ret_1",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "fn:createTransaction#out/call_1.url",
+      "to": "endpoint:POST /transactions#in/path",
+      "via": "http",
+      "label": "POST /transactions"
+    },
+    {
+      "from": "fn:createTransaction#out/call_1.body",
+      "to": "endpoint:POST /transactions#in/body",
+      "via": "http",
+      "broken": [
+        {
+          "path": "amount",
+          "level": "warn",
+          "reason": "送る側の型が広い（number → integer）"
+        },
+        {
+          "path": "occurredAt",
+          "level": "error",
+          "reason": "送る側（TS の Entry）に無い。受ける側（OpenAPI の Transaction）では必須"
+        }
+      ]
+    },
+    {
+      "from": "endpoint:POST /transactions#req/body",
+      "to": "fn:internal/api.handleCreateTransaction#in/body",
+      "via": "call"
+    },
+    {
+      "from": "fn:internal/api.handleCreateTransaction#out/call_1.tx",
+      "to": "fn:internal/store.InsertTransaction#in/tx",
+      "via": "call"
+    },
+    {
+      "from": "fn:internal/store.InsertTransaction#out/insert_1",
+      "to": "schema:transactions#write/row",
+      "via": "sql"
+    },
+    {
+      "from": "fn:internal/store.InsertTransaction#out/return",
+      "to": "fn:internal/api.handleCreateTransaction#in/ret_1",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "fn:internal/api.handleCreateTransaction#out/status",
+      "to": "endpoint:POST /transactions#res/status",
+      "via": "return",
+      "reply": true
+    },
+    {
+      "from": "endpoint:POST /transactions#out/status",
+      "to": "fn:createTransaction#in/ret_1",
+      "via": "http",
+      "reply": true,
+      "label": "201 Created"
+    }
+  ],
+  "views": [
+    {
+      "id": "today",
+      "name": "今日の合計を見る",
+      "description": "/ を開いて今日の合計と明細が出るまで",
+      "start": "route:/",
+      "variants": {
+        "infra:static_site/this#hit": false
+      }
+    },
+    {
+      "id": "today-cdn-hit",
+      "name": "今日の合計を見る（CloudFront HIT）",
+      "start": "actor:user",
+      "variants": {
+        "infra:static_site/this#hit": true
+      }
+    }
+  ]
+}

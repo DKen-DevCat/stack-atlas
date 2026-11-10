@@ -11,7 +11,7 @@ export interface SampleEntry {
 
 export function createEmptyState(
   onFile: (f: File) => void,
-  opts: { message?: string; samples?: SampleEntry[] } = {},
+  opts: { message?: string; note?: string; samples?: SampleEntry[] } = {},
 ): HTMLElement {
   const input = h('input', { attrs: { type: 'file', accept: '.json,application/json' } });
   input.addEventListener('change', () => {
@@ -40,9 +40,10 @@ export function createEmptyState(
       h(
         'p',
         {},
-        'graph.json を読み込むと、インフラ → 画面 → コンポーネント → 型 を 3D で表示します。',
+        'graph.json を読み込むと、インフラ → 画面 → コンポーネント → 型 を 3D で表示します。version 2 の graph.json は、項目の単位でデータの流れを追う配線図で開きます。',
       ),
       opts.message ? h('p', { class: 'emsg' }, opts.message) : null,
+      opts.note ? h('p', { class: 'enote' }, opts.note) : null,
       h('label', { class: 'btn primary filebtn' }, 'graph.json を選ぶ', input),
       h(
         'p',

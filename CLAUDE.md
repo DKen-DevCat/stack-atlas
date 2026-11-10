@@ -55,7 +55,7 @@
 - 解析対象は業務コードになりうる。**ソースコードを外部 SaaS に送らない**。抽出もビューアもローカル／自前ホスティングで完結させる。
 - **実リポジトリ（`damage-web` / `damage-platform`）の中身はこの公開リポジトリに入れない**: コード、リソース名、ルート、テーブル名、環境変数名、graph.json、スクショ、issues.json のいずれも。名前と件数だけ書いてよい。実リポジトリ用の config / overrides / flows は実リポジトリ側か非公開の兄弟ディレクトリに置く。
 - 抽出器を書くときの規約: 設定セクションは `sectionFor(ctx, config.xxx)` で自分の repo かを判定する。kind は `classifyKind(ctx, file, defaultKind)` で決めてから ID の接頭辞を付ける（`applyClassify` は ID を変えないため）。`file` は repo 相対パスで返す（複数 repo の `<repo>/` はパイプラインが付ける。自分で付けるなら `repoFile()`）。推定で線を引いたら必ず warn に `推定` と「明示できるキー」を書く（D18）。
-- ビューアは graph.json だけを入力にし、特定プロジェクトの知識をハードコードしない。**ビューアは `@stack-atlas/core` に依存しない**（`@stack-atlas/schema` だけ）。
+- ビューアは graph.json だけを入力にし、特定プロジェクトの知識をハードコードしない。**ビューアは `@stack-atlas/core` に依存しない**（依存してよいのは `@stack-atlas/schema` と `@stack-atlas/wiring` だけ。たどる規則・球の時刻・レイアウト前処理は wiring に置く。D44）。
 - スタック固有の処理はすべて抽出器（extractor）側に閉じ込める。
 - 抽出器の契約は `packages/core/src/types.ts`。変えるときは core 側と各抽出器の両方を直す。
 - graph.json を変えたら `packages/schema/graph.schema.json`・`packages/schema/src/types.ts`・`docs/03-graph-schema.md` を同時に更新し、
@@ -73,7 +73,8 @@ package.json  pnpm-workspace.yaml  ← pnpm workspace のルート（build / tes
 tsconfig.base.json  eslint.config.js  .prettierrc  .editorconfig  .nvmrc(22)
 .github/workflows/ci.yml           ← lint・typecheck・test・build・サンプル検証・e2e
 packages/
-  schema/                          ← graph.json の JSON Schema（正）・型・validateGraph()・検証 CLI
+  schema/                          ← graph.json の JSON Schema（正。v1 と v2）・型・validateGraph() / validateGraphV2()・検証 CLI
+  wiring/                          ← 配線図の規則（v2 の索引・たどる・選ぶ・球の時刻・切れている線）。純 TS、schema にだけ依存
   core/                            ← 抽出器の契約（src/types.ts）、repo / classify / deploy / merge / overrides / flows / rules/ / buildGraph()（src/pipeline.ts）、diff、memos
   tf-graph/                        ← IaC 共通: Terraform JSON → infra ノード・エッジ・cache（cdktf / terraform / cloudformation が使う）
   cli/                             ← stack-atlas コマンド（src/commands/ に build / validate / serve / diff / init-flows）

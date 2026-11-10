@@ -1,0 +1,27 @@
+{
+  "name": "@stack-atlas/wiring",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Stack Atlas の配線図の規則（graph.json v2 の索引、たどる、選ぶ、球の時刻、切れている線）。純 TS、DOM 無し",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "@stack-atlas/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@stack-atlas/schema": "workspace:*"
+  }
+}

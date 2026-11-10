@@ -1,7 +1,7 @@
-import { validateGraph } from '@stack-atlas/schema';
+import { validateAnyGraph } from '@stack-atlas/schema';
 import { readFileSync } from 'node:fs';
 
-/** `stack-atlas validate <graph.json...>`。出力は stack-atlas-validate（@stack-atlas/schema）と同じ */
+/** `stack-atlas validate <graph.json...>`。version 1 / 2 を見て検証器を選ぶ。出力は stack-atlas-validate（@stack-atlas/schema）と同じ */
 export function runValidate(files: string[], out: (line: string) => void = console.log): number {
   if (files.length === 0) {
     console.error('使い方: stack-atlas validate <graph.json> [<graph.json> ...]');
@@ -17,11 +17,11 @@ export function runValidate(files: string[], out: (line: string) => void = conso
       failed = true;
       continue;
     }
-    const { ok, errors } = validateGraph(json);
-    const nErr = errors.filter((e) => e.level === 'error').length;
-    const nWarn = errors.length - nErr;
+    const { ok, issues } = validateAnyGraph(json);
+    const nErr = issues.filter((e) => e.level === 'error').length;
+    const nWarn = issues.length - nErr;
     out(`${ok ? '✓' : '✗'} ${file}: エラー ${nErr} 件、警告 ${nWarn} 件`);
-    for (const e of errors) {
+    for (const e of issues) {
       const tag = e.level === 'error' ? 'エラー' : '警告';
       out(`  [${tag}] ${e.path}: ${e.message}`);
     }

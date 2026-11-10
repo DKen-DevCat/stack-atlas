@@ -1,0 +1,363 @@
+/* 配線図（graph.json v2）。prototype/dataflow-mock.html 第 6 版の CSS を .wv の中に閉じ込めて移植したもの */
+.wv {
+  position: fixed;
+  inset: 0;
+  --dimwire: #3a4252;
+  --red: #ff3b3b;
+  --cyan: #22d3ee;
+  --warn: #fbbf24;
+}
+.wv-top {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  background: linear-gradient(#0d0f14f2, #0d0f1400);
+  z-index: 5;
+  pointer-events: none;
+  user-select: none;
+}
+.wv-top small {
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: 8px;
+  font-size: 11px;
+  font-family: var(--mono);
+}
+.wv-stage {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+}
+.wv-stage.dragging {
+  cursor: grabbing;
+}
+.wv-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.wv-speed {
+  position: fixed;
+  right: 16px;
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 5;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+  user-select: none;
+}
+.wv-speed input {
+  width: 120px;
+  accent-color: var(--cyan);
+  cursor: pointer;
+}
+.wv-speed .seek {
+  width: 260px;
+  height: 3px;
+}
+.wv-speed button.tl {
+  background: none;
+  border: 0;
+  color: var(--text);
+  font-size: 13px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  cursor: pointer;
+  line-height: 1;
+}
+.wv-speed button.tl:hover {
+  color: var(--cyan);
+}
+.wv-speed .tl[hidden] {
+  display: none;
+}
+@media (max-width: 640px) {
+  .wv-speed .seek {
+    width: 120px;
+  }
+  .wv-speed .speed-in {
+    width: 72px;
+  }
+}
+
+.wv text {
+  font-family: var(--sans);
+  fill: var(--text);
+  user-select: none;
+}
+.wv .lane-tint {
+  pointer-events: none;
+}
+.wv .lane-title {
+  font-size: 11px;
+  fill: var(--muted);
+  letter-spacing: 0.08em;
+}
+.wv .lane-sep {
+  stroke: #171b24;
+  stroke-width: 1;
+}
+
+/* host の枠（箱が動く・置かれる場所） */
+.wv .host .frame {
+  fill: #ff9f4308;
+  stroke: #ff9f43;
+  stroke-width: 1;
+  stroke-dasharray: 6 4;
+  cursor: pointer;
+}
+.wv .host .hname {
+  font-size: 11px;
+  fill: #ffb974;
+  pointer-events: none;
+}
+.wv .host.dim {
+  opacity: 0.15;
+}
+.wv .host.dim text {
+  display: none;
+}
+.wv .host.lit .frame {
+  stroke-width: 1.6;
+}
+
+/* 箱 */
+.wv .box {
+  cursor: pointer;
+  transition: opacity 0.18s;
+}
+.wv .box .shape {
+  stroke-width: 1.2;
+}
+.wv .box .deco {
+  pointer-events: none;
+}
+.wv .box .name {
+  font-size: 12px;
+  font-weight: 600;
+}
+.wv .box .kind {
+  font-size: 9px;
+  fill: var(--muted);
+  letter-spacing: 0.04em;
+}
+.wv .box.dim {
+  opacity: 0.15;
+}
+/* 光っていない箱のラベルは消す（背景のラベルが手前に出ない） */
+.wv .box.dim text {
+  display: none;
+}
+.wv .box.hov .shape {
+  stroke-width: 2;
+}
+.wv .box.lit .shape {
+  stroke-width: 1.8;
+  filter: drop-shadow(0 0 6px var(--c));
+}
+.wv .box.lit.start .shape {
+  stroke: #ffffff;
+}
+
+/* 項目 */
+.wv .item text {
+  font-size: 10px;
+  font-family: var(--mono);
+  fill: var(--text);
+}
+.wv .item .ty {
+  fill: var(--muted);
+  font-size: 9.5px;
+}
+.wv .item .ty.ref {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.wv .item .ty.ref:hover {
+  fill: var(--text);
+}
+.wv .item .pin {
+  fill: #0d0f14;
+  stroke: var(--c);
+  stroke-width: 1.2;
+  cursor: pointer;
+}
+.wv .item.off {
+  opacity: 0.35;
+}
+.wv .item.inactive {
+  opacity: 0.2;
+}
+.wv .item.on .pin {
+  fill: var(--cyan);
+  stroke: var(--cyan);
+}
+.wv .item.on text {
+  fill: #cffafe;
+}
+.wv .item.on .ty {
+  fill: #8fd8e6;
+}
+.wv .item.start .pin {
+  fill: #fff;
+  stroke: #fff;
+}
+.wv .item .hit {
+  fill: transparent;
+  cursor: pointer;
+}
+.wv .item.flash .pin {
+  animation: wv-flash-pin 0.4s ease-out;
+}
+.wv .item.flash text {
+  animation: wv-flash-text 0.4s ease-out;
+}
+@keyframes wv-flash-pin {
+  0% {
+    fill: #fff;
+    stroke: #fff;
+    filter: drop-shadow(0 0 5px #fff);
+  }
+}
+@keyframes wv-flash-text {
+  0% {
+    fill: #fff;
+  }
+}
+
+/* 線 */
+.wv .wire {
+  fill: none;
+  stroke: var(--dimwire);
+  stroke-linecap: round;
+  transition: opacity 0.18s;
+}
+.wv .wire.hov {
+  stroke: #8a9ab8;
+}
+/* 全体表示では線を細く薄く。選択した経路だけを太く明るく */
+.wv .wire.thin {
+  stroke-width: 1;
+  opacity: 0.35;
+}
+.wv .wire.thin.dimmed {
+  opacity: 0.12;
+}
+.wv .wire.thin.inactive {
+  opacity: 0.1;
+}
+.wv .wire.lit {
+  stroke: var(--cyan);
+}
+.wv .wire.lit.sel {
+  stroke: #fff;
+}
+.wv .wire.broken {
+  stroke: #6e1e1e;
+  stroke-dasharray: 6 5;
+  opacity: 1;
+  stroke-width: 1.5;
+}
+.wv .wire.broken.cut {
+  stroke-dasharray: none;
+}
+.wv .wire.broken.lit {
+  stroke: var(--red);
+}
+.wv .wire.broken.warn {
+  stroke: #6e5a1e;
+}
+.wv .wire.broken.warn.lit {
+  stroke: var(--warn);
+}
+.wv .wire.broken.dimmed {
+  opacity: 0.6;
+}
+.wv .wire.inner {
+  stroke: #22d3ee99;
+  stroke-width: 1;
+}
+.wv .via-http {
+  stroke-width: 3;
+}
+.wv .via-call,
+.wv .via-return {
+  stroke-width: 1.5;
+}
+.wv .via-props,
+.wv .via-render {
+  stroke-width: 1;
+}
+.wv .via-sql {
+  stroke-width: 2;
+}
+.wv .via-event {
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+}
+.wv .via-deliver {
+  stroke-width: 2;
+  stroke-dasharray: 10 3;
+}
+.wv .wire.hitarea {
+  stroke: transparent;
+  stroke-width: 12;
+  pointer-events: stroke;
+  cursor: pointer;
+  opacity: 1;
+}
+.wv .ball {
+  fill: #fff;
+  stroke: var(--cyan);
+  stroke-width: 1.5;
+  pointer-events: none;
+  filter: drop-shadow(0 0 4px var(--cyan));
+}
+
+/* 分岐の表 */
+.wv .vtable {
+  background: #151922f2;
+  border: 1px solid #2b3240;
+  border-radius: 6px;
+  padding: 4px 6px;
+  font:
+    10px/1 'Hiragino Sans',
+    'Noto Sans JP',
+    system-ui,
+    sans-serif;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: default;
+}
+.wv .vrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 18px;
+  white-space: nowrap;
+}
+.wv .vrow input {
+  margin: 0;
+  width: 12px;
+  height: 12px;
+  accent-color: var(--cyan);
+  cursor: pointer;
+}
+/* 箱と分岐の表の間の透明な橋（ポインタが箱 → 表へ動く途中で表を消さない） */
+.wv .vtable-bridge {
+  fill: transparent;
+  pointer-events: all;
+}
