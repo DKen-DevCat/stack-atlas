@@ -78,6 +78,11 @@ export interface BoxLayout extends Rect {
   ins: (string | null)[];
   /** 右辺（out の口）の項目の並び */
   outs: (string | null)[];
+  /**
+   * 画面の箱（kind screen）の中の画面の領域（docs/18 §3.3）。名前の帯の下で、ビューポート（screen.width × height、
+   * 無ければ 1280×800）の比率。ビューアはここに画面の HTML を縮小して置く。画面の箱でなければ無い
+   */
+  screen?: Rect;
 }
 
 export interface HostLayout extends Rect {
@@ -152,4 +157,9 @@ export interface LayoutOptions {
   pitch?: number;
   /** 目標の縦横比（幅 / 高さ）。既定 1.6（16:10） */
   aspect?: number;
+  /**
+   * 画面の箱の高さを「ビューポートの比率の画面」と「項目の行」の大きい方にするか（docs/18 §3.3）。既定 true。
+   * false は 8-3a の配置（項目の行だけ。テストで比べる用）
+   */
+  screens?: boolean;
 }

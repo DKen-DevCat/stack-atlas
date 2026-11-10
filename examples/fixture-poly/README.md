@@ -23,7 +23,8 @@ fixture-poly/
 │   ├─ src/components/*.tsx     #   kebab-case ファイル、PascalCase export、data-component 付き
 │   ├─ src/feature/{spend,days}/{request,types,transformer}.ts
 │   ├─ src/lib/fetcher/{index,consts}.ts   # fetch(`${API_DOMAIN}${url}`) をするラッパー
-│   └─ openapi/today.yaml
+│   ├─ openapi/today.yaml
+│   └─ export/                  #   静的エクスポートに寄せた合成の HTML（screens 抽出器の入力。下の「画面」）
 └─ platform/                    # Go module example.com/expense-platform
     ├─ cmd/{api,gmail-webhook,notify}/main.go
     ├─ internal/{api,domain,store,parser,inbound,auth,push}/
@@ -125,3 +126,21 @@ fixture-poly/
 - `comp:PushToggle` はラッパーを使わず `fetch` を直接呼ぶ（`api.clients` に `src/components/*.tsx` を入れてあるので拾える）。拾えないと endpoint への結線が欠ける。
 - `GET /transactions`（`listTransactions`）は OpenAPI にあるが Go のルートには無く、web からも呼ばれない（契約だけが先行）。`endpoint:GET /transactions` はどこにも結線されない孤立ノードになる想定。
 - `lib:internal/push` は `handler:internal/api` と `schema:internal/store` が import するが、`cmd/notify` は import しない（上記の overrides）。
+
+## 画面（`web/export/`。screens 抽出器、docs/18 §3.3）
+
+`next build`（`output: "export"`, `trailingSlash: true`）の出力に**形を寄せた合成**の HTML です（`out/` は `.gitignore` に当たるので `export/`）。
+設定は `screens: { repo: web, from: dir, dir: export }`。
+
+| ファイル | 中身 |
+|---|---|
+| `index.html`・`calendar/index.html`・`push/index.html` | `/`・`/calendar`・`/push`。script の塊・`__next_f`、GTM の head の script と `<noscript><iframe>`、`preload` / `modulepreload` / `preconnect` / `icon` の link、`title` |
+| `_next/static/css/*.css` | `next/font` の `@font-face`（`url(/_next/static/media/*.woff2)`）、Google Fonts の `@import`、エスケープした外部の `u\72l(`、`image-set()`、CSS からの相対パスの画像 |
+| `_next/static/media/*.woff2`・`images/*` | フォント（形だけ）・SVG・PNG（public/ から写された想定） |
+| `_next/static/chunks/**/*.js` | script の塊（写さない） |
+| `404.html` | route ではない |
+
+- `/` の `TodayIsland` は `useEffect` の fetch の前の「読み込み中」だけ（`TotalCard` / `EntryList` は HTML に無い。カバー率 1/3。docs/14 §3.3 の SPA 型の限界）
+- `/` の `<footer class="cms-banner">` は **CMS から差し込んだ HTML を想定した消毒のテスト用**（React はこう書き出さない）: 外部の画像、`srcset` の外部 URL、
+  `onclick`、文字参照で書いた `&#x6A;avascript&colon;`、`style` 属性の `u\72l(https://…)`
+

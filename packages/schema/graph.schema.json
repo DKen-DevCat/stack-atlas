@@ -150,8 +150,13 @@
       "required": ["width", "height"],
       "additionalProperties": false,
       "properties": {
-        "screenshot": { "type": "string", "description": "graph.json からの相対パス（PNG/JPEG）。省略時はプレースホルダ表示" },
-        "width": { "type": "integer", "description": "regions 座標系の幅（スクショのpx幅）" },
+        "html": { "type": "string", "description": "graph.json からの相対パス。消毒したビルド成果物の HTML（script 無し。docs/18 §3.3）" },
+        "source": {
+          "enum": ["next-export", "next-build", "dir", "wireframe", "screenshot"],
+          "description": "html の出どころ（v2 の screen.source と同じ語彙）"
+        },
+        "screenshot": { "type": "string", "description": "graph.json からの相対パス（PNG/JPEG）。html と両方あれば html を優先。どちらも無ければプレースホルダ表示" },
+        "width": { "type": "integer", "description": "regions 座標系の幅（スクショのpx幅。html のときはビューポート）" },
         "height": { "type": "integer" },
         "regions": {
           "type": "array",

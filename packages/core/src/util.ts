@@ -1,7 +1,18 @@
 import type { ValidationIssue } from '@stack-atlas/schema';
+import { isAbsolute, relative, sep } from 'node:path';
 
 export const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/**
+ * child が root の中か（allowSame なら root そのものも可）。パスの字面で比べる（シンボリックリンクは見ない。
+ * リンクを辿らせたくない所は呼び出し側で lstat する）。screens 抽出器の読み書きと build の出力先の検査で共用する
+ */
+export function pathWithin(root: string, child: string, allowSame = false): boolean {
+  const rel = relative(root, child);
+  if (rel === '') return allowSame;
+  return rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
 
 export function clone<T>(v: T): T {
   return structuredClone(v);

@@ -60,3 +60,9 @@ screenshots:
   repo: web
   baseUrl: "http://localhost:4174"
   routes: {}
+
+# ビルド成果物の画面（docs/18 §3.3）。web/export/ は Next の静的エクスポートに寄せた合成の HTML（out/ は .gitignore に当たるので export/）
+screens:
+  repo: web
+  from: dir
+  dir: export

@@ -466,3 +466,21 @@ export function fanInGraph(): GraphV2 {
     ],
   };
 }
+
+/**
+ * 画面の箱（kind screen。layout: は除く）に screen.html を付けた graph（screens 抽出器の出力の形。抽出器は route ごとに
+ * HTML を写し、layout には付けない。docs/18 §3.3）。slug は URL から（`/` → index）。viewport を渡すとその大きさ、無ければ 1280×800
+ */
+export function withScreenHtml(
+  g: GraphV2,
+  viewport: { width: number; height: number } = { width: 1280, height: 800 },
+): GraphV2 {
+  const out = structuredClone(g);
+  for (const n of out.nodes) {
+    if (n.kind !== 'screen' || n.id.startsWith('layout:')) continue;
+    const url = n.id.slice(n.id.indexOf(':') + 1);
+    const slug = url.replace(/^\/+|\/+$/g, '').replace(/[^\w-]+/g, '-') || 'index';
+    n.screen = { ...n.screen, html: `screens/${slug}/index.html`, source: 'dir', ...viewport };
+  }
+  return out;
+}

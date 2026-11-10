@@ -48,7 +48,7 @@ import { completeNodes } from './nodes.js';
 import { applyOverrides, loadOverrides } from './overrides.js';
 import { prefixRepoFiles, resolveRepos } from './repo.js';
 import { DEFAULT_RULES, runRules, type Rule } from './rules/index.js';
-import type { Extractor, Logger, PartialGraph, StackAtlasConfig } from './types.js';
+import type { BuildIssue, Extractor, Logger, PartialGraph, StackAtlasConfig } from './types.js';
 import { upgradeGraph } from './upgrade.js';
 import { clone, isPlainObject } from './util.js';
 
@@ -98,9 +98,9 @@ export interface BuildGraphResult {
   graphV2?: GraphV2;
   /**
    * パイプライン（overrides・flows・層）と validateGraph の問題、v2 への変換と validateGraphV2 のエラー
-   * （path は `v2:` で始まる）。level: error が 1 つでもあれば失敗扱い
+   * （path は `v2:` で始まる）、抽出器の報告（PartialGraph.issues。warning と info）。level: error が 1 つでもあれば失敗扱い
    */
-  issues: ValidationIssue[];
+  issues: BuildIssue[];
   /**
    * validateGraphV2 の警告（口の単位の線・wireType unknown など）。箱の単位の変換では全部の箱と線に出るので issues に入れない。
    * 項目まで下げる言語アダプタ（8-2）で減っていく
@@ -157,7 +157,7 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
   const log = opts.log ?? silentLogger;
   const configDir = resolve(opts.root);
   const config = opts.config ?? loadConfig(configDir, log);
-  const issues: ValidationIssue[] = [];
+  const issues: BuildIssue[] = [];
   const partials: Record<string, PartialGraph> = {};
   const reports: ExtractorReport[] = [];
 
@@ -205,6 +205,9 @@ export async function buildGraph(opts: BuildGraphOptions): Promise<BuildGraphRes
           continue;
         }
         const part = prefixRepoFiles(await ex.extract(ctx, merged), ctx);
+        // 抽出器の報告は issues.json へ（error は出させない。ビルドを止めるのは検証の役目）
+        for (const i of part.issues ?? [])
+          issues.push({ ...i, level: i.level === 'info' ? 'info' : 'warning' });
         // 言語アダプタの箱 id の衝突（別のアダプタ・別の repo が先に出した id）は、後の方を file で修飾する（C6）
         if (part.v2 && (ex.v2Role ?? 'language') === 'language') {
           const d = disambiguateV2(part.v2, v2Owners, `${ex.name}@${ctx.repoName}`);

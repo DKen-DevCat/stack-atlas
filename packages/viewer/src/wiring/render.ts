@@ -8,6 +8,7 @@ import {
   type IndexedItem,
   type LitSelection,
   type Point,
+  type Rect,
   type VariantState,
   type WiringLayout,
 } from '@stack-atlas/wiring';
@@ -18,6 +19,8 @@ export interface SceneInput {
   layout: WiringLayout;
   state: VariantState;
   lit: LitSelection | null;
+  /** 部品の領域の枠（`<g class="regions">` の中身。screens.ts の renderRegions）。無ければ空 */
+  regions?: string;
 }
 
 export const esc = (s: string) =>
@@ -73,11 +76,27 @@ export function fitLabel(
 /** 項目が光っているか（たどった結果に入っているものだけ。子が光れば親も光る、は wiring が入れている） */
 export const itemLit = (lit: LitSelection | null, ref: string) => !!lit && lit.items.has(ref);
 
+/** 角の丸い矩形の外周と、内側の矩形の穴（fill-rule evenodd で「箱の中の画面の領域だけ抜いた」塗り） */
+export function frameWithHole(b: Rect, rx: number, hole: Rect): string {
+  const r = Math.max(0, Math.min(rx, b.w / 2, b.h / 2));
+  const { x, y, w, h } = b;
+  const outer =
+    `M${n1(x + r)},${n1(y)} H${n1(x + w - r)} A${n1(r)},${n1(r)} 0 0 1 ${n1(x + w)},${n1(y + r)} ` +
+    `V${n1(y + h - r)} A${n1(r)},${n1(r)} 0 0 1 ${n1(x + w - r)},${n1(y + h)} H${n1(x + r)} ` +
+    `A${n1(r)},${n1(r)} 0 0 1 ${n1(x)},${n1(y + h - r)} V${n1(y + r)} A${n1(r)},${n1(r)} 0 0 1 ${n1(x + r)},${n1(y)} Z`;
+  const inner = `M${n1(hole.x)},${n1(hole.y)} h${n1(hole.w)} v${n1(hole.h)} h${n1(-hole.w)} Z`;
+  return `${outer} ${inner}`;
+}
+
+/** 画面の領域を抜く clip-path（レーンの背景が画面の HTML に色を載せない）の id */
+export const SCREEN_CUT_ID = 'wv-screen-cut';
+
 /**
- * `<g class="view">` の中身。層の順: レーン → 沈んだ線 → host の枠 → 沈んだ箱 → 光る線 → 光る箱 → 球。
- * 何も選んでいないときは全部が下の層（線は細く薄く）
+ * `<g class="view">` の中身。層の順: レーン → 沈んだ線 → host の枠 → 沈んだ箱 → 光る線 → 光る箱 → 部品の領域の枠 → 球。
+ * 何も選んでいないときは全部が下の層（線は細く薄く）。画面の箱（画面の領域を持つ箱）は画面の領域を塗らず、
+ * 下の層（ScreenLayer の iframe）が透けて見える。読んでいない間はプレースホルダ（文言は ScreenLayer が入れる）
  */
-export function renderScene({ index, layout, state, lit }: SceneInput): string {
+export function renderScene({ index, layout, state, lit, regions }: SceneInput): string {
   let lanes = '';
   let baseWires = '';
   let hosts = '';
@@ -86,6 +105,15 @@ export function renderScene({ index, layout, state, lit }: SceneInput): string {
   let litBoxes = '';
 
   // レーンの背景（左右は通り道の中央まで、上下は十分に伸ばす）・名前・境目
+  const holes = [...layout.boxes.values()].flatMap((b) => (b.screen ? [b.screen] : []));
+  let defs = '';
+  if (holes.length) {
+    const big = 1e6;
+    const d =
+      `M${-big},${-big} H${big} V${big} H${-big} Z ` +
+      holes.map((r) => `M${n1(r.x)},${n1(r.y)} h${n1(r.w)} v${n1(r.h)} h${n1(-r.w)} Z`).join(' ');
+    defs = `<defs><clipPath id="${SCREEN_CUT_ID}" clipPathUnits="userSpaceOnUse"><path clip-rule="evenodd" d="${d}"/></clipPath></defs>`;
+  }
   for (const l of layout.lanes) {
     lanes += `<rect class="lane-tint" data-lane="${esc(l.id)}" x="${n1(l.x0)}" y="-4000" width="${n1(l.x1 - l.x0)}" height="${n1(layout.height + 8000)}" fill="${LANE_TINT[l.id] ?? '#8b93a5'}" fill-opacity=".06"/>`;
   }
@@ -148,11 +176,17 @@ export function renderScene({ index, layout, state, lit }: SceneInput): string {
     const k = KIND[n.node.kind] ?? KIND.infra;
     const on = !lit || lit.boxes.has(b.id);
     const st = !lit ? '' : on ? ` lit${lit.startBoxes.has(b.id) ? ' start' : ''}` : ' dim';
-    let g = `<g class="box${st}" data-box="${esc(b.id)}" data-kind="${esc(n.node.kind)}" style="--c:${k.c}">`;
+    const scr = b.screen;
+    let g = `<g class="box${scr ? ' scr' : ''}${st}" data-box="${esc(b.id)}" data-kind="${esc(n.node.kind)}" style="--c:${k.c}">`;
     const dash = k.dash ? ` stroke-dasharray="${k.dash}"` : '';
     // 丸い端（actor・trigger）は rx と ry を高さの半分に揃える（rx だけだと横長の箱が楕円になる）
     const rx = Math.min(k.rx, b.h / 2, b.w / 2);
-    g += `<rect class="shape" x="${n1(b.x)}" y="${n1(b.y)}" width="${b.w}" height="${n1(b.h)}" rx="${n1(rx)}" ry="${n1(rx)}" fill="${k.c}1a" stroke="${k.c}"${dash}/>`;
+    if (scr) {
+      // 画面の領域だけ塗らない（下の iframe が透ける）。枠の rect は透明の塗りでクリックを受ける
+      g += `<path class="screen-bg" d="${frameWithHole(b, rx, scr)}" fill="${k.c}1a" fill-rule="evenodd"/>`;
+      g += `<g class="screen-ph" data-screen-ph="${esc(b.id)}"><rect x="${n1(scr.x)}" y="${n1(scr.y)}" width="${n1(scr.w)}" height="${n1(scr.h)}"/><text x="${n1(scr.x + scr.w / 2)}" y="${n1(scr.y + scr.h / 2)}" text-anchor="middle"></text></g>`;
+    }
+    g += `<rect class="shape" x="${n1(b.x)}" y="${n1(b.y)}" width="${b.w}" height="${n1(b.h)}" rx="${n1(rx)}" ry="${n1(rx)}" fill="${scr ? 'transparent' : `${k.c}1a`}" stroke="${k.c}"${dash}/>`;
     if (k.double)
       g += `<rect class="deco" x="${n1(b.x + 3)}" y="${n1(b.y + 3)}" width="${b.w - 6}" height="${n1(b.h - 6)}" fill="none" stroke="${k.c}" stroke-width=".8"/>`;
     if (k.band)
@@ -178,9 +212,10 @@ export function renderScene({ index, layout, state, lit }: SceneInput): string {
     else baseBoxes += g;
   }
 
+  const cut = defs ? ` clip-path="url(#${SCREEN_CUT_ID})"` : '';
   return (
-    `<g class="lanes">${lanes}</g><g class="base-wires">${baseWires}</g><g class="hosts">${hosts}</g><g class="base-boxes">${baseBoxes}</g>` +
-    `<g class="lit-wires">${litWires}</g><g class="lit-boxes">${litBoxes}</g><g class="balls"></g>`
+    `${defs}<g class="lanes"${cut}>${lanes}</g><g class="base-wires">${baseWires}</g><g class="hosts">${hosts}</g><g class="base-boxes">${baseBoxes}</g>` +
+    `<g class="lit-wires">${litWires}</g><g class="lit-boxes">${litBoxes}</g><g class="regions">${regions ?? ''}</g><g class="balls"></g>`
   );
 }
 

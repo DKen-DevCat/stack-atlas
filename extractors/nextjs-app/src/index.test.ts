@@ -1,10 +1,19 @@
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import type { PartialGraph, RepoContext, StackAtlasConfig } from '@stack-atlas/core';
-import { extractor, parseSegmentConfig, segmentToUrl } from './index.js';
+import {
+  extractor,
+  MAX_NEXT_CONFIG_BYTES,
+  parseSegmentConfig,
+  readNextConfig,
+  readNextOutput,
+  segmentToUrl,
+  stripJsComments,
+} from './index.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../examples/fixture-repo');
 const silent = { debug() {}, info() {}, warn() {}, error() {} };
@@ -36,6 +45,93 @@ const upstream: PartialGraph = {
   ],
   edges: [],
 };
+
+describe('readNextConfig（8-3b: screens が trailingSlash・basePath・assetPrefix・distDir を使う）', () => {
+  const app = (config: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'stack-atlas-nextcfg-'));
+    mkdirSync(join(dir, 'web', 'src', 'app'), { recursive: true });
+    writeFileSync(join(dir, 'web', 'next.config.mjs'), config);
+    return dir;
+  };
+
+  it('文字列と真偽値のリテラルを読む。next.config のディレクトリも返す', () => {
+    const dir = app(
+      [
+        '/** @type {import("next").NextConfig} */',
+        'export default {',
+        '  output: "export",',
+        "  distDir: 'build/site',",
+        '  trailingSlash: true,',
+        '  basePath: `/docs`,',
+        "  assetPrefix: 'https://cdn.example.com',",
+        '};',
+      ].join('\n'),
+    );
+    expect(readNextConfig(dir, { appDir: 'web/src/app' })).toEqual({
+      dir: 'web',
+      file: 'web/next.config.mjs',
+      output: 'export',
+      distDir: 'build/site',
+      trailingSlash: true,
+      basePath: '/docs',
+      assetPrefix: 'https://cdn.example.com',
+    });
+    expect(readNextOutput(dir, { appDir: 'web/src/app' })).toBe('export');
+  });
+
+  it('コメントの中の値と、環境変数などで決まる値（テンプレートの ${}）は読まない', () => {
+    const dir = app(
+      [
+        'export default {',
+        "  // basePath: '/old',",
+        "  /* assetPrefix: 'https://old.example.com', */",
+        '  assetPrefix: `${process.env.CDN}`,',
+        '  trailingSlash: false,',
+        '};',
+      ].join('\n'),
+    );
+    expect(readNextConfig(dir, { appDir: 'web/src/app' })).toEqual({
+      dir: 'web',
+      file: 'web/next.config.mjs',
+      trailingSlash: false,
+    });
+  });
+
+  it('next.config が無ければ undefined', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stack-atlas-nextcfg-'));
+    expect(readNextConfig(dir, {})).toBeUndefined();
+  });
+
+  // 2026-11-09 追加（8-3b のレビュー）: 解析対象の repo の next.config は信用しない入力
+  it('閉じていない /* が並んでも 2 乗にならない（以前は正規表現で 80 KB に 1.2 秒・40 KB の改行で同じく）', () => {
+    const dir = app(`${'/* '.repeat(200_000)}\nexport default { output: 'export' }`);
+    const t0 = performance.now();
+    readNextConfig(dir, { appDir: 'web/src/app' });
+    const blanks = app(`${'\n'.repeat(400_000)}export default { output: 'export' }`);
+    expect(readNextConfig(blanks, { appDir: 'web/src/app' })?.output).toBe('export');
+    expect(performance.now() - t0).toBeLessThan(1500);
+  });
+
+  it('stripJsComments: 閉じていない /* から後ろは残す（正規表現のときと同じ）。行頭の // の行は外す', () => {
+    expect(stripJsComments('a /* x */ b /* y */ c')).toBe('a  b  c');
+    expect(stripJsComments("a /* x */ b /* y\noutput: 'export'")).toBe(
+      "a  b /* y\noutput: 'export'",
+    );
+    expect(stripJsComments("a\n  // basePath: '/old'\nb // keep")).toBe('a\nb // keep');
+  });
+
+  it(`${MAX_NEXT_CONFIG_BYTES / 1024 / 1024} MB を超える next.config は値を読まずに警告`, () => {
+    const dir = app(`export default { output: 'export' }\n${' '.repeat(MAX_NEXT_CONFIG_BYTES)}`);
+    const warns: string[] = [];
+    expect(readNextConfig(dir, { appDir: 'web/src/app' }, (m) => warns.push(m))).toEqual({
+      dir: 'web',
+      file: 'web/next.config.mjs',
+    });
+    expect(warns).toEqual([
+      'web/next.config.mjs が 1 MB を超える（1025 KB）ので、output などの値を読みません',
+    ]);
+  });
+});
 
 describe('segmentToUrl', () => {
   it('strips groups and keeps dynamic segments', () => {

@@ -9,6 +9,7 @@
 - graph に無いノード ID のメモ（リネームで ID が変わったなど）は、トップバーの「**孤立メモ (N)**」から今のノードへ移すか削除する。
 - **差分表示**は `?prev=<前回の graph.json>` を付けて開く（または「開く ▾ → 前回と比較…」）。追加は緑、削除は灰色のゴースト、変更は黄色。
 - **配信**は `stack-atlas build <repo> -o out --with-viewer` の `out/` をそのまま静的ホスティングに置くだけ。GitHub Actions → S3 + CloudFront のテンプレートが `docs/ci-example.yml`。
+  `out/screens/`（ビルド成果物の画面。`screens` 抽出器）を配るときは、`screens/*` の応答に **sandbox 付きの CSP ヘッダ**を付ける（`serve` は自動で付ける。CloudFront は下の「画面の応答ヘッダ」）。
 - 外部 SaaS は使わない。抽出はローカル／自前の CI、配信は静的ファイルか社内の `stack-atlas serve`。
 
 ## 全体像
@@ -25,7 +26,8 @@ out/
   ├─ index.html, assets/   ← ビューア（--with-viewer）
   ├─ graph.json            ← 抽出結果
   ├─ memos.json            ← .stack-atlas/memos.json のコピー
-  └─ shots/                ← スクショ（screenshots 抽出器）
+  ├─ shots/                ← スクショ（screenshots 抽出器）
+  └─ screens/              ← 消毒したビルド成果物の画面（screens 抽出器。<slug>/index.html と _assets/）。応答に CSP（sandbox）を付ける
         │
         ├─ S3 + CloudFront（docs/ci-example.yml）     … 読むだけ。メモは書き出し → PR で反映
         └─ stack-atlas serve out --repo <repo>（社内） … 「サーバーに保存」で memos.json に書き戻せる
@@ -94,6 +96,54 @@ index.html?graph=https://atlas.example.com/atlas/graph.json&prev=https://atlas.e
    （`s3:PutObject` / `s3:GetObject` / `s3:ListBucket` / `s3:DeleteObject` と `cloudfront:CreateInvalidation`）。
 3. main への push ごとに `build --with-viewer` → S3 同期 → CloudFront 無効化。URL はジョブのサマリに出る。
 4. 社内限定にするなら CloudFront に認証（Lambda@Edge・署名付き Cookie）か WAF の IP 制限を付ける。
+5. `screens/` があるなら、`screens/*` の振る舞いに応答ヘッダポリシーを付ける（次の節）。
+
+**画面の応答ヘッダ（`screens/*`）**
+
+`screens/` の HTML は消毒してあり（script 無し、`<head>` の最初の子に CSP の meta）、ビューアは `allow-scripts` 無しの sandbox の iframe で描く。
+それでも、HTML や `_assets/` を**タブで直接開いた**ときに備えて、`stack-atlas serve` と同じ応答ヘッダを付ける（D63）。
+SVG は `_assets/` にファイルとして置かず、画像として読む所（`<img>` の `src`・`srcset`、CSS の `url()` など）に `data:image/svg+xml;base64,…` で埋め込む
+（上限 256 KB。超えたものは画面に入れず `issues.json` の info に出す。埋め込むのは 1 つの画面の HTML・CSS ファイルで合計 2 MB まで。超えた参照も info）。画像として読む SVG は script を動かさないので、ヘッダを付け忘れた配信（素の S3 など）でも
+SVG の中の script がビューアと同じ origin で動くことは無い。ヘッダは HTML を直接開いたときの備え:
+
+```
+Content-Security-Policy: sandbox allow-same-origin; default-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; base-uri 'none'; form-action 'none'
+X-Content-Type-Options: nosniff
+```
+
+CloudFront では応答ヘッダポリシーを作り、パスパターン `screens/*` のキャッシュの振る舞い（ordered cache behavior）に付ける（既定の振る舞いには付けない。ビューアは script で動くため）。Terraform の例:
+
+```hcl
+resource "aws_cloudfront_response_headers_policy" "screens" {
+  name = "stack-atlas-screens"
+  security_headers_config {
+    content_security_policy {
+      content_security_policy = "sandbox allow-same-origin; default-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; base-uri 'none'; form-action 'none'"
+      override                = true
+    }
+    content_type_options {
+      override = true
+    }
+  }
+}
+
+resource "aws_cloudfront_distribution" "atlas" {
+  # …既定の振る舞い（ビューア・graph.json）はそのまま…
+  ordered_cache_behavior {
+    path_pattern               = "screens/*"
+    target_origin_id           = "<S3 の origin id>"
+    viewer_protocol_policy     = "redirect-to-https"
+    allowed_methods            = ["GET", "HEAD"]
+    cached_methods             = ["GET", "HEAD"]
+    cache_policy_id            = "<既定の振る舞いと同じキャッシュポリシー>"
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.screens.id
+  }
+}
+```
+
+- 確かめ方: `curl -sI https://<配信先>/screens/index/index.html` に `content-security-policy: sandbox allow-same-origin; …` と `x-content-type-options: nosniff` が出る。`/index.html`（ビューア）には出ない
+- S3 の静的ウェブサイトのエンドポイント（`*.s3-website-*`）はヘッダを付けられないので、画面を配るときは使わない（CloudFront の OAC 経由だけにする）
+- `aws s3 sync` は拡張子から Content-Type を付ける（`.css` は `text/css`）。nosniff の下で CSS が `text/css` 以外になると読まれない
 
 **社内ホストで serve**
 
@@ -147,5 +197,8 @@ stack-atlas serve out --host 0.0.0.0 --port 4173 --repo /srv/my-app --allowed-ho
 
 - ソースコードは CI のランナー（またはローカル）の中だけで解析する。外部 SaaS に送らない。
 - 配信物は静的ファイル（HTML・JS・graph.json・memos.json・PNG）だけ。graph.json にはコード抜粋（`code`）とファイルパスが入るので、**社内限定の場所に置く**。
+- `screens/` の画面は対象アプリのビルド成果物の写しで、画面の文言（とその画面のデータ）が入る。同じく社内限定に置く。写すときに許可リストで消毒し（script・noscript・iframe・外部 URL・`on*`・`javascript:` などを落とし、form は div に書き換える。SVG は data: URL で埋め込む。docs/18 §3.3）、
+  ビューアは `allow-scripts` 無しの sandbox の iframe で描く。直接開かれたときのために `screens/*` の応答に sandbox 付きの CSP を付ける（`serve` は自動。CloudFront は上の「画面の応答ヘッダ」）。
+  build は `issues.json` に route ごとの「落としたもの」（外部・危険な URL があれば警告）と regions のカバー率を出す
 - `serve --repo` の書き込みは `Content-Type: application/json` の POST だけを受け付ける（他サイトからの単純なフォーム送信で書き換えられないように）。認証は持たないので、公開ネットワークには出さない。
 - `serve` は Host ヘッダがループバック（`localhost` / `127.0.0.1` / `::1`）・`--host`・`--allowed-host` のどれでもなければ 403 を返す。DNS リバインディング（攻撃者のドメインを 127.0.0.1 に解決し直し、そのページから同一オリジンとして graph.json を読んだりメモを書き換えたりする手口。Vite の CVE-2025-24010 と同型）への対策。

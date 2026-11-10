@@ -39,8 +39,38 @@
 }
 .wv-svg {
   display: block;
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
+}
+
+/* 画面の層（docs/18 §3.3、D62）: SVG の下。canvas と同じ変換を掛け、ポインタは上の SVG が受ける */
+.wv-screens {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  z-index: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+.wv-screen {
+  position: absolute;
+  overflow: hidden;
+  /* 背景を持たないページは iframe が透けるので、ブラウザと同じ白にする */
+  background: #fff;
+  transition: opacity 0.18s;
+}
+.wv-screen iframe {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
+  border: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
 }
 .wv-speed {
   position: fixed;
@@ -167,6 +197,30 @@
 }
 .wv .box.lit.start .shape {
   stroke: #ffffff;
+}
+
+/* 画面の箱（画面の領域を持つ箱）: 読んでいない間のプレースホルダ、画面の上の項目の文字の縁取り、部品の領域の枠 */
+.wv .screen-ph rect {
+  fill: #11151c;
+}
+.wv .screen-ph text {
+  font-size: 14px;
+  fill: var(--muted);
+}
+.wv .screen-ph[data-state='ready'] {
+  display: none;
+}
+.wv .box.scr .item text {
+  paint-order: stroke;
+  stroke: #0d0f14;
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.wv .region {
+  fill: #22d3ee1f;
+  stroke: var(--cyan);
+  stroke-width: 1.5;
+  pointer-events: none;
 }
 
 /* 項目 */

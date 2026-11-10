@@ -760,12 +760,10 @@ export function upgradeGraph(v1: Graph, opts: UpgradeOptions = {}): GraphV2 {
     }
     if (n.cache) node.cache = structuredClone(n.cache) as CacheV2;
     if (n.screen) {
-      const screen: ScreenV2 = { width: n.screen.width, height: n.screen.height };
-      if (n.screen.screenshot) {
-        screen.screenshot = n.screen.screenshot;
-        screen.source = 'screenshot';
-      }
-      if (n.screen.regions) screen.regions = structuredClone(n.screen.regions);
+      // screen はそのまま写す（v1 と v2 で同じ形。html / source は 8-3b の screens 抽出器が出す。docs/18 §3.3）。
+      // source の無いスクショだけの画面は、従来どおり source: screenshot にする
+      const screen = structuredClone(n.screen) as ScreenV2;
+      if (!screen.source && screen.screenshot && !screen.html) screen.source = 'screenshot';
       node.screen = screen;
     }
     const meta: Record<string, unknown> = n.meta ? structuredClone(n.meta) : {};

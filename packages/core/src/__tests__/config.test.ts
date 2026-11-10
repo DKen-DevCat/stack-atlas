@@ -33,6 +33,44 @@ describe('loadConfig', () => {
     expect(log.of('warn').join('\n')).toMatch(/extractors\.ts/);
   });
 
+  it('screens（8-3b）: 正しい値は残し、outDir・未知のキー・型違いは警告して捨てる', () => {
+    const root = tmpRepo({
+      'stack-atlas.config.yaml': [
+        'screens:',
+        '  repo: web',
+        '  from: dir',
+        '  dir: export',
+        '  routes: { "/items/[id]": ["a"], "/bad/[x]": 3 }',
+        '  viewport: { width: 1280, height: 800 }',
+        '  outDir: /etc',
+        '  build: pnpm build',
+        '',
+      ].join('\n'),
+    });
+    const log = createMemoryLogger();
+    expect(loadConfig(root, log).screens).toEqual({
+      repo: 'web',
+      from: 'dir',
+      dir: 'export',
+      routes: { '/items/[id]': ['a'] },
+      viewport: { width: 1280, height: 800 },
+    });
+    const warns = log.of('warn').join('\n');
+    expect(warns).toContain('screens.outDir は設定できません');
+    expect(warns).toContain('screens.build は未知のキー');
+    expect(warns).toContain('screens.routes["/bad/[x]"]');
+
+    const bad = tmpRepo({
+      'stack-atlas.config.yaml':
+        'screens: { from: next-build, viewport: { width: 0, height: 800 }, dir: 3 }\n',
+    });
+    const log2 = createMemoryLogger();
+    expect(loadConfig(bad, log2).screens).toEqual({});
+    expect(log2.of('warn').join('\n')).toMatch(
+      /screens\.from[\s\S]*screens\.dir[\s\S]*screens\.viewport/,
+    );
+  });
+
   it('YAML の構文エラーは AtlasConfigError', () => {
     const root = tmpRepo({ 'stack-atlas.config.yaml': 'a: [1, 2\n' });
     expect(() => loadConfig(root)).toThrow(AtlasConfigError);

@@ -322,6 +322,51 @@ describe('箱と口', () => {
   });
 });
 
+describe('画面（screen。8-3b で html / source を足した。docs/18 §3.3）', () => {
+  const regions = [{ ref: 'comp:A', x: 1, y: 2, w: 3, h: 4 }];
+  const screenOf = (screen: GraphNode['screen']) =>
+    node(up(G([N('route:/', 'page', { screen }), N('comp:A', 'component')], [])), 'route:/').screen;
+
+  it('html と source はそのまま写す（スクショがあっても source は html の出どころのまま）', () => {
+    const html = {
+      html: 'screens/index/index.html',
+      width: 1280,
+      height: 800,
+      source: 'dir' as const,
+    };
+    expect(screenOf(html)).toEqual(html);
+    expect(screenOf({ ...html, screenshot: 'shots/index.png', regions })).toEqual({
+      ...html,
+      screenshot: 'shots/index.png',
+      regions,
+    });
+  });
+
+  it('スクショだけの画面は従来どおり source: screenshot', () => {
+    expect(screenOf({ screenshot: 'shots/index.png', width: 1280, height: 800, regions })).toEqual({
+      screenshot: 'shots/index.png',
+      source: 'screenshot',
+      width: 1280,
+      height: 800,
+      regions,
+    });
+    expect(screenOf({ width: 640, height: 480 })).toEqual({ width: 640, height: 480 });
+  });
+
+  it('写したものは元の graph と共有しない', () => {
+    const v1 = G(
+      [
+        N('route:/', 'page', { screen: { width: 1, height: 1, regions } }),
+        N('comp:A', 'component'),
+      ],
+      [],
+    );
+    const v2 = upgradeGraph(v1);
+    node(v2, 'route:/').screen!.regions![0]!.x = 99;
+    expect(v1.nodes[0]!.screen!.regions![0]!.x).toBe(1);
+  });
+});
+
 describe('線（edge → wire）', () => {
   it('uses: 関数・hook・helper へは call と return（reply）、部品・画面へは render だけ', () => {
     const g = up(

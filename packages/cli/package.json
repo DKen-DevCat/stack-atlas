@@ -36,6 +36,7 @@
     "@stack-atlas/extractor-go-types": "workspace:*",
     "@stack-atlas/extractor-nextjs-app": "workspace:*",
     "@stack-atlas/extractor-openapi": "workspace:*",
+    "@stack-atlas/extractor-screens": "workspace:*",
     "@stack-atlas/extractor-screenshots": "workspace:*",
     "@stack-atlas/extractor-sql": "workspace:*",
     "@stack-atlas/extractor-terraform": "workspace:*",

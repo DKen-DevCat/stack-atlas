@@ -7,7 +7,13 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import type { Browser, LaunchOptions } from 'playwright';
-import type { Extractor, PartialGraph, PartialNode, RepoContext } from '@stack-atlas/core';
+import {
+  resolveRegionRef,
+  type Extractor,
+  type PartialGraph,
+  type PartialNode,
+  type RepoContext,
+} from '@stack-atlas/core';
 
 export const NAME = 'screenshots';
 
@@ -75,35 +81,31 @@ export function slugify(pattern: string): string {
 
 /**
  * slugify は別のルートを同じ名前にすることがある（`/races/[id]` と `/races/id`、`/a-b` と `/a/b`）。
- * 2 本目以降はパターンのハッシュを足して、スクショが上書きされないようにする
+ * 2 本目以降はパターンのハッシュを足して、スクショが上書きされないようにする。
+ * 英数字で始まらないもの（`.well-known`・`_assets`・`..`）と 100 文字を超えるものは `r-<ハッシュ>` にする
+ * （ファイル名・ディレクトリ名にするため。screens 抽出器の `screens/<slug>/` も同じ関数。2026-11-09（8-3b のレビュー）で
+ * screens の写しと一本にした）
  */
 export function uniqueSlug(pattern: string, used: Map<string, string>): string {
-  const base = slugify(pattern);
+  const h = (n: number) => createHash('sha1').update(pattern).digest('hex').slice(0, n);
+  let base = slugify(pattern);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(base) || base.length > 100) base = `r-${h(8)}`;
   const owner = used.get(base);
   if (owner === undefined || owner === pattern) {
     used.set(base, pattern);
     return base;
   }
-  const slug = `${base}-${createHash('sha1').update(pattern).digest('hex').slice(0, 6)}`;
+  const slug = `${base}-${h(6)}`;
   used.set(slug, pattern);
   return slug;
 }
 
 /**
  * `data-component` の名前 → ノード ID。`comp:<name>` → `hook:<name>` → `:<name>` で終わる ID の順に探す。
- * 見つからなければ undefined。
+ * 見つからなければ undefined。2026-11-09（8-3b）: 規則の正本は @stack-atlas/wiring（ビューアが画面の HTML を測って同じ規則で
+ * 解くため。ビューアは抽出器に依存しない）。ここは core の再 export をそのまま出す
  */
-export function resolveRegionRef(name: string, nodeIds: Iterable<string>): string | undefined {
-  const ids = nodeIds instanceof Set ? (nodeIds as Set<string>) : new Set(nodeIds);
-  if (ids.has(name)) return name; // data-component="comp:Foo" のように ID を直接書いた場合
-  for (const prefix of ['comp:', 'hook:']) {
-    if (ids.has(prefix + name)) return prefix + name;
-  }
-  for (const id of ids) {
-    if (id.endsWith(`:${name}`)) return id;
-  }
-  return undefined;
-}
+export { resolveRegionRef };
 
 export interface RawRegion {
   name: string;

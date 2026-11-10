@@ -95,6 +95,27 @@ describe('buildGraph（スタブ抽出器）', () => {
     expect(res.graph.nodes.map((n) => n.id)).toEqual(['lib:x']);
   });
 
+  it('抽出器の報告（PartialGraph.issues。8-3b）は issues に入る。error は warning にする（抽出器はビルドを止めない）', async () => {
+    const res = await buildGraph({
+      root: tmpRepo(),
+      commit: false,
+      extractors: [
+        stub('s', {
+          nodes: [{ id: 'lib:x' }],
+          edges: [],
+          issues: [
+            { level: 'info', path: 'screens:/', message: 'カバー率' },
+            { level: 'error' as 'warning', path: 'screens:/a', message: '止めない' },
+          ],
+        }),
+      ],
+    });
+    expect(res.issues).toEqual([
+      { level: 'info', path: 'screens:/', message: 'カバー率' },
+      { level: 'warning', path: 'screens:/a', message: '止めない' },
+    ]);
+  });
+
   it('検証エラー（存在しないノードへのエッジ）は issues に入る', async () => {
     const res = await buildGraph({
       root: tmpRepo(),

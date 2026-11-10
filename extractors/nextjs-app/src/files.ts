@@ -209,8 +209,76 @@ export function listNextFiles(
   return { files, skipped };
 }
 
-/** next.config.{js,mjs,ts,cjs} の `output: 'export'`。app / pages の親ディレクトリから root まで探す */
-export function readNextOutput(root: string, dirs: NextDirs): string | undefined {
+export const NEXT_CONFIG_FILES = [
+  'next.config.ts',
+  'next.config.mjs',
+  'next.config.js',
+  'next.config.cjs',
+  'next.config.mts',
+] as const;
+
+/** next.config から読む値（静的に読める文字列・真偽値のリテラルだけ。環境変数などで決まる値は undefined） */
+export interface NextConfigInfo {
+  /** next.config のあるディレクトリ（root 相対、/ 区切り。直下なら `.`） */
+  dir: string;
+  /** next.config のファイル（root 相対） */
+  file: string;
+  /** `output`（`export` / `standalone`） */
+  output?: string;
+  /** `distDir`（static export ではエクスポートの出力先。既定 `out`） */
+  distDir?: string;
+  /** `trailingSlash`（true なら `/a` → `a/index.html`） */
+  trailingSlash?: boolean;
+  /** `basePath`（`/docs` など。HTML の参照は basePath 付き、エクスポートのファイルは basePath 無し） */
+  basePath?: string;
+  /** `assetPrefix`（`https://cdn.example.com` か `/prefix`。`/_next/` の参照の前に付く） */
+  assetPrefix?: string;
+}
+
+const stringOption = (src: string, key: string) =>
+  new RegExp(`\\b${key}\\s*:\\s*(["'\`])([^"'\`$]*)\\1`).exec(src)?.[2];
+
+/** next.config を読む大きさの上限（バイト）。超えたら値を読まない（警告。2026-11-09（8-3b のレビュー）） */
+export const MAX_NEXT_CONFIG_BYTES = 1024 * 1024;
+
+/**
+ * `/* … *\/` と、行頭（空白の後）が `//` の行を外す。前から 1 回だけ走査する（2026-11-09（8-3b のレビュー）:
+ * 正規表現の `\/\*[\s\S]*?\*\/` は閉じていない `/*` があると位置ごとに末尾まで探し直して 2 乗だった。80 KB で 1.2 秒）。
+ * 閉じていない `/*` から後ろはそのまま残す（正規表現のときと同じ）
+ */
+export function stripJsComments(src: string): string {
+  let out = '';
+  let i = 0;
+  for (;;) {
+    const j = src.indexOf('/*', i);
+    if (j < 0) {
+      out += src.slice(i);
+      break;
+    }
+    out += src.slice(i, j);
+    const k = src.indexOf('*/', j + 2);
+    if (k < 0) {
+      out += src.slice(j);
+      break;
+    }
+    i = k + 2;
+  }
+  return out
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('//'))
+    .join('\n');
+}
+
+/**
+ * next.config.{ts,mjs,js,cjs,mts} を探して `output`・`distDir`・`trailingSlash`・`basePath`・`assetPrefix` を読む
+ * （docs/18 §3.3。app / pages の親ディレクトリから root まで、深い方から探す）。無ければ undefined。
+ * MAX_NEXT_CONFIG_BYTES を超えるファイルは値を読まずに `{ dir, file }` だけ返し、warn で知らせる
+ */
+export function readNextConfig(
+  root: string,
+  dirs: NextDirs,
+  warn?: (message: string) => void,
+): NextConfigInfo | undefined {
   const starts = new Set<string>(['.']);
   for (const d of [dirs.appDir, dirs.pagesDir]) {
     if (!d) continue;
@@ -222,18 +290,38 @@ export function readNextOutput(root: string, dirs: NextDirs): string | undefined
     }
   }
   for (const dir of [...starts].sort((a, b) => b.length - a.length)) {
-    for (const name of [
-      'next.config.ts',
-      'next.config.mjs',
-      'next.config.js',
-      'next.config.cjs',
-      'next.config.mts',
-    ]) {
+    for (const name of NEXT_CONFIG_FILES) {
       const p = join(root, dir, name);
       if (!existsSync(p)) continue;
-      const src = readFileSync(p, 'utf8').replace(/^\s*\/\/.*$/gm, '');
-      return /\boutput\s*:\s*["'`](\w+)["'`]/.exec(src)?.[1];
+      const info: NextConfigInfo = { dir, file: toPosix(join(dir, name)) };
+      const st = statSync(p);
+      if (!st.isFile()) continue;
+      if (st.size > MAX_NEXT_CONFIG_BYTES) {
+        warn?.(
+          `${info.file} が ${MAX_NEXT_CONFIG_BYTES / 1024 / 1024} MB を超える（${Math.ceil(st.size / 1024)} KB）ので、output などの値を読みません`,
+        );
+        return info;
+      }
+      const src = stripJsComments(readFileSync(p, 'utf8'));
+      const output = /\boutput\s*:\s*["'`](\w+)["'`]/.exec(src)?.[1];
+      if (output) info.output = output;
+      const trailing = /\btrailingSlash\s*:\s*(true|false)\b/.exec(src)?.[1];
+      if (trailing) info.trailingSlash = trailing === 'true';
+      for (const key of ['distDir', 'basePath', 'assetPrefix'] as const) {
+        const v = stringOption(src, key);
+        if (v !== undefined) info[key] = v;
+      }
+      return info;
     }
   }
   return undefined;
+}
+
+/** next.config.{js,mjs,ts,cjs} の `output: 'export'`。app / pages の親ディレクトリから root まで探す */
+export function readNextOutput(
+  root: string,
+  dirs: NextDirs,
+  warn?: (message: string) => void,
+): string | undefined {
+  return readNextConfig(root, dirs, warn)?.output;
 }

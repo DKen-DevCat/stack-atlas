@@ -70,6 +70,8 @@ export {
   type WireChange,
 } from './diff.js';
 export { gitCommit, gitRemote } from './git.js';
+// data-component の名前 → 箱 id（screenshots・screens 抽出器とビューアが同じ規則を使う。正本は wiring。docs/18 §3.3）
+export { resolveRegionRef } from '@stack-atlas/wiring';
 export {
   apiPathMatches,
   isRoutePathTooLong,
@@ -86,11 +88,13 @@ export {
   deepMerge,
   globToRegExp,
   globBase,
+  pathWithin,
   toArray,
   toPosix,
   type DeepMergeOptions,
 } from './util.js';
 export * from './next-routes.js';
+export { screensDirState, screensSkipMessage, type ScreensDirState } from './screens-dir.js';
 export {
   buildGraph,
   type BuildGraphOptions,

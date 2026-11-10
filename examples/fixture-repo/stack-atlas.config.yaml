@@ -26,3 +26,9 @@ screenshots:
   viewport: { width: 1280, height: 800 }
   routes: { "/races/[id]": ["42"] }
   storageState: .stack-atlas/auth.json # 認証が必要なルート用（フィクスチャでは使わない）
+
+# ビルド成果物の画面（docs/18 §3.3）。site/ の HTML を写して消毒し、out/screens/ に置く（スクショとは別。両方あれば html を優先）
+screens:
+  from: dir
+  dir: site
+  routes: { "/races/[id]": ["42"] }

@@ -48,6 +48,15 @@ export {
   type BrokenEnd,
 } from './broken.js';
 export {
+  resolveRegionRef,
+  resolveRegions,
+  clipRegion,
+  regionsOf,
+  type RawRegion,
+  type ScreenRegion,
+  type RegionsOf,
+} from './regions.js';
+export {
   layoutWiring,
   routeBetween,
   innerRoute,
@@ -57,6 +66,13 @@ export {
   LANES,
   BROKEN_CUT,
   defaultWidthOf,
+  screenArea,
+  screenViewport,
+  hasScreenHtml,
+  DEFAULT_VIEWPORT,
+  SCREEN_INSET,
+  VIEWPORT_MAX,
+  VIEWPORT_MIN,
   type LayoutOptions,
   type WiringLayout,
   type BoxLayout,

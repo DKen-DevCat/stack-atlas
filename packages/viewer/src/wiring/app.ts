@@ -1,5 +1,6 @@
 // 配線図（graph.json v2）のアプリ。索引・レイアウト・たどる規則は @stack-atlas/wiring、ここは描画と入力だけ（D44）。
-// 部品: render（SVG）、interaction（クリック・hover・Esc）、balls（球と再生バー）、variantTable（分岐の表）、canvas（無限の平面）
+// 部品: render（SVG）、interaction（クリック・hover・Esc）、balls（球と再生バー）、variantTable（分岐の表）、canvas（無限の平面）、
+// screenLayer（画面の箱の中のビルド成果物の HTML。SVG の下の iframe の層。docs/18 §3.3）
 import type { GraphV2 } from '@stack-atlas/schema';
 import {
   defaultState,
@@ -19,6 +20,8 @@ import { Player, type BallPosition } from './balls';
 import { createCanvas, type Canvas } from './canvas';
 import { installInteraction, TABLE } from './interaction';
 import { renderScene } from './render';
+import { ScreenLayer, type ScreenDebug } from './screenLayer';
+import { renderRegions } from './screens';
 import { VariantTable } from './variantTable';
 import { openingFocus } from './view';
 import './style.css';
@@ -46,6 +49,8 @@ export interface WiringDebug {
   readonly time: number;
   readonly size: { width: number; height: number };
   readonly view: { k: number; tx: number; ty: number };
+  /** 画面の層（生かしている iframe・状態・測った領域・描く領域） */
+  readonly screens: ScreenDebug;
   select(sel: Selection | null): void;
   setVariant(nodeId: string, variantId: string, value: boolean): void;
   seek(t: number): void;
@@ -70,6 +75,8 @@ export interface WiringOptions {
   graph: GraphV2;
   /** 出どころ（上端の帯に出す） */
   source: string;
+  /** graph.json の URL（screen.html を解く。ファイルで開いたときは無く、画面はプレースホルダ） */
+  baseUrl?: string;
 }
 
 /** graph v2 を配線図として root に描く。参照が解けない graph は indexGraph が例外を投げる */
@@ -126,11 +133,26 @@ export function mountWiring(opts: WiringOptions): WiringApp {
   opts.root.replaceChildren(root);
 
   const viewG = () => svg.querySelector<SVGGElement>('g.view');
+  const regionsSvg = () => renderRegions(screens.specs, screens.regions(), lit);
+  const screens = new ScreenLayer({
+    stage,
+    svg,
+    index,
+    layout,
+    baseUrl: opts.baseUrl,
+    // 測り終えた（か読めなかった）画面の領域の枠だけ描き直す（球と経路はそのまま）
+    onRegions: () => {
+      const g = svg.querySelector('g.regions');
+      if (g) g.innerHTML = regionsSvg();
+    },
+  });
+  stage.prepend(screens.el);
   const canvas: Canvas = createCanvas({
     stage,
     target: viewG,
     size: { w: layout.width, h: layout.height },
     ignore: (t) => t instanceof Element && !!t.closest(TABLE),
+    onApply: (v) => screens.setView(v),
   });
   const player = new Player(svg, layout, { play, seek, speed, speedLabel });
   const table = new VariantTable({
@@ -142,7 +164,9 @@ export function mountWiring(opts: WiringOptions): WiringApp {
   });
 
   const render = (restart: boolean) => {
-    svg.innerHTML = `<g class="view">${renderScene({ index, layout, state, lit })}</g>`;
+    svg.innerHTML = `<g class="view">${renderScene({ index, layout, state, lit, regions: regionsSvg() })}</g>`;
+    screens.decorate();
+    screens.setLit(lit);
     canvas.apply();
     player.setup(lit, restart);
     table.refresh();
@@ -227,6 +251,9 @@ export function mountWiring(opts: WiringOptions): WiringApp {
     get view() {
       return { ...canvas.view };
     },
+    get screens() {
+      return screens.debug;
+    },
     select: doSelect,
     setVariant,
     seek: (t) => player.seek(t),
@@ -243,6 +270,7 @@ export function mountWiring(opts: WiringOptions): WiringApp {
       offInteraction();
       player.dispose();
       canvas.dispose();
+      screens.dispose();
       root.remove();
     },
   };

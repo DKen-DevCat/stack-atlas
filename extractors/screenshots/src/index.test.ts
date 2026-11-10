@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { RepoContext } from '@stack-atlas/core';
+import { resolveRegionRef as sharedResolveRegionRef, type RepoContext } from '@stack-atlas/core';
 import {
   clipRegion,
   extractor,
@@ -69,6 +69,16 @@ describe('uniqueSlug', () => {
     // 決定的
     expect(uniqueSlug('/races/id', new Map([['races-id', '/races/[id]']]))).toBe(second);
   });
+
+  it('英数字で始まらない・100 文字を超える名前は r-<ハッシュ>（2026-11-09（8-3b のレビュー）: screens の screenSlug と一本にした）', () => {
+    const used = new Map<string, string>();
+    expect(uniqueSlug('/..', used)).toMatch(/^r-[0-9a-f]{8}$/);
+    expect(uniqueSlug('/_assets', used)).toMatch(/^r-[0-9a-f]{8}$/);
+    expect(uniqueSlug('/.well-known', used)).toMatch(/^r-[0-9a-f]{8}$/);
+    expect(uniqueSlug(`/${'a'.repeat(101)}`, used)).toMatch(/^r-[0-9a-f]{8}$/);
+    expect(uniqueSlug(`/${'a'.repeat(100)}`, used)).toBe('a'.repeat(100));
+    expect(uniqueSlug('/_assets', used)).toBe(uniqueSlug('/_assets', new Map()));
+  });
 });
 
 describe('resolveRegionRef', () => {
@@ -89,6 +99,12 @@ describe('resolveRegionRef', () => {
   it('accepts a full node id and returns undefined when unknown', () => {
     expect(resolveRegionRef('hook:useSession', ids)).toBe('hook:useSession');
     expect(resolveRegionRef('Nope', ids)).toBeUndefined();
+  });
+  it('ビューアと同じ規則（2026-11-09、8-3b: 正本は @stack-atlas/wiring。core の再 export をそのまま出す）', () => {
+    // ビューアは画面の HTML の data-component を wiring の resolveRegionRef で解く。抽出器と食い違わないよう同じ関数
+    expect(resolveRegionRef).toBe(sharedResolveRegionRef);
+    for (const name of ['Header', 'useSession', 'Dup', 'apiClient', 'hook:useSession', 'Nope', '/'])
+      expect(resolveRegionRef(name, ids)).toBe(sharedResolveRegionRef(name, ids));
   });
 });
 

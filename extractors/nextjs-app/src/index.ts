@@ -20,6 +20,11 @@ export {
   listPagesFiles,
   nextUrlToApiPath,
   readNextOutput,
+  readNextConfig,
+  stripJsComments,
+  MAX_NEXT_CONFIG_BYTES,
+  NEXT_CONFIG_FILES,
+  type NextConfigInfo,
   type NextDirs,
   type NextFile,
 } from './files.js';
@@ -159,7 +164,7 @@ export const extractor: Extractor = {
     const { files, skipped } = listNextFiles(ctx.root, dirs);
     if (skipped.length > 0)
       ctx.log.info(`nextjs-app: 対象外のルート ${skipped.length} 件（${skipped.join(' / ')}）`);
-    const output = readNextOutput(ctx.root, dirs);
+    const output = readNextOutput(ctx.root, dirs, (m) => ctx.log.warn(`nextjs-app: ${m}`));
 
     const hosts = nextHosts(ctx, upstream, output);
     const hostNodes = upstream.nodes.filter((n) => hosts.includes(n.id));
