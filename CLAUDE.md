@@ -64,7 +64,7 @@
 - 抽出器の契約は `packages/core/src/types.ts`。変えるときは core 側と各抽出器の両方を直す。
 - graph.json を変えたら `packages/schema/graph.schema.json`・`packages/schema/src/types.ts`・`docs/03-graph-schema.md` を同時に更新し、
   `pnpm validate examples/race-site.graph.json` が通ること（型とスキーマのずれは `pnpm test` で検出される）。
-- コミット前に `pnpm lint && pnpm typecheck && pnpm test` を通す（`pnpm build` も CI と同じ）。ビューアを触ったら `pnpm --filter @stack-atlas/viewer e2e` も（CI で実行される。Chromium が必要）。
+- **テストは回しすぎない**（2026-11-11。コストと時間がかかりすぎるため）。手元では、作業の終わりに 1 回だけ、変えたファイルに関係するテスト（そのパッケージの中で `pnpm exec vitest related --run --reporter=dot <変えたファイル>`）と、変えたパッケージの型検査（`pnpm exec tsc -p tsconfig.json --noEmit`）と `pnpm lint` を回す。全体の `pnpm test`・`pnpm build`・viewer の e2e は手元で回さない。push すると CI が lint・typecheck・test・build・e2e を全部回すので、その結果を待つ（`gh run watch`）。落ちたら失敗した行（`gh run view --log-failed`）だけ読んで直す。修正のたびに回し直さない。サブエージェントにテストを回させない。
 - フィクスチャ（`examples/fixture-repo/`・`fixture-poly/`・`fixture-gaps/`）はワークスペース外。ID の規約は `examples/fixture-repo/README.md`。
 - `harness/skill/` を変えたら `harness/skill/VERSION` を上げる（`init --skill --update` と SKILL.md の版の確かめが使う）。skill の例に fixture-gaps の答えの id を書かない（`harness.test.ts` が確かめる）。
 - プロトタイプ（`prototype/`）は参照用として残す。新実装で置き換えても削除しない。
