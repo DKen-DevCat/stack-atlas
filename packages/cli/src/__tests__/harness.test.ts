@@ -72,6 +72,8 @@ describe('build --strict（CI の関門。docs/19 §3.3）: fixture は補い無
       unjoined: 0,
       undetermined: 0,
       screensWithoutHtml: 0,
+      // Phase 9-L0（docs/23 §3.1）: 読めていないソースの言語は無い（next.config.mjs は nextjs-app と cache が読む）
+      unreadLanguages: 0,
     });
     const msgs: string[] = [];
     expect(runValidate([join(out, 'graph.json')], lines(msgs), { strict: true })).toBe(0);
@@ -87,6 +89,8 @@ describe('build --strict（CI の関門。docs/19 §3.3）: fixture は補い無
         strictErrors: 0,
         endpointsWithoutHandler: 1,
         undetermined: 0,
+        // Phase 9-L0（docs/23 §3.1）: sql（down のマイグレーション）が読めていない。strict では警告のまま
+        unreadLanguages: 1,
       });
       expect(g.project.generator.report.checked['go-types']).toEqual({
         status: 'ok',
@@ -884,6 +888,9 @@ describe('examples/fixture-gaps（隙間を仕込んだ fixture。docs/19 §4・
         endpointsWithoutHandler: 1,
         undetermined: 0,
         screensWithoutHtml: 0,
+        // Phase 9-L0（docs/23 §3.1）: php（legacy/api/stats.php）と sql（down のマイグレーション）が読めていない。
+        // 9-L0 では strict の警告で、エラーの数（3）は変わらない
+        unreadLanguages: 2,
       });
       // 見つかったこと: (b) map[string]any の body・(d) 機能フラグ・(e) 任意のクエリ date は strict にも報告の一覧にも
       // 出ない（コードを読んで見つける隙間。skill の references/report.md §2）。その元の形を固定する
