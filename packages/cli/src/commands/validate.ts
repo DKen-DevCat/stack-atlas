@@ -1,10 +1,52 @@
-import { validateAnyGraph } from '@stack-atlas/schema';
+import { validateAnyGraph, type HarnessReportV2 } from '@stack-atlas/schema';
 import { readFileSync } from 'node:fs';
 
-/** `stack-atlas validate <graph.json...>`。version 1 / 2 を見て検証器を選ぶ。出力は stack-atlas-validate（@stack-atlas/schema）と同じ */
-export function runValidate(files: string[], out: (line: string) => void = console.log): number {
+export interface ValidateOptions {
+  /**
+   * graph.json の build の報告（project.generator.report）を読み、strict の違反・報告の無い graph・飛ばした言語アダプタ・
+   * 失敗した抽出器をエラーにする（docs/19 §3.3、D72。CI の関門は build --strict で、これは補助）
+   */
+  strict?: boolean;
+}
+
+/** report の strict の判定（エラーの文。無ければ空） */
+export function strictReportErrors(json: unknown): string[] {
+  const g = json as { version?: unknown; project?: { generator?: { report?: unknown } } };
+  if (g?.version !== 2)
+    return ['--strict は graph.json v2 だけを読みます（v1 には build の報告がありません）'];
+  const report = g.project?.generator?.report as HarnessReportV2 | undefined;
+  if (!report || typeof report !== 'object')
+    return [
+      'build の報告（project.generator.report）がありません。stack-atlas build で作った graph ではないので、strict を確かめられません',
+    ];
+  const errors: string[] = [];
+  for (const [name, c] of Object.entries(report.checked ?? {})) {
+    if (c?.status === 'skipped' && c.role === 'language')
+      errors.push(
+        `言語アダプタ ${name} が飛ばされた graph です（${c.reason ?? '理由なし'}）。検査が弱まっているので strict ではエラー`,
+      );
+    // 2026-11-10（8-4 のレビュー）: 失敗した抽出器も（以前は skipped だけを見ていた）
+    if (c?.status === 'failed')
+      errors.push(
+        `抽出器 ${name} が失敗した graph です（${c.reason ?? '理由なし'}）。strict ではエラー`,
+      );
+  }
+  const n = report.counts?.strictErrors ?? 0;
+  if (n > 0) {
+    errors.push(`build の strict の違反が ${n} 件あります`);
+    for (const e of report.lists?.strictErrors ?? []) errors.push(`  ${e}`);
+  }
+  return errors;
+}
+
+/** `stack-atlas validate [--strict] <graph.json...>`。version 1 / 2 を見て検証器を選ぶ。出力は stack-atlas-validate（@stack-atlas/schema）と同じ */
+export function runValidate(
+  files: string[],
+  out: (line: string) => void = console.log,
+  opts: ValidateOptions = {},
+): number {
   if (files.length === 0) {
-    console.error('使い方: stack-atlas validate <graph.json> [<graph.json> ...]');
+    console.error('使い方: stack-atlas validate [--strict] <graph.json> [<graph.json> ...]');
     return 2;
   }
   let failed = false;
@@ -18,14 +60,19 @@ export function runValidate(files: string[], out: (line: string) => void = conso
       continue;
     }
     const { ok, issues } = validateAnyGraph(json);
+    const strict = opts.strict ? strictReportErrors(json) : [];
     const nErr = issues.filter((e) => e.level === 'error').length;
     const nWarn = issues.length - nErr;
-    out(`${ok ? '✓' : '✗'} ${file}: エラー ${nErr} 件、警告 ${nWarn} 件`);
+    const pass = ok && strict.length === 0;
+    out(
+      `${pass ? '✓' : '✗'} ${file}: エラー ${nErr} 件、警告 ${nWarn} 件${opts.strict ? `、strict のエラー ${strict.filter((l) => !l.startsWith('  ')).length} 件` : ''}`,
+    );
     for (const e of issues) {
       const tag = e.level === 'error' ? 'エラー' : '警告';
       out(`  [${tag}] ${e.path}: ${e.message}`);
     }
-    if (!ok) failed = true;
+    for (const l of strict) out(l.startsWith('  ') ? `  ${l}` : `  [strict] ${l}`);
+    if (!pass) failed = true;
   }
   return failed ? 1 : 0;
 }

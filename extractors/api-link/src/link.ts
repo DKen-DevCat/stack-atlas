@@ -9,7 +9,14 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { relative } from 'node:path';
 import type { PartialGraph, PartialNode, RepoContext, StackAtlasConfig } from '@stack-atlas/core';
-import { globBase, globToRegExp, isRoutePathTooLong, MAX_ROUTE_PATH } from '@stack-atlas/core';
+import {
+  confineRepoPath,
+  globBase,
+  globInRepo,
+  globToRegExp,
+  isRoutePathTooLong,
+  MAX_ROUTE_PATH,
+} from '@stack-atlas/core';
 import { parseClientFiles, type ApiCall } from './client.js';
 import {
   apiPathMatches,
@@ -45,12 +52,20 @@ export function sameFile(
   return f === rel || f === `${ctx.repoName}/${rel}`;
 }
 
-/** api.client ＋ api.clients の glob に合う repo 相対パス（ソート済み） */
+/**
+ * api.client ＋ api.clients の glob に合う repo 相対パス（ソート済み）。repo の外（絶対パス・`..`・外へ出るリンク）は読まない
+ * （2026-11-10 8-4 のレビュー S2）
+ */
 export function clientFiles(ctx: Pick<RepoContext, 'root' | 'resolve'>, api: ApiSection): string[] {
   const out = new Set<string>();
-  if (api?.client && existsSync(ctx.resolve(api.client)))
+  if (
+    api?.client &&
+    'abs' in confineRepoPath(ctx.root, api.client) &&
+    existsSync(ctx.resolve(api.client))
+  )
     out.add(toPosix(api.client).replace(/^\.\//, ''));
   for (const g of api?.clients ?? []) {
+    if (!globInRepo(ctx.root, g)) continue;
     const re = globToRegExp(g);
     for (const abs of walk(ctx.resolve(globBase(g) || '.'))) {
       const rel = toPosix(relative(ctx.root, abs));

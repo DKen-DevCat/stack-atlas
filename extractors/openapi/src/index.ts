@@ -22,6 +22,7 @@ import type {
   PartialNodeV2,
   RepoContext,
 } from '@stack-atlas/core';
+import { confineRepoPath } from '@stack-atlas/core';
 import type { NamedType } from '@stack-atlas/schema';
 import {
   DEFAULT_MAX_ITEMS,
@@ -66,6 +67,9 @@ export function openapiFiles(ctx: Pick<RepoContext, 'root' | 'repoName' | 'confi
     for (const f of configured) {
       const spec = typeof f === 'string' ? { path: f } : f;
       if (spec.repo && spec.repo !== ctx.repoName) continue;
+      // repo の外（絶対パス・`..`・外へ出るリンク）は読まない（2026-11-10 8-4 のレビュー S2）
+      if (typeof spec.path !== 'string' || !('abs' in confineRepoPath(ctx.root, spec.path)))
+        continue;
       if (exists(spec.path)) out.push(spec.path.replace(/^\.\//, ''));
     }
     return out;

@@ -2,9 +2,9 @@
  * cloudformation 抽出器: AWS CDK（cdk.out/*.template.json）/ SAM（template.yaml）/ 素の CFn → infra ノードと flow エッジ。
  * テンプレートを Terraform JSON の形に変換して @stack-atlas/tf-graph（cdktf / terraform と共通）に渡す。docs/12 §3.3。
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, relative } from 'node:path';
-import { matchGlob, sectionFor } from '@stack-atlas/core';
+import { confineRepoPath, matchGlob, sectionFor } from '@stack-atlas/core';
 import type { Extractor, PartialGraph, RepoContext } from '@stack-atlas/core';
 import {
   buildInfraGraph,
@@ -25,9 +25,15 @@ const DEFAULT_SAM = ['template.yaml', 'template.yml', 'template.json'];
 const section = (ctx: RepoContext) => sectionFor(ctx, ctx.config.cloudformation);
 const toPosix = (p: string) => p.split('\\').join('/');
 
-/** glob に合うファイル（repo 相対、posix） */
+/**
+ * glob に合うファイル（repo 相対、posix）。repo の外（絶対パス・`..`・外へ出るリンク）は読まず、途中のシンボリックリンクは
+ * 辿らない（2026-11-10 8-4 のレビュー S2）
+ */
 function globFiles(ctx: RepoContext, glob: string): string[] {
-  if (!/[*?{[]/.test(glob)) return existsSync(ctx.resolve(glob)) ? [toPosix(glob)] : [];
+  if (!/[*?{[]/.test(glob))
+    return 'abs' in confineRepoPath(ctx.root, glob) && existsSync(ctx.resolve(glob))
+      ? [toPosix(glob)]
+      : [];
   // ワイルドカードより前の固定部分から歩く
   const segs = toPosix(glob).split('/');
   const fixed: string[] = [];
@@ -36,6 +42,7 @@ function globFiles(ctx: RepoContext, glob: string): string[] {
     fixed.push(s);
   }
   const out: string[] = [];
+  if (!('abs' in confineRepoPath(ctx.root, fixed.join('/') || '.'))) return out;
   const walk = (dir: string, depth: number) => {
     let names: string[];
     try {
@@ -48,10 +55,11 @@ function globFiles(ctx: RepoContext, glob: string): string[] {
       const rel = dir ? `${dir}/${n}` : n;
       let st;
       try {
-        st = statSync(ctx.resolve(rel));
+        st = lstatSync(ctx.resolve(rel));
       } catch {
         continue;
       }
+      if (st.isSymbolicLink()) continue;
       if (st.isDirectory()) {
         if (depth < 8) walk(rel, depth + 1);
       } else if (matchGlob(rel, glob)) out.push(rel);

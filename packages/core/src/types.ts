@@ -58,6 +58,8 @@ export interface BuildIssue {
   /** `/nodes/3/layer`・`extractor:<name>`・`screens:<route>` など */
   path: string;
   message: string;
+  /** 数字の報告の中身（screens のカバー率など。build --dry-run --json の screens が読む。docs/19 §3.2） */
+  data?: Record<string, unknown>;
 }
 
 /** 抽出器 1 つの出力。マージで統合される */
@@ -74,6 +76,11 @@ export interface PartialGraph {
    * issues.json に足す報告（パイプラインが抽出器ごとに集める。マージはしない）。抽出器はビルドを止めないので error は出さない
    */
   issues?: Array<BuildIssue & { level: 'warning' | 'info' }>;
+  /**
+   * 対象は見つけた（detect が true）のに動かせなかった理由（go-types の go が無いなど）。build の報告の checked で
+   * `skipped` になり、validate --strict がエラーにする（検査が黙って弱まらないように。docs/19 §3.3、D72）
+   */
+  skipped?: string;
 }
 
 export interface Logger {
@@ -253,6 +260,42 @@ export interface Overrides {
   remove?: Array<string | Edge>;
   /** インフラノード ID → 載っているノード ID の配列（deploy エッジを張る） */
   deploy?: Record<string, string[]>;
+  /** v2 の補い（docs/19 §3.1。supplements.ts）。各要素の形は当てるときに確かめる（解けないものは report に出す） */
+  v2?: SupplementsV2;
+}
+
+/**
+ * 項目の参照の書き方（docs/19 §3.1）: 文字列（`<箱>#<口>/<項目>`。番号の項目 `call_1` などを含むなら expect が要る）、
+ * `{ ref, expect }`、意味の参照 `{ call: { in, to } }`・`{ call: { in, http: "GET /x" } }`・`{ ret: { in, from } }`
+ * （path で子へ下りる）。links・when の箱の中の参照は `in` を省く（その箱）
+ */
+export type SupplementRef =
+  | string
+  | { ref: string; expect?: SupplementFingerprint }
+  | {
+      call: { in?: string; to?: string; http?: string };
+      path?: string;
+      expect?: SupplementFingerprint;
+    }
+  | { ret: { in?: string; from: string }; path?: string; expect?: SupplementFingerprint };
+
+/** 番号の参照の指紋（番号の段の項目の name・type、呼び出しなら `METHOD /path`） */
+export interface SupplementFingerprint {
+  name?: string;
+  type?: string;
+  http?: string;
+}
+
+/** overrides の `v2:` の節（docs/19 §3.1。要素は未検証のまま持ち、当てるときに確かめる） */
+export interface SupplementsV2 {
+  nodes?: Array<Record<string, unknown>>;
+  wires?: Array<Record<string, unknown>>;
+  retarget?: Array<Record<string, unknown>>;
+  remove?: Array<Record<string, unknown>>;
+  links?: Array<Record<string, unknown>>;
+  variants?: Array<Record<string, unknown>>;
+  when?: Array<Record<string, unknown>>;
+  items?: Array<Record<string, unknown>>;
 }
 
 /** flows.yaml の 1 要素。steps は [node, text] か {node, text} */

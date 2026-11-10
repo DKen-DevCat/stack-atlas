@@ -1,5 +1,5 @@
 /** api-link の内部ヘルパ */
-import { readdirSync, statSync } from 'node:fs';
+import { lstatSync, readdirSync } from 'node:fs';
 import { basename, extname, join, sep } from 'node:path';
 import type { Cache } from '@stack-atlas/schema';
 import type { PartialNode } from '@stack-atlas/core';
@@ -29,7 +29,10 @@ export function walk(dir: string, out: string[] = []): string[] {
   for (const name of entries.sort()) {
     if (name === 'node_modules' || name.startsWith('.')) continue;
     const p = join(dir, name);
-    if (statSync(p).isDirectory()) walk(p, out);
+    // シンボリックリンクは辿らない（repo の外へ出させない。2026-11-10 8-4 のレビュー S2）
+    const st = lstatSync(p);
+    if (st.isSymbolicLink()) continue;
+    if (st.isDirectory()) walk(p, out);
     else out.push(p);
   }
   return out;

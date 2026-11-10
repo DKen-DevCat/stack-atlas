@@ -4,7 +4,7 @@
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { RepoContext } from '@stack-atlas/core';
+import { confineRepoPath, type RepoContext } from '@stack-atlas/core';
 
 // パスの正規化と照合は core に移した（docs/17 §7 #5。合流 join.ts でも使う）。従来の import 先のまま使えるよう再 export する
 export {
@@ -52,8 +52,9 @@ export interface UpstreamLookup {
 }
 
 export function loadGateway(ctx: RepoContext, upstream: UpstreamLookup): GatewayInfo {
-  const out = ctx.resolve(ctx.config.cdktf?.out ?? 'infra/cdktf.out');
-  const stacksDir = join(out, 'stacks');
+  // repo の外（絶対パス・`..`・外へ出るリンク）は読まない（2026-11-10 8-4 のレビュー S2）
+  const conf = confineRepoPath(ctx.root, ctx.config.cdktf?.out ?? 'infra/cdktf.out');
+  const stacksDir = 'abs' in conf ? join(conf.abs, 'stacks') : '';
   const wanted = ctx.config.cdktf?.stack;
   const stacks = existsSync(stacksDir)
     ? readdirSync(stacksDir)

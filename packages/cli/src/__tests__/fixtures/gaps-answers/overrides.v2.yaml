@@ -1,0 +1,57 @@
+# examples/fixture-gaps の補いの参照解（docs/19 §9 の正解表）。harness.test.ts が fixture-gaps の写しの
+# stack-atlas.overrides.yaml の末尾にこの v2: の節を足し、.stack-atlas/ を重ねて build --strict が通ることを確かめる
+# （仕込んだ隙間が、skill の書く補いで埋まることの証明）。fixture-gaps の中には置かない（ドッグフードのエージェントが読めてしまう）
+v2:
+  wires:
+    # (a) 外部の天気 API。箱は .stack-atlas/graph/external.v2.yaml
+    - from: { call: { in: "fn:getWeather", http: "GET /v1/today" }, path: input }
+      to: "external:weather-api#in/path"
+      via: http
+      label: "GET /v1/today"
+      reason: "外部の天気 API（api.example-weather.test）。自前の OpenAPI に無いので合流できない"
+    - from: "external:weather-api#out/body"
+      to: { ref: "fn:getWeather#in/ret_1", expect: { name: "fetch() の戻り", type: "Response" } }
+      via: http
+      reply: true
+      reason: "天気 API の応答が fetch の戻りに入る"
+    # (c) OpenAPI に無い webhook。送り手の箱は .stack-atlas/graph/external.v2.yaml
+    - from: "external:receipt-service#out/event"
+      to: "fn:internal/api.handleReceiptWebhook#in/body"
+      via: http
+      label: "POST /webhooks/receipt"
+      reason: "レシート取り込みサービス（外部）からの Webhook。OpenAPI に載っていない"
+  items:
+    # (b) map[string]any で受ける body の中身（コードが読むキーだけ）
+    - at: "fn:internal/api.handleCreateTransaction#in/body"
+      expect: { type: "map[string]any" }
+      children:
+        - { id: id, name: id, type: string, wireType: string, optional: true }
+        - { id: merchant, name: merchant, type: string, wireType: string, optional: true }
+        - { id: amount, name: amount, type: float64, wireType: number, optional: true }
+      reason: "body を map[string]any で受け、id・merchant・amount のキーだけを読む"
+  variants:
+    # (d) 機能フラグ
+    - node: "comp:TodayIsland"
+      id: new_total
+      name: "新しい合計カード（NEXT_PUBLIC_FEATURE_NEW_TOTAL が 1）"
+      default: false
+      reason: "機能フラグで TotalCardV2 と TotalCard を切り替える"
+    # (e) 任意のクエリ date
+    - node: "fn:getToday"
+      id: date
+      name: "日付の指定"
+      default: false
+      reason: "date は任意（OpenAPI の required: false）。空ならサーバーが今日の分を返す"
+  when:
+    - node: "comp:TodayIsland"
+      link: { from: { ret: { from: "fn:toTodayView" } }, to: { call: { to: "comp:TotalCardV2" }, path: view } }
+      when: { new_total: true }
+      reason: "フラグが 1 のときだけ TotalCardV2 を描く"
+    - node: "comp:TodayIsland"
+      link: { from: { ret: { from: "fn:toTodayView" } }, to: { call: { to: "comp:TotalCard" }, path: view } }
+      when: { new_total: false }
+      reason: "フラグが 1 でなければ TotalCard を描く"
+    - node: "fn:getToday"
+      link: { from: "in/date", to: { call: { http: "GET /today" }, path: query.date } }
+      when: { date: true }
+      reason: "date を渡したときだけ日付を指定する"

@@ -29,7 +29,13 @@ import type {
   PartialNode,
   RepoContext,
 } from '@stack-atlas/core';
-import { findClassifyRule, globToRegExp, sectionFor, toArray } from '@stack-atlas/core';
+import {
+  confineRepoPath,
+  findClassifyRule,
+  globToRegExp,
+  sectionFor,
+  toArray,
+} from '@stack-atlas/core';
 import {
   findNextDirs,
   listNextFiles,
@@ -86,7 +92,8 @@ export function tsconfigPaths(ctx: RepoContext): string[] {
   const list = [...(ts?.tsconfig ?? [])];
   if (next?.tsconfig && !list.includes(next.tsconfig)) list.push(next.tsconfig);
   if (list.length === 0) list.push('tsconfig.json');
-  return list.filter((p) => existsSync(ctx.resolve(p)));
+  // repo の外（絶対パス・`..`・外へ出るリンク）は読まない（2026-11-10 8-4 のレビュー S2）
+  return list.filter((p) => 'abs' in confineRepoPath(ctx.root, p) && existsSync(ctx.resolve(p)));
 }
 
 const toPosix = (p: string) => p.split(sep).join('/');

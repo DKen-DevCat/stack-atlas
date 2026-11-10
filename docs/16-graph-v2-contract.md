@@ -153,6 +153,7 @@ body の無い応答（`out/status`）から呼び出し元の `ret_n` への線
 - `links` を省略した箱は「全 in → 全 out」（不透明）。既定の例外: `kind: table` は `key → read` だけ、`kind: endpoint` は `in → req` と `res → out` の id が同じ項目どうし
 - 親の単位の `links` は子に写る（docs/15 §3.4 の親子の写し）。写らない子（改名）だけ明示する
 - `links[].confidence`: `exact`（型 API で確定）/ `crude`（state・ローカル変数経由の推定）/ `unknown`。`from` が分からない links は書かず、箱を不透明に落とす
+- `links[].meta`（任意。2026-11-09 8-4）: 補いの出どころ。overrides の `v2:` で足した links は `{ by: "overrides", reason }`（docs/19 §3.1）。補いで足した線は `wires[].meta` に `{ by: "overrides", confidence, reason }`、手書きの部分グラフの箱・線は `meta.by: "hand"`
 
 ## 7. 分岐（variants / when）
 
@@ -171,6 +172,26 @@ body の無い応答（`out/status`）から呼び出し元の `ret_n` への線
 
 - `types[]` は `typeRef` の宛先。同じ型の写しが複数の言語にある（OpenAPI の Entry、TS の Entry、Go の Entry）ときは **契約側を正**にして 1 つにし、`typeRef` は全部それを指す。写しの場所は `meta.copies` に
 - `views[]` は flows.yaml の置き換え（docs/15 §3.9）。`start` は箱 id か項目の参照（文字列）、線なら `{ from, to }`（線に id は無い）。`variants` のキーは必ず `<nodeId>#<variantId>`
+- **`.stack-atlas/views.yaml`**（2026-11-09 8-4。docs/19 §3.4）: この形の view を配列か `{ views: [...] }` で書く。build は flows.yaml 由来の view に重ね、**同じ id なら views.yaml が勝つ**。`start` か分岐のキーが解けない view は落として報告する（`build --strict` ではエラー）。`start` が group になった v1 の箱なら中の最初の関数の箱にする。雛形は `stack-atlas init-views`
+
+### 8.1 build の報告（`project.generator.report`。2026-11-09 8-4）
+
+`stack-atlas build` は v2 の graph.json の `project.generator.report` に、ハーネスの報告（docs/19 §3.2）の数と一覧を書く。`validate --strict` が読む（自己申告なので品質の関門で、安全の境界ではない。CI の関門は `build --strict`。D72）。
+
+```jsonc
+"generator": { "v2": "upgrade", "adapters": ["ts-types", "go-types"], "contracts": ["openapi", "sql"],
+  "report": {
+    "version": 1,
+    "checked": { "go-types": { "status": "ok", "role": "language" }, "screens": { "status": "ok" } },   // ok | disabled | not-detected | failed | skipped（見つけたのに動かせなかった。reason 付き）
+    "counts": { "unjoined": 0, "endpointsWithoutHandler": 1, "undetermined": 0, "opaque": 6, "crude": 30, "estimates": 0,
+                "screensWithoutHtml": 0, "supplementsApplied": 0, "supplementsUnresolved": 0, "supplementsMismatch": 0,
+                "removeMissing": 0, "strictErrors": 0, "strictWarnings": 5 },
+    "lists": { "unjoined": [], "undetermined": [], "strictErrors": [] } } }        // 1 つの一覧につき 100 件まで
+```
+
+`validate --strict` のエラー: report が無い graph、`checked` に `skipped` の言語アダプタがある graph、`counts.strictErrors` が 0 でない graph（`lists.strictErrors` を出す）。
+
+画面の `screen.regions[].source`（2026-11-09 8-4。docs/19 §3.7）: 省略時は `screenshot`（スクショで測った値）。`yaml` は `.stack-atlas/screens/<slug>.regions.yaml` で補った値で、ビューアは ref ごとに合わせ、HTML の計測（とスクショの regions）にある ref はそちらが勝つ。v1 の `screen.regions[].source` も同じ語彙
 
 ## 9. 検証（validateGraph v2）
 
@@ -182,7 +203,7 @@ body の無い応答（`out/status`）から呼び出し元の `ret_n` への線
 - 同じ `(from, to)` の線の重複、項目 `id` の衝突、`.` を含む項目 `id`
 - `kind: cache` に `hit` の分岐が無い
 
-警告（`--strict` でエラー）:
+警告（2026-11-09 8-4 で変更: `--strict` でも警告のまま。D71。infra の箱は契約で `_` の 1 項目なので口の単位の線は必ず残る。strict のエラーは「埋められる隙間」だけで、docs/19 §3.3 の `strictIssues`）:
 - 口の単位の線（`#in/*` のような 1 項目の口）が残っている箱の数（項目まで下がっていない所）
 - `links` を省略した箱のうち、in と out の両方に 2 つ以上の項目がある箱（不透明な箱）
 - `wireType: unknown` の項目

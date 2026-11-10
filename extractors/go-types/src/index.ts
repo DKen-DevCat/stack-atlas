@@ -398,7 +398,8 @@ export function createGoTypesExtractor(opts: GoTypesOptions = {}): Extractor {
           ctx.log.warn(
             `go-types: ${e.message}。Go の関数の単位の解析を飛ばします（Go はパッケージの箱の単位のまま。go 1.21 以上を入れると関数の箱が出ます）`,
           );
-          return { nodes: [], edges: [] };
+          // build の報告の checked で skipped（validate --strict / build --strict がエラーにする。docs/19 §3.3、D72）
+          return { nodes: [], edges: [], skipped: e.message };
         }
         throw e;
       }

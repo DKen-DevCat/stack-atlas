@@ -167,7 +167,11 @@
             "properties": {
               "ref": { "$ref": "#/$defs/nodeId", "description": "この領域を描画しているノード（通常 comp:*）" },
               "x": { "type": "number" }, "y": { "type": "number" },
-              "w": { "type": "number" }, "h": { "type": "number" }
+              "w": { "type": "number" }, "h": { "type": "number" },
+              "source": {
+                "enum": ["screenshot", "yaml"],
+                "description": "領域の出どころ。省略時は screenshot（スクショで測った値）。yaml は .stack-atlas/screens/<slug>.regions.yaml で補った値（docs/19 §3.7。HTML の計測が勝つ）"
+              }
             }
           }
         }

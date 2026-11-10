@@ -447,7 +447,9 @@ describe.skipIf(!hasGo)('go-types: 安全の約束（シンボリックリンク
   }, 120_000);
 
   it('時間の上限を守る（止めて、延ばし方を書いたエラー）', async () => {
-    await expect(runHelper(['-root', dir], { timeoutMs: 1 })).rejects.toThrow(/上限で止まりました/);
+    // 2026-11-10 変更（8-4 の CI）: 小さな dir では helper が 1ms の上限より先に終わることがあり、CI で不安定だった。
+    // 標準ライブラリの型を読む shop（数百 ms かかる）で確かめる
+    await expect(runHelper(['-root', fixture('shop')], { timeoutMs: 1 })).rejects.toThrow(/上限で止まりました/);
   });
 });
 
@@ -459,7 +461,12 @@ describe('go-types: go が無いとき（D51）', () => {
     const log = createMemoryLogger();
     const ex = createGoTypesExtractor({ ...missing, env: {} });
     const part = await ex.extract(ctxFor(root, {}, log), { nodes: [], edges: [] });
-    expect(part).toEqual({ nodes: [], edges: [] });
+    // 2026-11-09 変更（8-4）: 飛ばした理由を skipped に返す（build の報告の checked が skipped になり、strict がエラーにする）
+    expect(part).toEqual({
+      nodes: [],
+      edges: [],
+      skipped: expect.stringContaining('go が見つかりません'),
+    });
     expect(log.of('warn').some((m) => m.startsWith('go-types: go が見つかりません'))).toBe(true);
   });
 

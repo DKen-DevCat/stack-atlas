@@ -30,14 +30,27 @@ const BOTTOM = 36;
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
+/** 倍率の下限のさらに下の止め（0 や負にしない） */
+const K_FLOOR = 0.002;
+
+/** 全体がちょうど収まる倍率（上下限で切らない） */
+export function fitScale(vp: Viewport, size: { w: number; h: number }): number {
+  if (vp.width <= 0 || vp.height <= 0 || size.w <= 0 || size.h <= 0) return 1;
+  return Math.min((vp.width - 2 * SIDE) / size.w, (vp.height - vp.top - BOTTOM) / size.h);
+}
+
+/**
+ * 縮小の下限。ふだんは K_MIN だが、図が大きくて K_MIN でも全体が収まらないときは「全体が収まる倍率」の 8 割まで
+ * 下げる（2026-11-10、実リポジトリ（箱 316）で最大に縮小しても全体が見えなかった。ユーザーのフィードバック）
+ */
+export function minScale(vp: Viewport, size: { w: number; h: number }): number {
+  return Math.max(K_FLOOR, Math.min(K_MIN, fitScale(vp, size) * 0.8));
+}
+
 /** 全体が収まる倍率で中央に置く */
 export function fitView(vp: Viewport, size: { w: number; h: number }): View {
   if (vp.width <= 0 || vp.height <= 0 || size.w <= 0 || size.h <= 0) return { k: 1, tx: 0, ty: 0 };
-  const k = clamp(
-    Math.min((vp.width - 2 * SIDE) / size.w, (vp.height - vp.top - BOTTOM) / size.h),
-    K_MIN,
-    K_MAX,
-  );
+  const k = clamp(fitScale(vp, size), minScale(vp, size), K_MAX);
   return {
     k,
     tx: (vp.width - size.w * k) / 2,

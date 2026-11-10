@@ -85,25 +85,36 @@ export interface RegionsOf {
 /**
  * 画面の領域。graph.json の screen.regions（空でない配列）があれば計測より優先する（docs/18 §3.3）。graph の regions は
  * screen.width × height の座標なので、ビューポート（screenViewport。範囲に収めた値）の座標に直して切り詰める。
- * 空の regions（スクショで data-component が 1 つも無かった）は無いのと同じに扱い、計測を使う
+ * 空の regions（スクショで data-component が 1 つも無かった）は無いのと同じに扱い、計測を使う。
+ *
+ * `source: "yaml"` の領域（regions.yaml で補ったもの。docs/19 §3.7）は ref ごとに合わせ、計測（とスクショの regions）に
+ * 無い ref だけを足す（計測が勝つ）。yaml の領域しか無ければ from は graph
  */
 export function regionsOf(
   screen: ScreenV2 | undefined,
   measured: readonly ScreenRegion[] | undefined,
 ): RegionsOf {
   const vp = screenViewport(screen);
-  const given = screen?.regions;
-  if (Array.isArray(given) && given.length > 0) {
-    const sx = screen && screen.width > 0 ? vp.width / screen.width : 1;
-    const sy = screen && screen.height > 0 ? vp.height / screen.height : 1;
+  const given = Array.isArray(screen?.regions) ? screen!.regions : [];
+  const sx = screen && screen.width > 0 ? vp.width / screen.width : 1;
+  const sy = screen && screen.height > 0 ? vp.height / screen.height : 1;
+  const scaled = (list: typeof given): ScreenRegion[] => {
     const regions: ScreenRegion[] = [];
-    for (const r of given) {
+    for (const r of list) {
       if (typeof r?.ref !== 'string') continue;
       const c = clipRegion({ x: r.x * sx, y: r.y * sy, w: r.w * sx, h: r.h * sy }, vp);
       if (c) regions.push({ ref: r.ref, ...c });
     }
-    return { regions, from: 'graph' };
-  }
-  if (measured && measured.length > 0) return { regions: [...measured], from: 'measured' };
+    return regions;
+  };
+  const yaml = scaled(given.filter((r) => r?.source === 'yaml'));
+  const fill = (base: ScreenRegion[]) => {
+    const have = new Set(base.map((r) => r.ref));
+    return [...base, ...yaml.filter((r) => !have.has(r.ref))];
+  };
+  const shots = given.filter((r) => r?.source !== 'yaml');
+  if (shots.length > 0) return { regions: fill(scaled(shots)), from: 'graph' };
+  if (measured && measured.length > 0) return { regions: fill([...measured]), from: 'measured' };
+  if (yaml.length) return { regions: yaml, from: 'graph' };
   return { regions: [], from: 'none' };
 }

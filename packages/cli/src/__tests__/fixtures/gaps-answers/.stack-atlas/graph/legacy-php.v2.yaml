@@ -1,0 +1,37 @@
+# アダプタの無い言語（PHP）の handler。meta.route を書くと、合流の段が呼び出し GET /stats と結ぶ
+# （in の項目の meta.http: query に call_n.query が、out の meta.http: response から ret_n へ線が入る）
+nodes:
+  - id: "fn:legacy/api/stats"
+    kind: fn
+    name: "stats.php"
+    runtime: server
+    file: platform/legacy/api/stats.php
+    line: 1
+    meta: { route: "GET /stats", lang: php }
+    ports:
+      - id: in
+        dir: in
+        items:
+          - id: query
+            name: query
+            type: "$_GET"
+            wireType: object
+            meta: { http: query }
+            children:
+              - { id: month, name: month, type: string, wireType: string, optional: true }
+      - id: out
+        dir: out
+        items:
+          - id: body
+            name: body
+            type: array
+            wireType: object
+            meta: { http: response }
+            children:
+              - { id: month, name: month, type: string, wireType: string }
+              - { id: total, name: total, type: int, wireType: integer }
+              - { id: topMerchant, name: topMerchant, type: string, wireType: string }
+    links:
+      - { from: in/query.month, to: out/body.month, confidence: exact }
+      - { from: in/query.month, to: out/body.total, confidence: crude }
+      - { from: in/query.month, to: out/body.topMerchant, confidence: crude }

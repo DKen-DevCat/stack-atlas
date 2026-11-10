@@ -169,3 +169,73 @@ export {
   type UpgradeOptions,
   type InfraProfile,
 } from './upgrade.js';
+// ハーネス（Phase 8-4。docs/19）: 補い（overrides の v2:）・手書きの部分グラフ・views.yaml・報告と strict・安全な読み書き
+export {
+  applySupplementsA,
+  applySupplementsB,
+  finishRetarget,
+  materializeDefaultLinks,
+  countSupplements,
+  supplementText,
+  MAX_SUPPLEMENT_CHILDREN,
+  MAX_SUPPLEMENTS_PER_KIND,
+  MAX_DEFAULT_LINKS,
+  type PendingWhen,
+  type SupplementKind,
+  type SupplementResult,
+  type SupplementStatus,
+  type StageAOptions,
+  type StageAResult,
+} from './supplements.js';
+export {
+  loadHandGraphs,
+  HAND_ADAPTER,
+  HAND_DIR,
+  HAND_LIMITS,
+  type HandGraphResult,
+} from './hand-graph.js';
+export {
+  isSecretFile,
+  stripSecretCode,
+  repoPathProblem,
+  confineRepoPath,
+  repoPath,
+  repoGlobs,
+  globInRepo,
+} from './secrets.js';
+export { applyViewsYaml, VIEWS_FILES, VIEWS_LIMITS, type ViewsYamlResult } from './views-yaml.js';
+export {
+  computeHarnessReport,
+  strictIssues,
+  toGraphReport,
+  REPORT_LIST_MAX,
+  type CheckedEntry,
+  type HarnessInput,
+  type HarnessReport,
+  type ScreenRouteReport,
+  type StrictIssue,
+  type StrictResult,
+  type UnjoinedCall,
+} from './strict.js';
+export { type UndeterminedWire } from './merge-v2.js';
+export { SUPPLEMENT_KEYS } from './overrides.js';
+export {
+  confineDir,
+  within,
+  findSiteFile,
+  readNoFollow,
+  readNoFollowResult,
+  SafeOutput,
+  type FindResult,
+  type ReadResult,
+} from './fsafe.js';
+export {
+  HARNESS_DIR,
+  MAX_YAML_ALIASES,
+  readLocalFile,
+  listLocalDir,
+  parseLocalYaml,
+  whyText,
+  type LocalReadResult,
+} from './local-files.js';
+export { clipRegion } from '@stack-atlas/wiring';

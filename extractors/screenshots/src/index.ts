@@ -8,6 +8,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import type { Browser, LaunchOptions } from 'playwright';
 import {
+  confineRepoPath,
   resolveRegionRef,
   type Extractor,
   type PartialGraph,
@@ -138,13 +139,41 @@ export function joinUrl(baseUrl: string, path: string): string {
   return baseUrl.replace(/\/+$/, '') + (path.startsWith('/') ? path : `/${path}`);
 }
 
+/**
+ * Chromium の起動の設定。サンドボックスを有効にする（2026-11-10 8-4 のレビュー S1: Playwright の既定は --no-sandbox で、
+ * 解析対象の repo の screenshots.baseUrl のページを、サンドボックスの無いブラウザで開いていた）
+ */
+export const LAUNCH_OPTIONS: Readonly<LaunchOptions> = { headless: true, chromiumSandbox: true };
+
+/** サンドボックスを外す明示の指定（サンドボックスの使えない Linux。CI の runner など） */
+export const NO_SANDBOX_ENV = 'STACK_ATLAS_CHROMIUM_NO_SANDBOX';
+
+/**
+ * 起動の設定。既定はサンドボックスあり。`STACK_ATLAS_CHROMIUM_NO_SANDBOX=1` のときだけ外す（2026-11-10: GitHub の
+ * ubuntu の runner は AppArmor で非特権のユーザー名前空間が使えず、サンドボックスありの Chromium が起動しない。
+ * 黙って外さず、利用者が自分の環境で明示したときだけにする）
+ */
+export function launchOptions(env: NodeJS.ProcessEnv = process.env): LaunchOptions {
+  return env[NO_SANDBOX_ENV] === '1' ? { ...LAUNCH_OPTIONS, chromiumSandbox: false } : { ...LAUNCH_OPTIONS };
+}
+
 async function launchBrowser(ctx: RepoContext): Promise<Browser> {
   const { chromium } = await import('playwright');
-  const opts: LaunchOptions = { headless: true };
+  const opts = launchOptions();
+  if (opts.chromiumSandbox === false)
+    ctx.log.warn(`screenshots: ${NO_SANDBOX_ENV}=1 なので Chromium をサンドボックス無しで起動します`);
   try {
     return await chromium.launch(opts);
   } catch (err) {
-    if (!existsSync(FALLBACK_EXECUTABLE)) throw err;
+    if (!existsSync(FALLBACK_EXECUTABLE)) {
+      if (opts.chromiumSandbox !== false && /sandbox/i.test((err as Error).message))
+        throw new Error(
+          `screenshots: Chromium をサンドボックスありで起動できません。サンドボックスの使える環境で動かすか、` +
+            `信頼できる baseUrl だけを撮るなら ${NO_SANDBOX_ENV}=1 で外してください（--no-screenshots で飛ばすこともできます）`,
+          { cause: err },
+        );
+      throw err;
+    }
     ctx.log.debug(
       `screenshots: chromium.launch() に失敗したので ${FALLBACK_EXECUTABLE} で再試行: ${(err as Error).message.split('\n')[0]}`,
     );
@@ -197,7 +226,13 @@ export const extractor: Extractor = {
     if (targets.length === 0) return { nodes: [], edges: [] };
 
     mkdirSync(shotsDir, { recursive: true });
-    const storageState = cfg.storageState ? ctx.resolve(cfg.storageState) : undefined;
+    // repo の外（絶対パス・`..`・外へ出るリンク）は読まない（2026-11-10 8-4 のレビュー S2）
+    const stateConf = cfg.storageState ? confineRepoPath(ctx.root, cfg.storageState) : undefined;
+    if (stateConf && !('abs' in stateConf))
+      ctx.log.warn(
+        `screenshots: storageState "${cfg.storageState}" は repo の外を指すので使いません`,
+      );
+    const storageState = stateConf && 'abs' in stateConf ? stateConf.abs : undefined;
     const useStorage = storageState !== undefined && existsSync(storageState);
     if (storageState && !useStorage) {
       ctx.log.debug(`screenshots: storageState ${storageState} が無いので未ログインで撮る`);

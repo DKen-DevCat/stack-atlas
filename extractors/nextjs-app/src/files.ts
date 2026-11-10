@@ -9,7 +9,7 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
-import { findAppDir, listRouteFiles, segmentToUrl } from '@stack-atlas/core';
+import { confineRepoPath, findAppDir, listRouteFiles, segmentToUrl } from '@stack-atlas/core';
 
 export type NextFileKind = 'page' | 'layout' | 'handler';
 
@@ -179,6 +179,11 @@ export function findNextDirs(
   cfg: { appDir?: string; pagesDir?: string } = {},
 ): NextDirs {
   const out: NextDirs = {};
+  // 設定の appDir・pagesDir が repo の外（絶対パス・`..`・外へ出るリンク）なら読まない（2026-11-10 8-4 のレビュー S2）
+  const inRepo = (p: string | undefined) =>
+    p && 'abs' in confineRepoPath(root, p) ? p : undefined;
+  if (cfg.appDir !== undefined && !inRepo(cfg.appDir)) return out;
+  if (cfg.pagesDir !== undefined && !inRepo(cfg.pagesDir)) return out;
   const appDir = findAppDir(root, cfg.appDir);
   if (appDir) out.appDir = toPosix(appDir);
   const pagesDir = findPagesDir(root, cfg.pagesDir);

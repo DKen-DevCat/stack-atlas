@@ -7,6 +7,7 @@ import {
   FLOW_TONES,
   KNOWN_EDGE_KINDS,
   KNOWN_NODE_KINDS,
+  REGION_SOURCES,
   SCREEN_SOURCES_V1,
 } from './types.js';
 import { SCREEN_SOURCES } from './v2.js';
@@ -63,6 +64,19 @@ describe('types.ts と graph.schema.json の一致', () => {
     expect([...SCREEN_SOURCES_V1].sort()).toEqual([...screen.properties.source!.enum!].sort());
     // upgradeGraph が screen をそのまま写すので、v1 と v2 の語彙は同じでなければならない
     expect([...SCREEN_SOURCES_V1].sort()).toEqual([...SCREEN_SOURCES].sort());
+  });
+
+  it('regions[].source（8-4。regions.yaml の補い。docs/19 §3.7）は v1 と v2 で同じ語彙', () => {
+    const regions = (
+      schema.$defs.screen!.properties as unknown as Record<
+        string,
+        { items: { properties: Record<string, { enum?: string[] }> } }
+      >
+    ).regions!;
+    expect(Object.keys(regions.items.properties).sort()).toEqual(
+      ['ref', 'x', 'y', 'w', 'h', 'source'].sort(),
+    );
+    expect([...REGION_SOURCES].sort()).toEqual([...regions.items.properties.source!.enum!].sort());
   });
 
   it('kinds の定義のフィールドが想定どおり', () => {

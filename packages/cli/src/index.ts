@@ -1,6 +1,6 @@
 export { main, USAGE } from './main.js';
 export { runBuild, formatBuildSummary, type BuildOptions } from './commands/build.js';
-export { runValidate } from './commands/validate.js';
+export { runValidate, strictReportErrors, type ValidateOptions } from './commands/validate.js';
 export { runDiff, formatDiff } from './commands/diff.js';
 export {
   runInitFlows,
@@ -18,4 +18,27 @@ export {
   type ServeOptions,
 } from './commands/serve.js';
 export { loadExtractors, EXTRACTOR_PACKAGES, type LoadExtractorsOptions } from './extractors.js';
-export { VIEWER_DIST } from './paths.js';
+export { VIEWER_DIST, HARNESS_SKILL } from './paths.js';
+export {
+  harnessJson,
+  formatHarnessSummary,
+  formatStrict,
+  createStderrLogger,
+} from './commands/harness.js';
+export {
+  runInitViews,
+  serializeViewsYaml,
+  viewCandidates,
+  type InitViewsOptions,
+} from './commands/init-views.js';
+export {
+  runInitSkill,
+  initSkill,
+  harnessVersion,
+  readSkillSource,
+  SKILL_DEST,
+  TEMPLATES,
+  MANIFEST,
+  type InitSkillOptions,
+  type InitSkillReport,
+} from './commands/init-skill.js';

@@ -15,6 +15,8 @@ import {
   openingView,
   READABLE_K,
   type Viewport,
+  fitScale,
+  minScale,
 } from './view';
 
 const BASELINE = new URL(
@@ -156,5 +158,26 @@ describe('Esc', () => {
   it('IME の変換中は何もしない（Esc は変換の取り消し）', () => {
     expect(escapeAction(esc({ tagName: 'TEXTAREA' }, true))).toBeNull();
     expect(escapeAction(esc(null, true))).toBeNull();
+  });
+});
+
+// 2026-11-10: 実リポジトリ（箱 316）で、最大に縮小しても全体が見えなかった（下限 0.1 で止まる）。ユーザーのフィードバック
+describe('大きな図の縮小の下限', () => {
+  const vp = { width: 1440, height: 900, top: 48 };
+  it('0.1 倍で収まる図の下限は 0.1 のまま', () => {
+    expect(minScale(vp, { w: 5000, h: 3000 })).toBe(0.1);
+  });
+  it('0.1 倍でも収まらない図は、全体が収まる倍率の 8 割まで縮められ、F（fitView）で全体が収まる', () => {
+    const size = { w: 60000, h: 40000 };
+    const fit = fitScale(vp, size);
+    expect(fit).toBeLessThan(0.1);
+    expect(minScale(vp, size)).toBeCloseTo(fit * 0.8, 6);
+    const v = fitView(vp, size);
+    expect(v.k).toBeCloseTo(fit, 6);
+    expect(size.w * v.k).toBeLessThanOrEqual(vp.width);
+    expect(size.h * v.k).toBeLessThanOrEqual(vp.height - vp.top);
+  });
+  it('下限は 0 や負にならない', () => {
+    expect(minScale(vp, { w: 1e9, h: 1e9 })).toBeGreaterThan(0);
   });
 });

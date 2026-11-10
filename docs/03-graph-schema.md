@@ -87,6 +87,7 @@ ID は repo をまたいで共有する（複数 repo でも `file` と違って
 - `html`（Phase 8-3b で追加）: graph.json からの相対パス。`screens` 抽出器がビルド成果物の HTML を route ごとに写し、許可リストで消毒したもの（script 無し。`<head>` の最初の子に CSP の meta。資産は `screens/_assets/<hash>.<ext>`。SVG はファイルにせず data: URL で埋め込む。docs/18 §3.3）。`screenshot` と両方あれば `html` を優先して描く。graph.json に `regions` があればビューアの計測より優先する
 - `source`（Phase 8-3b で追加）: `html` の出どころ。`next-export`（Next の静的エクスポート）・`dir`（任意のディレクトリ）・`next-build`・`wireframe`・`screenshot`（v2 の `screen.source` と同じ語彙。v1 → v2 の変換は `screen` をそのまま写し、`source` の無いスクショだけの画面は `screenshot` にする）
 - `screenshot` も `html` もない場合、ビューアはプレースホルダ（ルート名と regions の枠だけ）を描く
+- `regions[].source`（Phase 8-4 で追加）: 領域の出どころ。省略時は `screenshot`（スクショで測った値）。`yaml` は `.stack-atlas/screens/<slug>.regions.yaml` で補った値（HTML の `data-component` で測れない部品だけ。ビューアは ref ごとに合わせ、HTML の計測が勝つ。docs/19 §3.7）。v2 の `screen.regions[].source` と同じ語彙
 
 ## edges
 

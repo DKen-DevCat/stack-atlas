@@ -7,6 +7,8 @@
 #
 # やること:
 #   checkout（対象リポジトリ + Stack Atlas 本体）→ Stack Atlas をビルド
+#   →（screens を使うなら）対象アプリの静的エクスポートを作る
+#   → `stack-atlas build target --strict --dry-run`（関門。埋められる隙間があれば失敗。LLM は呼ばない。docs/19 §3.3）
 #   → `stack-atlas build . -o out --with-viewer`（graph.json（v2。配線図）・graph.v1.json（v1。3D の地図）・memos.json・
 #     スクショ・ビューアを out/ に出す。docs/16 §10）
 #   → 前回の graph.v1.json を prev/ に退避（3D の地図の差分表示 ?prev= 用）→ out/ を S3 に同期 → CloudFront を無効化
@@ -95,6 +97,25 @@ jobs:
       # 対象アプリの依存が必要な抽出器（ts-imports の型解決など）があれば、先に target で install しておく:
       #   - run: pnpm install --frozen-lockfile
       #     working-directory: target
+      # Go の関数の単位の解析（go-types）は go 1.21 以上が要る。go が無いと build --strict は失敗する（飛ばした言語アダプタ
+      # checked の skipped は strict のエラー。D87）。環境変数（STACK_ATLAS_REQUIRE_GO）は要らない
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22" # ★ 要変更: 対象の go.mod に合わせる（Go を使わないなら消す）
+
+      # screens（ビルド成果物の画面。docs/18 §3.3）を使うときだけ: 対象アプリの静的エクスポートを先に作る。
+      # 無いと HTML の無い route として build --strict が失敗する
+      # - name: 対象アプリの静的エクスポート
+      #   working-directory: target
+      #   run: |
+      #     pnpm install --frozen-lockfile
+      #     pnpm next build   # output: 'export' なら out/ に HTML が出る
+
+      # 関門: 埋められる隙間（結べない呼び出し・解けない補い・HTML の無い route など）があれば失敗にする。
+      # 出力先には書かない（--dry-run）。落ちたら手元でハーネス（docs/19。stack-atlas init --skill）のエージェントを呼ぶ
+      - name: strict（関門）
+        run: node stack-atlas/packages/cli/bin/stack-atlas.js build target --strict --dry-run --no-screenshots
+
       - name: graph.json を作る（ビューア同梱）
         run: node stack-atlas/packages/cli/bin/stack-atlas.js build target -o out --with-viewer
         # target/.stack-atlas/memos.json（Git で共有しているメモ）は out/memos.json にコピーされる

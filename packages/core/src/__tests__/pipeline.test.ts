@@ -238,7 +238,11 @@ describe('buildGraph（examples/fixture-repo の config / overrides / flows）',
     const v2 = res.graphV2!;
     expect(v2.version).toBe(2);
     // 8-1 のレビューで変更: v2 の project には変換の印 generator.v2 = "upgrade" が付く（ほかは v1 と同じ）
-    expect(v2.project).toEqual({ ...res.graph.project, generator: { v2: 'upgrade' } });
+    // 2026-11-09 変更（8-4）: build の報告 generator.report（docs/19 §3.3。validate --strict が読む）も付く
+    expect(v2.project).toEqual({
+      ...res.graph.project,
+      generator: { v2: 'upgrade', report: expect.objectContaining({ version: 1 }) },
+    });
     expect(validateGraphV2(v2).errors).toEqual([]);
     expect(res.issues.filter((i) => i.path.startsWith('v2:'))).toEqual([]);
     // 箱の単位なので、口の単位の線の警告が出る（項目まで下げるのは 8-2 の言語アダプタ）
