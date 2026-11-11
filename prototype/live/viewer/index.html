@@ -138,7 +138,8 @@ pre { margin: 0; padding: 6px 8px; background: var(--surface-2); border-radius: 
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const appUrl = new URLSearchParams(location.search).get('app');
-  if (!appUrl) { $('f-name').textContent = '?app= にアプリの URL がありません'; return; }
+  const NOT_TOOL_WINDOW = 'この画面は、道具が開いた窓の中でだけ動きます。`node prototype/live/run.mjs` を実行すると、別のブラウザの窓が開きます。その窓で操作してください。';
+  if (!appUrl) { $('f-name').textContent = NOT_TOOL_WINDOW; return; }
   const appOrigin = new URL(appUrl).origin;
   const data = await (await fetch('../data.json')).json();
   const frame = $('app');
@@ -290,6 +291,8 @@ pre { margin: 0; padding: 6px 8px; background: var(--surface-2); border-radius: 
 
   renderChips();
   frame.src = appUrl;
+  // 道具が開いた窓なら、アプリの枠から「開いた」の知らせがすぐ来る。来なければ、ふだんのブラウザで開かれている
+  setTimeout(() => { if (!window.__seen.length) $('f-name').textContent = NOT_TOOL_WINDOW; }, 4000);
 })();
 </script>
 </html>

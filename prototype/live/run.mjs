@@ -72,7 +72,15 @@ async function stop(code) {
 }
 
 if (!check) {
-  console.log(`アプリ: ${app.url}\nビューア: ${viewer.url}viewer/index.html\n窓を閉じると終わります。`);
+  await page.bringToFront();
+  console.log(
+    [
+      '窓を 1 つ開きました（Chromium か「Chrome for Testing」という名前の、別のブラウザです）。',
+      'その窓の中で、左のアプリを操作してください。',
+      'ふだんのブラウザで URL を開いても動きません（見るためのスクリプトは、道具が開いた窓にだけ入ります）。',
+      '窓を閉じると終わります。',
+    ].join('\n'),
+  );
   page.on('close', () => stop(0));
   browser.on('disconnected', () => stop(0));
 } else {
