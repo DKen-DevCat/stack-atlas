@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="ja">
+<!--
+  入口のモック（Phase 10-0a。設計は docs/25 §3.5）。2026-11-11、2 版。
+  左に画面、右に「この画面の挙動」と、選んだ挙動の経路（上から下へ）。画面には何も重ねない（D197）。
+  - 画面もデータも手で書いたもの。Stack Atlas はまだこれを作れない
+  - データは、Claude Whiteboards の試しで読んだ小さな OSS 2 つ（フロント 1 つ・バックエンド 1 つ）の記事の画面。
+    箱の下のファイル名と行は、その OSS のもの。フロントとバックエンドのつなぎは前提（注に書いてある）
+  - モックでは部品を押すと画面の中身が実際に変わるが、本物の画面は写しなので変わらない（D198）
+  - 参照用。新しい実装で置き換えても消さない
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stack Atlas 入口モック</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+JP:wght@400;500;600&display=swap">
+<style>
+/* レイアウト: 左に本物の画面、右にその画面の挙動と、選んだ挙動の経路（上から下へ）。重ねない・貼りつけない */
+:root {
+  --bg: #f2f4f7; --surface: #ffffff; --surface-2: #e8ecf1; --line: #d2d8e1;
+  --fg: #18202b; --muted: #5b6778;
+  --go: #2160e8; --go-soft: #dce7ff; --back: #b9530b; --back-soft: #ffe7d3;
+  --k-part: #6f45cf; --k-proc: #0b7f62; --k-api: #9a6708; --k-repo: #1f6fae; --k-store: #a73a37;
+  /* 取りこんだ画面は「写真」と同じ扱いで、見る側のテーマでは変えない */
+  --app-bg: #ffffff; --app-fg: #1f2733; --app-muted: #6b7686; --app-line: #dfe4ea; --app-foot: #f3f5f8;
+  --app-banner: #263041; --app-banner-fg: #f3f6fa; --app-brand: #2f8f5b; --app-danger: #b64040; --app-danger-on-dark: #f0a7a7;
+  --font: "IBM Plex Sans JP", "Hiragino Sans", "Yu Gothic UI", "Noto Sans JP", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --tick: 620ms;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1319; --surface: #171d26; --surface-2: #202835; --line: #2d3746;
+    --fg: #e7ecf3; --muted: #95a2b5;
+    --go: #74a6ff; --go-soft: #1b2b4d; --back: #f2a467; --back-soft: #3e2a19;
+    --k-part: #b49bf5; --k-proc: #5fd0b0; --k-api: #e2b65a; --k-repo: #7dbdf0; --k-store: #f09a96;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1319; --surface: #171d26; --surface-2: #202835; --line: #2d3746;
+  --fg: #e7ecf3; --muted: #95a2b5;
+  --go: #74a6ff; --go-soft: #1b2b4d; --back: #f2a467; --back-soft: #3e2a19;
+  --k-part: #b49bf5; --k-proc: #5fd0b0; --k-api: #e2b65a; --k-repo: #7dbdf0; --k-store: #f09a96;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { color-scheme: light dark; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 14px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 14px 32px;
+}
+button, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--go); outline-offset: 2px; }
+
+.wrap { max-width: 1240px; margin-inline: auto; display: flex; flex-direction: column; gap: 12px; }
+.top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.top h1 { font-size: 18px; font-weight: 600; margin: 0; }
+.top p { margin: 0; color: var(--muted); }
+.badge { border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; font-size: 12px; color: var(--muted); background: var(--surface); }
+
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; font-size: 13px; color: var(--muted); }
+.bar label { display: inline-flex; align-items: center; gap: 6px; }
+.bar select { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; font-family: var(--mono); font-size: 12px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--surface); }
+.seg button { border: 0; background: none; padding: 2px 9px; font-size: 12px; color: var(--fg); }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.linkbtn { border: 0; background: none; color: var(--go); padding: 0; font-size: 13px; text-decoration: underline; }
+
+/* 左: 画面 ／ 右: 挙動と経路 */
+.stage { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(300px, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 760px) { .stage { grid-template-columns: minmax(0, 1fr); } }
+.cap { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.08em; }
+
+.shot { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; min-width: 0; }
+.chrome { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--line); background: var(--surface-2); }
+.chrome .url { flex: 1 1 auto; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 1px 12px; color: var(--muted); font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chrome .reload { flex: none; width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); line-height: 1; font-size: 14px; }
+
+.app { background: var(--app-bg); color: var(--app-fg); }
+.app .banner { background: var(--app-banner); color: var(--app-banner-fg); padding: 16px 22px; }
+.app .banner h3 { margin: 0 0 10px; font-size: 22px; line-height: 1.25; font-weight: 600; }
+.app .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.app .avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--app-brand); color: var(--app-bg); display: grid; place-items: center; font-size: 13px; font-weight: 600; }
+.app .who2 { line-height: 1.25; font-size: 13px; }
+.app .who2 small { display: block; opacity: 0.7; font-size: 11px; }
+.app .abtn { border: 1px solid currentColor; background: none; border-radius: 4px; padding: 2px 10px; font-size: 12px; color: var(--app-banner-fg); }
+.app .abtn.danger { color: var(--app-danger-on-dark); }
+.app .page { padding: 16px 22px 20px; display: flex; flex-direction: column; gap: 12px; }
+.app .page p { margin: 0; }
+.app .tags { display: flex; gap: 6px; flex-wrap: wrap; margin: 0; padding: 0; list-style: none; }
+.app .tags li { border: 1px solid var(--app-line); border-radius: 999px; padding: 0 9px; font-size: 12px; color: var(--app-muted); }
+.app hr { border: 0; border-top: 1px solid var(--app-line); width: 100%; margin: 0; }
+.app .cbox, .app .card { border: 1px solid var(--app-line); border-radius: 6px; max-width: 520px; }
+.app .cbox textarea { display: block; width: 100%; border: 0; padding: 9px 12px; font: inherit; color: var(--app-fg); background: var(--app-bg); resize: vertical; min-height: 52px; border-radius: 6px 6px 0 0; }
+.app .foot { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding: 5px 10px; background: var(--app-foot); border-top: 1px solid var(--app-line); border-radius: 0 0 6px 6px; font-size: 12px; color: var(--app-muted); }
+.app .post { background: var(--app-brand); color: var(--app-bg); border: 0; border-radius: 4px; padding: 3px 12px; font-size: 12px; font-weight: 600; }
+.app .card .txt { padding: 9px 12px; }
+.app .trash { border: 1px solid var(--app-line); background: var(--app-bg); color: var(--app-danger); font-size: 12px; padding: 0 8px; border-radius: 4px; }
+.app .signin { color: var(--app-muted); margin: 0; }
+.app .clist { display: flex; flex-direction: column; gap: 10px; }
+.app .moved { padding: 32px 22px; display: flex; flex-direction: column; gap: 6px; }
+.app .moved strong { font-size: 17px; }
+
+/* 挙動の始まりの部品: 枠 */
+.parts-on [data-part] { outline: 2px dashed color-mix(in srgb, var(--go) 60%, transparent); outline-offset: 3px; }
+.parts-on [data-part]:hover { outline-style: solid; }
+[data-part].sel { outline: 3px solid var(--go) !important; outline-offset: 3px; box-shadow: 0 0 0 7px color-mix(in srgb, var(--go) 22%, transparent); }
+@keyframes flash { 0% { background-color: color-mix(in srgb, var(--back) 36%, transparent); } 100% { background-color: transparent; } }
+.flash { animation: flash 1.6s ease-out 1; }
+
+/* 右: 挙動と経路 */
+.flow { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips button { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 2px 11px; font-size: 13px; }
+.chips button:hover { background: var(--surface-2); }
+.chips button[aria-pressed="true"] { background: var(--go); border-color: var(--go); color: var(--surface); font-weight: 600; }
+.chips button.off { color: var(--muted); border-style: dashed; }
+.chips button.off[aria-pressed="true"] { color: var(--surface); }
+.flow-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+.flow-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.cond { font-size: 12px; border-radius: 4px; padding: 0 7px; background: var(--surface-2); color: var(--muted); }
+.cond.ng { background: var(--back-soft); color: var(--back); }
+
+.path { display: flex; flex-direction: column; min-width: 0; }
+.split { display: grid; gap: 0 10px; }
+.lanecol { display: flex; flex-direction: column; min-width: 0; }
+.pnode { border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px 6px; background: var(--surface); display: flex; flex-direction: column; min-width: 0; opacity: 0.55; transition: opacity 0.2s, border-color 0.2s, box-shadow 0.2s; }
+.pnode .kind { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; line-height: 1.5; }
+.pnode .nm { font-family: var(--mono); font-size: 12.5px; font-weight: 500; overflow-wrap: anywhere; line-height: 1.35; }
+.pnode .src, .pnode .nt { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; line-height: 1.4; }
+.pnode .src { font-family: var(--mono); }
+.pnode[data-k="part"] .kind { color: var(--k-part); } .pnode[data-k="proc"] .kind { color: var(--k-proc); }
+.pnode[data-k="api"] .kind { color: var(--k-api); } .pnode[data-k="repo"] .kind { color: var(--k-repo); }
+.pnode[data-k="store"] .kind { color: var(--k-store); }
+.pnode.lit { opacity: 1; border-color: var(--go); box-shadow: 0 0 0 3px var(--go-soft); }
+
+.hop { display: grid; grid-template-columns: 26px minmax(0, 1fr); column-gap: 8px; min-height: 40px; margin-left: 12px; padding: 3px 0; }
+.rails { display: flex; justify-content: center; gap: 10px; }
+.rail { position: relative; width: 2px; background: var(--line); border-radius: 1px; }
+.rail::after { content: ""; position: absolute; left: -4px; border: 5px solid transparent; }
+.rail.go::after { bottom: -1px; border-top-color: var(--line); border-bottom-width: 0; }
+.rail.back::after { top: -1px; border-bottom-color: var(--line); border-top-width: 0; }
+.lbs { display: flex; flex-direction: column; justify-content: center; gap: 1px; font-size: 12px; line-height: 1.4; min-width: 0; }
+.lb { color: var(--muted); opacity: 0.65; overflow-wrap: anywhere; transition: opacity 0.2s, color 0.2s; }
+.hop.go-on .rail.go { background: var(--go); } .hop.go-on .rail.go::after { border-top-color: var(--go); }
+.hop.go-on .lb.go { color: var(--go); opacity: 1; }
+.hop.back-on .rail.back { background: var(--back); } .hop.back-on .rail.back::after { border-bottom-color: var(--back); }
+.hop.back-on .lb.back { color: var(--back); opacity: 1; }
+.dot { position: absolute; left: -4px; width: 10px; height: 10px; margin-top: -5px; border-radius: 50%; opacity: 0; }
+.rail.go .dot { background: var(--go); } .rail.back .dot { background: var(--back); }
+@keyframes run-d { from { top: 0; opacity: 1; } to { top: 100%; opacity: 1; } }
+@keyframes run-u { from { top: 100%; opacity: 1; } to { top: 0; opacity: 1; } }
+.hop.go-run .rail.go .dot { animation: run-d var(--tick) linear 1; }
+.hop.back-run .rail.back .dot { animation: run-u var(--tick) linear 1; }
+
+.result { border-left: 3px solid var(--line); padding: 1px 0 1px 10px; color: var(--muted); transition: color 0.2s, border-color 0.2s; }
+.result.show { border-color: var(--back); color: var(--fg); }
+.result b { font-weight: 600; }
+.ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 12.5px; color: var(--muted); }
+.ctl label { display: inline-flex; align-items: center; gap: 5px; }
+.btn { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 2px 11px; font-size: 13px; color: var(--fg); }
+.btn:hover { background: var(--surface-2); }
+.key i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 4px; }
+.key.g i { background: var(--go); } .key.b i { background: var(--back); }
+.more summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+.more ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 12.5px; }
+@media (prefers-reduced-motion: reduce) { .hop .dot, .flash { animation: none !important; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <h1>Stack Atlas — 入口のモック</h1>
+    <span class="badge">モック</span>
+    <p>左の画面で、枠のついた部品を押してください。右に、その挙動の経路が出ます。</p>
+  </header>
+
+  <div class="bar">
+    <label>画面 <select id="screen-sel" aria-label="画面"></select></label>
+    <label>見ている人
+      <span class="seg" id="who">
+        <button type="button" data-who="author">著者</button>
+        <button type="button" data-who="reader">ほかの利用者</button>
+        <button type="button" data-who="none">ログインなし</button>
+      </span>
+    </label>
+    <label><input type="checkbox" id="frames" checked> 部品の枠を出す</label>
+    <button class="linkbtn" id="reset" type="button">画面を元に戻す</button>
+  </div>
+
+  <div class="stage">
+    <section class="shot" aria-label="取りこんだ画面">
+      <div class="chrome">
+        <button class="reload" id="reload" data-part="open" title="ページを開く" aria-label="ページを開く">⟳</button>
+        <span class="url">/article/a-map-is-not-the-territory</span>
+      </div>
+      <div class="app parts-on" id="app"></div>
+    </section>
+
+    <section class="flow" aria-label="挙動と経路">
+      <h2 class="cap">この画面の挙動</h2>
+      <div class="chips" id="behaviors"></div>
+      <div class="flow-head" aria-live="polite">
+        <h2 id="f-name"></h2>
+        <span class="cond" id="f-cond" hidden></span>
+        <span class="seg" id="f-var" hidden></span>
+      </div>
+      <div class="path" id="path"></div>
+      <div class="result" id="f-result"></div>
+      <div class="ctl">
+        <button class="btn" id="replay" type="button">▶ もう一度流す</button>
+        <label><input type="checkbox" id="slow"> ゆっくり</label>
+        <span class="key g"><i></i>送るもの</span>
+        <span class="key b"><i></i>返るもの</span>
+      </div>
+      <details class="more">
+        <summary>注（前提と、気をつける所）</summary>
+        <ul id="f-notes"></ul>
+      </details>
+    </section>
+  </div>
+</div>
+
+<script>
+(() => {
+  const KIND = { part: '画面の部品', proc: 'サーバーの処理', api: '受け口', repo: 'リポジトリ', store: 'データの置き場' };
+  const WEB = 'src/routes/article/[slug]/';
+  const API = 'app/api/routes/';
+  const REPO = 'app/db/repositories/';
+  const COMMON_NOTES = [
+    '箱の下の小さい字は、根拠のファイルと行です。',
+    'フロントと API のつなぎは前提です。このフロントは、既定では別のサーバーを呼びます（src/lib/api.js:3）。同じ API の仕様なので、つないだものとして描いています。',
+    '画面もデータも手で作ったものです。Stack Atlas は、まだこれを作れません。',
+  ];
+
+  const BEHAVIORS = [
+    {
+      id: 'open', name: 'ページを開く', part: 'open',
+      cols: [
+        { k: 'part', n: 'ページ全体', src: WEB + '+page.svelte:12' },
+        { k: 'proc', n: 'load', src: WEB + '+page.server.js:7' },
+        [{ k: 'api', n: 'GET /api/articles/{slug}', src: API + 'articles/articles_resource.py:82' },
+         { k: 'api', n: 'GET /api/articles/{slug}/comments', src: API + 'comments.py:26' }],
+        [{ k: 'repo', n: 'ArticlesRepository .get_article_by_slug', src: REPO + 'articles.py:237' },
+         { k: 'repo', n: 'CommentsRepository .get_comments_for_article', src: REPO + 'comments.py:42' }],
+        [{ k: 'store', n: 'articles', nt: '読む。users・tags・favorites も読む' },
+         { k: 'store', n: 'commentaries', nt: '読む' }],
+      ],
+      go: ['slug（URL から）', ['slug、token（任意）', 'slug、token（任意）'], ['slug', 'article、user'], ['SELECT', 'SELECT']],
+      back: ['article、comments', ['article', 'comments'], ['Article', 'Comment の列'], ['1 行', '行の列']],
+      result: 'タイトル・本文・タグ・コメントが出ます。本文は、Markdown を HTML にして消毒してから出します。',
+      notes: ['2 つの受け口を同時に呼びます。'],
+    },
+    {
+      id: 'post-comment', name: 'コメントを投稿する', part: 'post-comment',
+      cond: { ok: ['author', 'reader'], text: 'ログイン中だけ' },
+      cols: [
+        { k: 'part', n: 'コメント欄 ＋ Post Comment', src: WEB + 'CommentInput.svelte:8' },
+        { k: 'proc', n: 'createComment', src: WEB + '+page.server.js:21' },
+        { k: 'api', n: 'POST /api/articles/{slug}/comments', src: API + 'comments.py:40' },
+        { k: 'repo', n: 'CommentsRepository .create_comment_for_article', src: REPO + 'comments.py:61' },
+        { k: 'store', n: 'commentaries', nt: '1 行を書く' },
+      ],
+      go: ['comment（フォームの欄）', 'comment: { body }、token', 'body、article、user', 'INSERT'],
+      back: ['load をやり直す', 'comment', 'Comment', '新しい行'],
+      result: 'コメントが 1 つ増えます。',
+      notes: ['ログインしていないと、サーバーの処理が 401 を返します（+page.server.js:22）。'],
+    },
+    {
+      id: 'delete-comment', name: 'コメントを削除する', part: 'delete-comment',
+      cond: { ok: ['author', 'reader'], text: '自分のコメントにだけ出る' },
+      cols: [
+        { k: 'part', n: 'コメントの削除ボタン', src: WEB + 'Comment.svelte:24' },
+        { k: 'proc', n: 'deleteComment', src: WEB + '+page.server.js:37' },
+        { k: 'api', n: 'DELETE /api/articles/{slug}/comments/{id}', src: API + 'comments.py:60' },
+        { k: 'repo', n: 'CommentsRepository .delete_comment', src: REPO + 'comments.py:80' },
+        { k: 'store', n: 'commentaries', nt: '1 行を消す' },
+      ],
+      go: ['id（URL の ?id=）', 'id、token', 'comment', 'DELETE'],
+      back: ['load をやり直す', '204（本文なし）', 'なし', 'なし'],
+      result: 'そのコメントが消えます。',
+      notes: ['API の側でも、書いた本人かどうかを確かめます。'],
+    },
+    {
+      id: 'delete-article', name: '記事を削除する', part: 'delete-article',
+      cond: { ok: ['author'], text: '著者本人にだけ出る' },
+      cols: [
+        { k: 'part', n: 'Delete Article', src: WEB + 'ArticleMeta.svelte:25' },
+        { k: 'proc', n: 'deleteArticle', src: WEB + '+page.server.js:46' },
+        { k: 'api', n: 'DELETE /api/articles/{slug}', src: API + 'articles/articles_resource.py:109' },
+        { k: 'repo', n: 'ArticlesRepository .delete_article', src: REPO + 'articles.py:93' },
+        { k: 'store', n: 'articles', nt: '1 行を消す' },
+      ],
+      go: ['入力なし', 'slug、token', 'article', 'DELETE'],
+      back: ['307 で / へ移る', '204（本文なし）', 'なし', 'なし'],
+      result: '一覧の画面（/）へ移ります。',
+      notes: ['記事の行を消すと、外部キーの CASCADE で favorites・articles_to_tags・commentaries の行も消えます（app/db/migrations/versions/fdf8821871d7_main_tables.py:133, 160, 181）。'],
+    },
+    {
+      id: 'toggle-favorite', name: 'お気に入りを切り替える', part: null, elsewhere: true,
+      variants: [
+        { label: 'お気に入りにする',
+          api: { k: 'api', n: 'POST /api/articles/{slug}/favorite', src: API + 'articles/articles_common.py:47' },
+          repo: { k: 'repo', n: 'ArticlesRepository .add_article_into_favorites', src: REPO + 'articles.py:275' },
+          store: { k: 'store', n: 'favorites', nt: '1 行を書く' }, sql: 'INSERT' },
+        { label: '外す',
+          api: { k: 'api', n: 'DELETE /api/articles/{slug}/favorite', src: API + 'articles/articles_common.py:77' },
+          repo: { k: 'repo', n: 'ArticlesRepository .remove_article_from_favorites', src: REPO + 'articles.py:282' },
+          store: { k: 'store', n: 'favorites', nt: '1 行を消す' }, sql: 'DELETE' },
+      ],
+      cols: [
+        { k: 'part', n: '一覧の画面の ♥', src: 'src/lib/ArticleList/ArticlePreview.svelte:21', nt: 'この画面には無い' },
+        { k: 'proc', n: 'toggleFavorite', src: WEB + '+page.server.js:53' },
+        null, null, null,
+      ],
+      go: ['favorited（フォームの欄）', 'slug、token', 'article、user', null],
+      back: ['307 で元の画面へ戻る', 'article（待たずに捨てる）', 'なし', 'なし'],
+      result: 'この画面は変わりません。一覧の画面で、♥ の色が変わります。',
+      notes: ['この処理は記事ページのサーバー側にありますが、押すボタンは一覧の画面にあります。',
+              'サーバーの処理は、API の返事を待たずに画面を戻します（+page.server.js:60 に await がありません）。'],
+    },
+  ];
+
+  const SCREENS = [
+    ['/', '一覧'], ['/article/[slug]', '記事'], ['/editor', '記事を書く'], ['/login', 'ログイン'],
+    ['/profile/@[user]', 'プロフィール'], ['/register', '登録'], ['/settings', '設定'],
+  ];
+  const NAMES = { author: 'mio', reader: 'ken', none: null };
+  const START_COMMENTS = [
+    { id: 41, by: 'ken', body: '地図があると、歩き方が変わりますね。', at: '2026-11-09' },
+    { id: 42, by: 'mio', body: '読んでくれてありがとう。次は凡例の話を書きます。', at: '2026-11-10' },
+  ];
+
+  const state = { who: 'author', sel: 'open', variant: 0, comments: START_COMMENTS.map((c) => ({ ...c })), nextId: 43, deleted: false, pickedComment: null, run: 0 };
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const byId = (id) => BEHAVIORS.find((b) => b.id === id);
+  const allowed = (b) => !b.elsewhere && (!b.cond || b.cond.ok.includes(state.who));
+
+  /* ---- 取りこんだ画面 ---- */
+  function renderApp() {
+    const me = NAMES[state.who];
+    const app = $('app');
+    if (state.deleted) {
+      app.innerHTML = '<div class="moved"><strong>一覧の画面（/）へ移りました</strong><span>記事は消えました。上の「画面を元に戻す」で、消す前に戻せます。</span></div>';
+      return;
+    }
+    const authorBtns = me === 'mio'
+      ? '<button class="abtn" type="button" data-part="edit" title="記事を書く画面へ移る">Edit Article</button>' +
+        '<button class="abtn danger" type="button" data-part="delete-article" title="記事を削除する">Delete Article</button>'
+      : '';
+    const form = me
+      ? '<form class="cbox" id="cform" data-part="post-comment" title="コメントを投稿する">' +
+        '<textarea id="cbody" name="comment" rows="2" placeholder="Write a comment..."></textarea>' +
+        '<div class="foot"><span>' + esc(me) + '</span><button class="post" type="submit">Post Comment</button></div></form>'
+      : '<p class="signin"><u>Sign in</u> or <u>sign up</u> to add comments on this article.</p>';
+    const cards = state.comments.map((c) =>
+      '<div class="card" data-cid="' + c.id + '"><div class="txt">' + esc(c.body) + '</div><div class="foot"><span>' +
+      esc(c.by) + ' ・ ' + esc(c.at) + '</span>' +
+      (me && me === c.by ? '<button class="trash" type="button" data-part="delete-comment" data-cid="' + c.id + '" title="コメントを削除する">削除</button>' : '') +
+      '</div></div>').join('');
+    app.innerHTML =
+      '<div class="banner"><h3 id="a-title">A map is not the territory</h3><div class="meta">' +
+      '<span class="avatar">m</span><span class="who2">mio<small>Mon Nov 09 2026</small></span>' + authorBtns + '</div></div>' +
+      '<div class="page"><div id="a-body"><p>地図は、土地そのものではありません。けれど、初めての町を歩くとき、わたしたちは地図のほうを先に見ます。</p>' +
+      '<p>よい地図は、道を全部は描きません。いま歩く人に要る道だけを、太く描きます。</p></div>' +
+      '<ul class="tags" id="a-tags"><li>maps</li><li>notes</li></ul><hr>' + form + '<div class="clist" id="a-comments">' + cards + '</div></div>';
+    markParts();
+  }
+
+  function markParts() {
+    const b = byId(state.sel);
+    document.querySelectorAll('[data-part]').forEach((el) => {
+      let on = !!(b && b.part && el.dataset.part === b.part);
+      if (on && b.id === 'delete-comment' && state.pickedComment != null) on = Number(el.dataset.cid) === state.pickedComment;
+      el.classList.toggle('sel', on);
+    });
+  }
+
+  /* ---- 挙動の一覧 ---- */
+  function renderChips() {
+    $('behaviors').innerHTML = BEHAVIORS.map((b) => {
+      const why = b.elsewhere ? 'この画面に、始まりの部品はありません' : (b.cond && !allowed(b) ? 'いまの見ている人では、始まりの部品が出ません' : '');
+      return '<button type="button" data-b="' + b.id + '" aria-pressed="' + (state.sel === b.id) + '"' + (why ? ' class="off" title="' + esc(why) + '"' : '') + '>' + esc(b.name) + '</button>';
+    }).join('');
+  }
+
+  /* ---- 経路 ---- */
+  function resolved(b) {
+    if (!b.variants) return b;
+    const v = b.variants[state.variant];
+    return { ...b, cols: [b.cols[0], b.cols[1], v.api, v.repo, v.store], go: [b.go[0], b.go[1], b.go[2], v.sql] };
+  }
+  const pick = (x, lane) => (Array.isArray(x) ? x[lane] : x);
+  const nodeHtml = (n, c) =>
+    '<div class="pnode" data-k="' + n.k + '" data-c="' + c + '"><span class="kind">' + KIND[n.k] + '</span><span class="nm">' + esc(n.n) + '</span>' +
+    (n.src ? '<span class="src">' + esc(n.src) + '</span>' : '') + (n.nt ? '<span class="nt">' + esc(n.nt) + '</span>' : '') + '</div>';
+  const hopHtml = (b, c, lane) =>
+    '<div class="hop" data-c="' + c + '"><div class="rails"><span class="rail go"><i class="dot"></i></span><span class="rail back"><i class="dot"></i></span></div>' +
+    '<div class="lbs"><span class="lb go">↓ ' + esc(pick(b.go[c], lane)) + '</span><span class="lb back">↑ ' + esc(pick(b.back[c], lane)) + '</span></div></div>';
+
+  function renderFlow() {
+    const b = resolved(byId(state.sel));
+    $('f-name').textContent = b.name;
+    const cond = $('f-cond');
+    if (b.elsewhere) { cond.hidden = false; cond.className = 'cond ng'; cond.textContent = 'この画面に、始まりの部品はありません'; }
+    else if (b.cond) { const ok = allowed(b); cond.hidden = false; cond.className = 'cond' + (ok ? '' : ' ng'); cond.textContent = '条件: ' + b.cond.text + (ok ? '' : '（いまの見ている人では出ません）'); }
+    else cond.hidden = true;
+    const fv = $('f-var');
+    if (b.variants) {
+      fv.hidden = false;
+      fv.innerHTML = b.variants.map((v, i) => '<button type="button" data-v="' + i + '" aria-pressed="' + (i === state.variant) + '">' + esc(v.label) + '</button>').join('');
+    } else fv.hidden = true;
+
+    const s = b.cols.findIndex(Array.isArray);
+    const split = s === -1 ? 5 : s;
+    let html = '';
+    for (let c = 0; c < split; c++) {
+      html += nodeHtml(b.cols[c], c);
+      if (c < split - 1) html += hopHtml(b, c, 0);
+    }
+    if (split < 5) {
+      const lanes = b.cols[split].length;
+      html += '<div class="split" style="grid-template-columns: repeat(' + lanes + ', minmax(0, 1fr))">';
+      for (let l = 0; l < lanes; l++) {
+        html += '<div class="lanecol">' + hopHtml(b, split - 1, l);
+        for (let c = split; c < 5; c++) {
+          html += nodeHtml(pick(b.cols[c], l), c);
+          if (c < 4) html += hopHtml(b, c, l);
+        }
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+    $('path').innerHTML = html;
+    $('f-result').className = 'result';
+    $('f-result').innerHTML = '<b>結果</b>　' + esc(b.result);
+    $('f-notes').innerHTML = (b.notes || []).concat(COMMON_NOTES).map((t) => '<li>' + esc(t) + '</li>').join('');
+  }
+
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function play(effect) {
+    const run = ++state.run;
+    const path = $('path');
+    const tick = $('slow').checked ? 1300 : 620;
+    document.documentElement.style.setProperty('--tick', tick + 'ms');
+    path.querySelectorAll('.pnode, .hop').forEach((el) => el.classList.remove('lit', 'go-on', 'go-run', 'back-on', 'back-run'));
+    $('f-result').classList.remove('show');
+    const nodes = (c) => path.querySelectorAll('.pnode[data-c="' + c + '"]');
+    const hops = (c) => path.querySelectorAll('.hop[data-c="' + c + '"]');
+    const alive = () => run === state.run;
+    if (reduced) {
+      path.querySelectorAll('.pnode').forEach((n) => n.classList.add('lit'));
+      path.querySelectorAll('.hop').forEach((n) => n.classList.add('go-on', 'back-on'));
+    } else {
+      nodes(0).forEach((n) => n.classList.add('lit'));
+      await wait(250);
+      for (let c = 0; c < 4; c++) {
+        if (!alive()) return;
+        hops(c).forEach((n) => n.classList.add('go-on', 'go-run'));
+        await wait(tick);
+        if (!alive()) return;
+        hops(c).forEach((n) => n.classList.remove('go-run'));
+        nodes(c + 1).forEach((n) => n.classList.add('lit'));
+      }
+      for (let c = 3; c >= 0; c--) {
+        if (!alive()) return;
+        hops(c).forEach((n) => n.classList.add('back-on', 'back-run'));
+        await wait(tick);
+        if (!alive()) return;
+        hops(c).forEach((n) => n.classList.remove('back-run'));
+      }
+    }
+    if (!alive()) return;
+    $('f-result').classList.add('show');
+    if (effect) effect();
+  }
+
+  /* ---- 画面の変化 ---- */
+  const flash = (ids) => ids.forEach((id) => { const el = $(id); if (el) { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); } });
+  function effectFor(id, arg) {
+    if (id === 'open') return () => flash(['a-title', 'a-body', 'a-tags', 'a-comments']);
+    if (id === 'post-comment') return () => {
+      const c = { id: state.nextId++, by: NAMES[state.who], body: arg || 'いい記事でした。', at: '2026-11-11' };
+      state.comments.unshift(c);
+      renderApp();
+      const el = document.querySelector('.card[data-cid="' + c.id + '"]');
+      if (el) el.classList.add('flash');
+    };
+    if (id === 'delete-comment') return () => { state.comments = state.comments.filter((c) => c.id !== arg); state.pickedComment = null; renderApp(); flash(['a-comments']); };
+    if (id === 'delete-article') return () => { state.deleted = true; renderApp(); };
+    return null;
+  }
+
+  /* ---- 選ぶ ---- */
+  function select(id, opts) {
+    const o = opts || {};
+    if (state.sel !== id) state.variant = 0;
+    state.sel = id;
+    state.pickedComment = o.cid != null ? o.cid : null;
+    renderChips(); renderFlow(); markParts();
+    // 画面の部品を押したときだけ、画面を実際に変える。一覧から選んだときは、流れを見せるだけ
+    play(o.fromScreen || id === 'open' ? effectFor(id, o.arg) : null);
+  }
+
+  $('screen-sel').innerHTML = SCREENS.map(([p, n]) => {
+    const cur = p === '/article/[slug]';
+    return '<option' + (cur ? ' selected' : ' disabled') + '>' + esc(p) + '（' + esc(n) + (cur ? '' : '。モックには無い') + '）</option>';
+  }).join('');
+  $('behaviors').addEventListener('click', (e) => { const b = e.target.closest('button[data-b]'); if (b) select(b.dataset.b); });
+  $('f-var').addEventListener('click', (e) => { const b = e.target.closest('button[data-v]'); if (!b) return; state.variant = Number(b.dataset.v); renderFlow(); play(null); });
+  $('replay').addEventListener('click', () => { if (state.sel) play(state.sel === 'open' ? effectFor('open') : null); });
+  $('reload').addEventListener('click', () => select('open', { fromScreen: true }));
+  $('frames').addEventListener('change', (e) => $('app').classList.toggle('parts-on', e.target.checked));
+  $('reset').addEventListener('click', () => { state.comments = START_COMMENTS.map((c) => ({ ...c })); state.deleted = false; state.pickedComment = null; renderApp(); });
+  function syncWho() { $('who').querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.who === state.who))); }
+  $('who').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-who]'); if (!b) return;
+    state.who = b.dataset.who; state.pickedComment = null;
+    if (!state.sel) state.sel = 'open';
+    syncWho(); renderApp(); renderChips(); renderFlow(); play(null);
+  });
+
+  $('app').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const ta = $('cbody');
+    select('post-comment', { fromScreen: true, arg: ta && ta.value.trim() });
+  });
+  $('app').addEventListener('click', (e) => {
+    const el = e.target.closest('[data-part]');
+    if (!el || el.dataset.part === 'post-comment') return;
+    const part = el.dataset.part;
+    if (part === 'edit') {
+      state.sel = null; state.run++;
+      renderChips(); markParts(); el.classList.add('sel');
+      $('f-name').textContent = '記事を書く画面へ移る';
+      $('f-cond').hidden = false; $('f-cond').className = 'cond'; $('f-cond').textContent = '条件: 著者本人にだけ出る';
+      $('f-var').hidden = true;
+      $('path').innerHTML = '<div class="pnode lit" data-k="part"><span class="kind">' + KIND.part + '</span><span class="nm">Edit Article</span><span class="src">' + WEB + 'ArticleMeta.svelte:21</span></div>';
+      $('f-result').className = 'result show';
+      $('f-result').innerHTML = '<b>結果</b>　/editor/{slug} の画面へ移るだけで、通信はしません。';
+      $('f-notes').innerHTML = COMMON_NOTES.map((t) => '<li>' + esc(t) + '</li>').join('');
+      return;
+    }
+    if (part === 'delete-comment') { const cid = Number(el.dataset.cid); select('delete-comment', { fromScreen: true, cid, arg: cid }); return; }
+    select(part, { fromScreen: true });
+  });
+
+  syncWho(); renderApp(); renderChips(); renderFlow(); markParts();
+  play(effectFor('open'));
+})();
+</script>
+</html>
