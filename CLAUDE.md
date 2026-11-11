@@ -2,6 +2,11 @@
 
 このリポジトリで作業する Claude への指示書。最初に読むこと。
 
+> **2026-11-11: 要件を改めた。正は `docs/24-requirements-v2.md`。**
+> Stack Atlas は「本物の画面を見ながら挙動を選ぶと、その経路だけが光り、データが流れる」道具に絞る。コードを読む仕事は、利用者の手元のエージェントが受け持つ。道具の中に、特定の言語やフレームワークを前提にした処理を持たない。共有用の静的な全体図と要件整理は Claude Whiteboards に任せる。
+> **要件・仕様・完成条件・手順書に、言語やフレームワークの名前を書かない**（docs/24 §4）。
+> 下の「結論」「現在の状態」「リポジトリ内容」は、今あるコードの説明としては正しい。ただし、進む向き（抽出器を足す・Phase 9-L の 9-L1 以降）は止めた。コードを読む抽出器は、エージェントが書きこむ道が動いたあとで捨てる（消す前にユーザーに確かめる）。次の作業は docs/24 §7 の未決から始める設計。
+
 ## 結論（このプロジェクトは何か）
 
 **Stack Atlas** は、リポジトリ（1 つでも複数でも）から「インフラ → 画面 → コンポーネント → 型」を抽出し、
@@ -27,7 +32,7 @@
 8'. **`docs/15-design-dataflow-model.md`** — Phase 8 の設計（箱・口・項目・線のモデル、たどる規則、表示の規則、分岐、型 API による抽出、D27〜D35）。`docs/14-design-harness.md` はハーネス配布・ビルド成果物の画面（層の節は docs/15 に置き換え）。モックは `prototype/dataflow-mock.html`
 8''. Phase 8 の設計と実装結果: `docs/16-graph-v2-contract.md`（graph.json v2 の契約）、`docs/17-design-adapters.md`（言語アダプタと合流）、`docs/18-design-wiring-viewer.md`（配線図ビューア・画面・views、D60〜D81）、`docs/20-design-map-link.md`（8-6 の 3D の地図 ⇄ 配線図の 2 面。§6 Q20 の決定、§7 実装結果、D106〜D113）。8-7 の「選択で作り直さず付け替える」と半分の幅の部品は `docs/18` §11（D114〜D122、§11.14 実装結果と実測）
 8'''. **`docs/19-design-harness-v2.md`** — Phase 8-4 のハーネス（補いの `v2:`・手書きの部分グラフ・views.yaml・`build --dry-run --json` / `--strict`・`init --skill`・`init-views`、D67〜D105。§11 ドッグフード、§12 レビューの修正）。skill の本文は `harness/skill/`（SKILL.md と references/）、隙間を仕込んだ fixture は `examples/fixture-gaps/`、その正解表は §9（**正解表と参照解 `packages/cli/src/__tests__/fixtures/gaps-answers/` を fixture-gaps の中や skill に書かない**。ドッグフードのエージェントが読む）
-8''''. **`docs/23-design-any-repo.md`** — Phase 9-L: どのリポジトリ・どの構成にもはめる（ファイル・構文（tree-sitter）・型（LSP）の 3 段、言語ごとの違いはデータ、レシピ、線の `confidence`、実行の許可、D170〜D183、Q27〜Q33）。`docs/22-design-one-model.md` — Phase 9: モデルを 1 つに（包含の木・地図は畳みの段・アダプタの自立・直す入力を 1 つ、D140〜D159、Q22〜Q26）。**判断の基準: 「見たことのない言語の repo でも動くか」**
+8''''. **`docs/23-design-any-repo.md`** — Phase 9-L: どのリポジトリ・どの構成にもはめる（ファイル・構文（tree-sitter）・型（LSP）の 3 段、言語ごとの違いはデータ、レシピ、線の `confidence`、実行の許可、D170〜D183、Q27〜Q33）。`docs/22-design-one-model.md` — Phase 9: モデルを 1 つに（包含の木・地図は畳みの段・アダプタの自立・直す入力を 1 つ、D140〜D159、Q22〜Q26）。**判断の基準: 「見たことのない言語の repo でも動くか」**（2026-11-11: 9-L1 以降は中止。この基準は「道具が言語を選ばない」として docs/24 に引き継いだ）
 9. `docs/10-screenshots-guide.md`（`data-component` と screenshots の設定）、`docs/11-sharing.md`（メモ・差分・配信）、`docs/ci-example.yml`
 10. 必要に応じて `docs/05-viewer-spec.md`（UI 仕様）、`docs/04-extractors.md`（抽出方法）、各 `extractors/*/README.md`
 
@@ -36,7 +41,9 @@
 テストは `pnpm test` で 1546 件（skip 2。`STACK_ATLAS_REQUIRE_GO=1` で go の側も）、viewer の e2e は 71 件（skip 4。3D の地図の spec は手元のヘッドレスで止まる・遅いことがある。CI で実行。配線図だけを確かめる spec は `&pane=wiring`）。`examples/fixture-poly/`（2 repo の合成）は 56 ノード / 95 エッジ / 2 フロー / エラー 0。
 実リポジトリでは設定を**この公開リポジトリの外**（兄弟ディレクトリ。`repos: { web: ../damage-web, platform: ../damage-platform }`）に置いて build し、149 / 330 / エラー 0 / 警告 0 を確認した（内訳は `HANDOFF.md` §0）。
 
-次にやること: ユーザーの判断待ち（Q17 エージェントを実リポジトリに当てるか、Q19 配線図の折りたたみ）。8-7（配線図の選択は付け替えるだけ）で fixture-poly はクリックから光るまで 50ms 以内になったが、合成 300 箱・実リポジトリの大きさは届いていない（docs/18 §11.14）。Phase 6 の残り:
+次にやること（2026-11-11 から）: **docs/24 の要件 v2 の設計**（エージェントの書きこみ口・検査・画面から始めるビューア。docs/24 §7）。以下はそれより前の記録で、Phase 6 の残りのうち抽出器に依るものは進めない。
+
+それより前の状態: ユーザーの判断待ち（Q17 エージェントを実リポジトリに当てるか、Q19 配線図の折りたたみ）。8-7（配線図の選択は付け替えるだけ）で fixture-poly はクリックから光るまで 50ms 以内になったが、合成 300 箱・実リポジトリの大きさは届いていない（docs/18 §11.14）。Phase 6 の残り:
 
 1. （完了）ビューアの大規模 graph 対応: 板の拡張、ラベル「すべて / 関連のみ / なし」と LOD、検索（`/`）、kind チップ
 2. 実アプリのスクショ: サイトを起動し、`data-component` を付け、`screenshots`（`baseUrl` / `routes` / `storageState`）を書く
