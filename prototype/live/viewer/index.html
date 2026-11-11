@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="ja">
+<!-- ライブの試しのビューア。左の枠に本物のアプリ（ここではサンプル）、右に挙動の一覧と経路。
+     アプリの枠の中で起きたこと（押した部品・通信・画面の変化）は、道具が入れたスクリプト（../inject.js）が
+     postMessage で知らせてくる。ビューアは、アプリの枠の中を直接は見ない・触らない。 -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stack Atlas ライブの試し</title>
+<style>
+:root {
+  --bg: #f2f4f7; --surface: #ffffff; --surface-2: #e8ecf1; --line: #d2d8e1; --fg: #18202b; --muted: #5b6778;
+  --go: #2160e8; --go-soft: #dce7ff; --back: #b9530b; --back-soft: #ffe7d3; --ok: #0b7f62; --ng: #b3261e;
+  --k-part: #6f45cf; --k-api: #9a6708; --k-store: #a73a37;
+  --font: "Hiragino Sans", "Yu Gothic UI", "Noto Sans JP", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1319; --surface: #171d26; --surface-2: #202835; --line: #2d3746; --fg: #e7ecf3; --muted: #95a2b5;
+    --go: #74a6ff; --go-soft: #1b2b4d; --back: #f2a467; --back-soft: #3e2a19; --ok: #5fd0b0; --ng: #ff8a80;
+    --k-part: #b49bf5; --k-api: #e2b65a; --k-store: #f09a96;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; padding: 14px 16px 28px; background: var(--bg); color: var(--fg); font: 14px/1.6 var(--font); }
+.wrap { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+.top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.top h1 { margin: 0; font-size: 18px; font-weight: 600; }
+.top p { margin: 0; color: var(--muted); }
+.badge { border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; font-size: 12px; color: var(--muted); background: var(--surface); }
+.stage { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 760px) { .stage { grid-template-columns: minmax(0, 1fr); } }
+
+.shot { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; min-width: 0; }
+.chrome { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--line); background: var(--surface-2); font-size: 12px; color: var(--muted); }
+.chrome .url { flex: 1; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 1px 12px; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.frame { position: relative; height: 560px; }
+.frame iframe { display: block; width: 100%; height: 100%; border: 0; background: #ffffff; }
+.overlay { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.overlay .box { position: absolute; border-radius: 6px; opacity: 0; }
+.overlay .box.part { border: 3px solid var(--go); box-shadow: 0 0 0 6px color-mix(in srgb, var(--go) 22%, transparent); }
+.overlay .box.dom { border: 3px solid var(--back); background: color-mix(in srgb, var(--back) 18%, transparent); }
+@keyframes show-box { 0% { opacity: 1; } 75% { opacity: 1; } 100% { opacity: 0; } }
+.overlay .box.on { animation: show-box 1.8s ease-out 1; }
+
+.flow { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.cap { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.08em; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips button { font: inherit; color: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 2px 11px; font-size: 13px; }
+.chips button[aria-pressed="true"] { background: var(--go); border-color: var(--go); color: var(--surface); font-weight: 600; }
+.flow-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+.flow-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.tag { font-size: 12px; border-radius: 4px; padding: 0 7px; background: var(--surface-2); color: var(--muted); }
+.tag.live { background: var(--go-soft); color: var(--go); }
+.tag.ok { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+.tag.ng { background: color-mix(in srgb, var(--ng) 16%, transparent); color: var(--ng); }
+
+.path { display: flex; flex-direction: column; min-width: 0; }
+.pnode { border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px 6px; display: flex; flex-direction: column; opacity: 0.55; transition: opacity 0.2s, border-color 0.2s, box-shadow 0.2s; }
+.pnode .kind { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; }
+.pnode .nm { font-family: var(--mono); font-size: 12.5px; font-weight: 500; overflow-wrap: anywhere; }
+.pnode .src, .pnode .nt { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.pnode .src { font-family: var(--mono); }
+.pnode[data-k="part"] .kind { color: var(--k-part); } .pnode[data-k="api"] .kind { color: var(--k-api); } .pnode[data-k="store"] .kind { color: var(--k-store); }
+.pnode.lit { opacity: 1; border-color: var(--go); box-shadow: 0 0 0 3px var(--go-soft); }
+.pnode.lit.drawn { border-style: dashed; box-shadow: none; }
+.hop { display: grid; grid-template-columns: 26px minmax(0, 1fr); column-gap: 8px; min-height: 42px; margin-left: 12px; padding: 3px 0; }
+.rails { display: flex; justify-content: center; gap: 10px; }
+.rail { position: relative; width: 0; border-left: 2px solid var(--line); }
+.hop.drawn .rail { border-left-style: dashed; }
+.rail::after { content: ""; position: absolute; left: -6px; border: 5px solid transparent; }
+.rail.go::after { bottom: -1px; border-top-color: var(--line); border-bottom-width: 0; }
+.rail.back::after { top: -1px; border-bottom-color: var(--line); border-top-width: 0; }
+.lbs { display: flex; flex-direction: column; justify-content: center; font-size: 12px; line-height: 1.4; min-width: 0; }
+.lb { color: var(--muted); opacity: 0.65; overflow-wrap: anywhere; }
+.hop.go-on .rail.go { border-left-color: var(--go); } .hop.go-on .rail.go::after { border-top-color: var(--go); } .hop.go-on .lb.go { color: var(--go); opacity: 1; }
+.hop.back-on .rail.back { border-left-color: var(--back); } .hop.back-on .rail.back::after { border-bottom-color: var(--back); } .hop.back-on .lb.back { color: var(--back); opacity: 1; }
+.how { font-size: 11px; color: var(--muted); }
+
+.seen { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.seen h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.row { display: flex; flex-direction: column; gap: 2px; }
+.row .line { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: baseline; font-family: var(--mono); font-size: 12.5px; }
+pre { margin: 0; padding: 6px 8px; background: var(--surface-2); border-radius: 6px; font: 12px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 132px; overflow: auto; }
+.lbl { font-size: 11px; color: var(--muted); }
+.changes { margin: 0; padding-left: 18px; font-size: 13px; }
+.changes .added { color: var(--back); } .changes .removed { color: var(--muted); text-decoration: line-through; }
+.empty { color: var(--muted); font-size: 13px; }
+.key { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--muted); }
+.key i { display: inline-block; width: 22px; vertical-align: middle; margin-right: 5px; border-top: 2px solid var(--muted); }
+.key .d i { border-top-style: dashed; }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <h1>Stack Atlas — ライブの試し</h1>
+    <span class="badge">試し</span>
+    <p>左のアプリを、ふつうに操作してください。右に、その操作の流れと、画面に反映されたものが出ます。</p>
+  </header>
+
+  <div class="stage">
+    <section class="shot" aria-label="本物のアプリ">
+      <div class="chrome"><span>本物のアプリ</span><span class="url" id="url"></span></div>
+      <div class="frame">
+        <iframe id="app" title="アプリ"></iframe>
+        <div class="overlay" id="overlay"></div>
+      </div>
+    </section>
+
+    <section class="flow" aria-label="挙動と経路">
+      <h2 class="cap">この画面の挙動</h2>
+      <div class="chips" id="behaviors"></div>
+      <div class="flow-head" aria-live="polite">
+        <h2 id="f-name">操作を待っています</h2>
+        <span class="tag" id="f-state" hidden></span>
+        <span class="tag" id="f-verdict" hidden></span>
+      </div>
+      <div class="path" id="path"></div>
+      <div class="key">
+        <span class="s"><i></i>実際に見えたもの（ブラウザから出た通信まで）</span>
+        <span class="d"><i></i>図に書かれているもの（その先は、見えない）</span>
+      </div>
+      <div class="seen">
+        <h3>画面に反映されたもの</h3>
+        <div id="s-dom"><div class="empty">まだありません。</div></div>
+        <h3>実際の通信</h3>
+        <div id="s-reqs"><div class="empty">まだありません。</div></div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+(async () => {
+  const KIND = { part: '画面の部品', api: '受け口', store: 'データの置き場' };
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const appUrl = new URLSearchParams(location.search).get('app');
+  if (!appUrl) { $('f-name').textContent = '?app= にアプリの URL がありません'; return; }
+  const appOrigin = new URL(appUrl).origin;
+  const data = await (await fetch('../data.json')).json();
+  const frame = $('app');
+  $('url').textContent = appUrl;
+  window.__seen = [];      // 受け取った知らせ（確かめ用）
+  window.__ops = [];       // 操作ごとのまとめ（確かめ用）
+  window.__net = (changes) => net(changes);
+
+  let op = null;           // いま追っている操作
+  let shown = null;        // いま経路を出している挙動
+
+  const pretty = (text) => {
+    if (text == null || text === '') return '（本文なし）';
+    try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return String(text); }
+  };
+  const matches = (expect, req) => {
+    if (!expect) return null;
+    const re = new RegExp('^' + expect.path.replace(/[.*+?^$()|[\]\\]/g, '\\$&').replace(/\{[^}]+\}/g, '[^/]+') + '(\\?.*)?$');
+    return expect.method === req.method && re.test(req.path);
+  };
+
+  function renderChips() {
+    $('behaviors').innerHTML = data.behaviors.map((b) =>
+      '<button type="button" data-b="' + b.id + '" aria-pressed="' + (shown === b.id) + '">' + esc(b.name) + '</button>').join('');
+  }
+  function renderPath(b) {
+    let html = '';
+    b.nodes.forEach((n, c) => {
+      html += '<div class="pnode" data-k="' + n.k + '" data-c="' + c + '"><span class="kind">' + KIND[n.k] + '</span><span class="nm">' + esc(n.n) +
+        '</span><span class="src">' + esc(n.src) + '</span>' + (n.nt ? '<span class="nt">' + esc(n.nt) + '</span>' : '') + '</div>';
+      if (c < b.nodes.length - 1) {
+        html += '<div class="hop' + (c === 0 ? '' : ' drawn') + '" data-c="' + c + '"><div class="rails"><span class="rail go"></span><span class="rail back"></span></div>' +
+          '<div class="lbs"><span class="lb go">↓ ' + esc(b.go[c]) + '</span><span class="lb back">↑ ' + esc(b.back[c]) + '</span>' +
+          '<span class="how">' + (c === 0 ? '実際に見える段' : '図に書かれているだけの段') + '</span></div></div>';
+      }
+    });
+    $('path').innerHTML = html;
+  }
+  const node = (c) => $('path').querySelector('.pnode[data-c="' + c + '"]');
+  const hop = (c) => $('path').querySelector('.hop[data-c="' + c + '"]');
+
+  function show(b, live) {
+    shown = b.id;
+    renderChips();
+    renderPath(b);
+    $('f-name').textContent = b.name;
+    const st = $('f-state');
+    st.hidden = false;
+    st.className = 'tag' + (live ? ' live' : '');
+    st.textContent = live ? 'いまの操作' : '図（操作はしていない）';
+    $('f-verdict').hidden = true;
+    if (!live) {
+      $('path').querySelectorAll('.pnode').forEach((n, i) => { n.classList.add('lit'); if (i > 1) n.classList.add('drawn'); });
+      $('path').querySelectorAll('.hop').forEach((h) => h.classList.add('go-on', 'back-on'));
+    }
+  }
+
+  function renderSeen() {
+    const reqs = op ? [...op.reqs.values()] : [];
+    $('s-reqs').innerHTML = reqs.length ? reqs.map((r) =>
+      '<div class="row"><div class="line"><b>' + esc(r.method) + '</b><span>' + esc(r.path) + '</span><span>→ ' + (r.status == null ? '待っている…' : esc(r.status)) + '</span></div>' +
+      '<span class="lbl">送った中身</span><pre>' + esc(pretty(r.body)) + '</pre>' +
+      (r.status == null ? '' : '<span class="lbl">返ってきた中身</span><pre>' + esc(pretty(r.resBody)) + '</pre>') + '</div>').join('')
+      : '<div class="empty">まだありません。</div>';
+    const ch = op ? net(op.changes) : [];
+    $('s-dom').innerHTML = ch.length ? '<ul class="changes">' + ch.map((c) =>
+      '<li class="' + c.kind + '">' + (c.kind === 'added' ? '＋ 増えた: ' : '－ 消えた: ') + esc(c.text || '（文字なし）') + '</li>').join('') + '</ul>'
+      : '<div class="empty">まだありません。</div>';
+  }
+
+  // アプリが一覧を丸ごと描き直すと、全部が「消えて、増えた」に見える。同じ中身の「消えた」と「増えた」は打ち消して、差だけを残す
+  function net(changes) {
+    const removed = changes.filter((c) => c.kind === 'removed').map((c) => c.text);
+    const out = [];
+    for (const c of changes) {
+      if (c.kind !== 'added') continue;
+      const i = removed.indexOf(c.text);
+      if (i >= 0) removed.splice(i, 1);
+      else out.push(c);
+    }
+    return out.concat(removed.map((text) => ({ kind: 'removed', text })));
+  }
+
+  function box(kind, rect) {
+    if (!rect || rect.w < 2 || rect.h < 2) return;
+    const el = document.createElement('div');
+    el.className = 'box ' + kind;
+    Object.assign(el.style, { left: rect.x + 'px', top: rect.y + 'px', width: rect.w + 'px', height: rect.h + 'px' });
+    $('overlay').append(el);
+    void el.offsetWidth;
+    el.classList.add('on');
+    setTimeout(() => el.remove(), 2000);
+  }
+
+  function begin(b, ev) {
+    op = { behavior: b.id, startedAt: ev.at, reqs: new Map(), changes: [], verdict: null };
+    window.__ops.push(op);
+    show(b, true);
+    node(0).classList.add('lit');
+    renderSeen();
+    if (ev.rect) box('part', ev.rect);
+  }
+
+  function onEvent(ev) {
+    window.__seen.push(ev);
+    if (ev.t === 'open') { const b = data.behaviors.find((x) => x.trigger.how === 'open'); if (b) begin(b, ev); return; }
+    if (ev.t === 'part') {
+      const b = data.behaviors.find((x) => x.trigger.part === ev.part && x.trigger.how === ev.how);
+      if (b) begin(b, ev);
+      return;
+    }
+    if (!op || ev.at - op.startedAt > 8000) return;   // どの操作にも結べない知らせは、出さない
+    const b = data.behaviors.find((x) => x.id === op.behavior);
+    if (ev.t === 'req') {
+      op.reqs.set(ev.id, { method: ev.method, path: ev.path, body: ev.body, status: null, resBody: null });
+      if (op.verdict == null) {
+        op.verdict = matches(b.expect, ev);
+        const v = $('f-verdict');
+        v.hidden = false;
+        v.className = 'tag ' + (op.verdict ? 'ok' : 'ng');
+        v.textContent = op.verdict ? '図と合っている' : '図と違う（図: ' + b.expect.method + ' ' + b.expect.path + '）';
+        hop(0).classList.add('go-on');
+        node(1).classList.add('lit');
+        setTimeout(() => { if (shown === b.id) { hop(1).classList.add('go-on'); node(2).classList.add('lit', 'drawn'); } }, 350);
+      }
+    } else if (ev.t === 'res') {
+      const r = op.reqs.get(ev.id);
+      if (r) { r.status = ev.status; r.resBody = ev.body; }
+      if (shown === b.id) { hop(1).classList.add('back-on'); setTimeout(() => { if (shown === b.id) hop(0).classList.add('back-on'); }, 350); }
+    } else if (ev.t === 'dom') {
+      op.changes.push(...ev.changes);
+      net(ev.changes).filter((c) => c.kind === 'added').slice(0, 3).forEach((c) => box('dom', c.rect));
+    }
+    renderSeen();
+  }
+
+  window.addEventListener('message', (e) => {
+    if (e.origin !== appOrigin || e.source !== frame.contentWindow) return;   // アプリの枠からの知らせだけを受ける
+    if (!e.data || e.data.__atlasLive !== 1) return;
+    onEvent(e.data);
+  });
+  $('behaviors').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-b]');
+    if (!btn) return;
+    op = null;
+    renderSeen();
+    show(data.behaviors.find((x) => x.id === btn.dataset.b), false);
+  });
+
+  renderChips();
+  frame.src = appUrl;
+})();
+</script>
+</html>
