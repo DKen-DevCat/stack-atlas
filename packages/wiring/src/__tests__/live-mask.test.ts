@@ -429,3 +429,27 @@ describe('アプリの枠からの知らせ（レビューで見つかったこ�
     ).toMatchObject({ at: now + 500 });
   });
 });
+
+describe('値を伏せる（10-2b のセキュリティのレビューで見つかったこと）', () => {
+  it('データそのものをキーにした入れ物（メールアドレス・番号・符号で引くもの）は、キーも伏せる', () => {
+    const text = JSON.stringify({
+      'a@example.test': { score: 1 },
+      '12345': true,
+      '3f9a0c1e77aa4b2d': 'x',
+      'c0ffee00-1234-5678-9abc-def012345678': 1,
+      userName: 'x',
+      created_at: 'x',
+    });
+    const masked = maskBody('application/json', text, text.length) as {
+      shape: { keys: Array<[string, unknown]> };
+    };
+    expect(masked.shape.keys.map(([k]) => k)).toEqual([
+      MASKED,
+      MASKED,
+      MASKED,
+      MASKED,
+      'userName',
+      'created_at',
+    ]);
+  });
+});

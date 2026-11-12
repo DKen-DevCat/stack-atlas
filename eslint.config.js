@@ -33,6 +33,13 @@ export default tseslint.config(
     },
   },
   {
+    // ライブの画面（最小のもの。10-2b）と、アプリの枠の中で動くスクリプトは、ブラウザで動く
+    files: ['packages/live/page/**/*.js', 'packages/live/src/watcher.ts'],
+    languageOptions: {
+      globals: { ...globals.browser },
+    },
+  },
+  {
     // 計測のスクリプトは Node で動き、page.evaluate に渡す関数はブラウザで動く
     files: ['packages/viewer/scripts/**/*.mjs'],
     languageOptions: {

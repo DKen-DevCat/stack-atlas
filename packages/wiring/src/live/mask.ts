@@ -26,6 +26,13 @@ const clip = (s: string, max: number): string => (s.length > max ? `${s.slice(0,
 /** 伏せた所に出す印 */
 export const MASKED = '…';
 
+/**
+ * キーと値の形の中身の、キーの名前。データそのものをキーにした入れ物（メールアドレス・番号・符号で引くもの）は、
+ * キーが値なので、伏せた印にする
+ */
+const keyName = (k: string): string =>
+  /@|^\d+$|^[0-9a-f-]{16,}$/i.test(k) ? MASKED : clip(k, MASK_LIMITS.name);
+
 function shapeOf(v: unknown, depth: number): LiveShape {
   if (v === null) return { t: 'null' };
   if (typeof v === 'string') return { t: 'string' };
@@ -40,9 +47,7 @@ function shapeOf(v: unknown, depth: number): LiveShape {
   if (depth >= MASK_LIMITS.depth) return { t: 'object', keys: [], more: entries.length };
   const shape: LiveShape = {
     t: 'object',
-    keys: entries
-      .slice(0, MASK_LIMITS.keys)
-      .map(([k, x]) => [clip(k, MASK_LIMITS.name), shapeOf(x, depth + 1)]),
+    keys: entries.slice(0, MASK_LIMITS.keys).map(([k, x]) => [keyName(k), shapeOf(x, depth + 1)]),
   };
   if (entries.length > MASK_LIMITS.keys) shape.more = entries.length - MASK_LIMITS.keys;
   return shape;
