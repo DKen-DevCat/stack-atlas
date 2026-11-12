@@ -35,13 +35,24 @@ export function gitEnv(): NodeJS.ProcessEnv {
 }
 
 /**
- * git の実行ファイル。PATH の段のうち、絶対パスのものだけを見る（空の段・`.`・相対の段は見ない。repo の中の `git` を
- * 実行しないため）。見つからなければ undefined
+ * git の実行ファイル。PATH の段のうち、次のものは見ない（repo の中の `git` を実行しないため）:
+ * - 空の段・`.`・相対の段
+ * - `node_modules` の段を含むもの（`npm exec`・`npx` は、cwd とその祖先の `node_modules/.bin` を、絶対パスで PATH の前に足す。
+ *   2026-11-13 の 10-1b のセキュリティのレビュー: repo が commit した `node_modules/.bin/git` が実行された）
+ * - avoid（対象の repo）と、今の作業ディレクトリの中にあるもの（リンクを解いて比べる）
+ * 見つからなければ undefined
  */
-export function gitExecutable(path: string | undefined = process.env.PATH): string | undefined {
-  const names = process.platform === 'win32' ? ['git.exe', 'git.cmd'] : ['git'];
+export function gitExecutable(
+  path: string | undefined = process.env.PATH,
+  avoid: readonly string[] = [],
+): string | undefined {
+  const names = process.platform === 'win32' ? ['git.exe'] : ['git'];
+  const fences = [...avoid, process.cwd()].map((d) => realOf(d) ?? resolve(d));
   for (const dir of (path ?? '').split(delimiter)) {
     if (!dir || !isAbsolute(dir)) continue;
+    if (dir.split(/[\\/]/).includes('node_modules')) continue;
+    const real = realOf(dir);
+    if (!real || fences.some((f) => pathWithin(f, real, true))) continue;
     for (const name of names) {
       const file = join(dir, name);
       try {
@@ -65,10 +76,11 @@ export function runGit(
   args: readonly string[],
   opts: { timeoutMs?: number; maxBuffer?: number } = {},
 ): Buffer | undefined {
-  const exe = gitExecutable();
+  const target = resolve(cwd);
+  const exe = gitExecutable(process.env.PATH, [target]);
   if (!exe) return undefined;
   try {
-    return execFileSync(exe, [...GIT_SAFE_CONFIG, '-C', cwd, ...args], {
+    return execFileSync(exe, [...GIT_SAFE_CONFIG, '-C', target, ...args], {
       cwd: tmpdir(),
       env: gitEnv(),
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -160,10 +172,7 @@ export interface TrackedFiles {
  * root（git の作業ツリーの中のディレクトリ）の下で、git が追跡しているファイル。git の repo でない・使ってよい repo で
  * ないときは、理由（checkGitRepo）
  */
-export function trackedRegularFiles(
-  root: string,
-  opts: { maxFiles?: number } = {},
-): TrackedFiles | { why: string } {
+export function trackedRegularFiles(root: string): TrackedFiles | { why: string } {
   const real = realOf(root);
   if (!real) return { why: 'ディレクトリが無い' };
   const repo = checkGitRepo(real);
@@ -173,7 +182,7 @@ export function trackedRegularFiles(
     maxBuffer: 256 * 1024 * 1024,
   });
   if (!out) return { why: '追跡しているファイルの一覧を得られない' };
-  const files: string[] = [];
+  const files = new Set<string>();
   let others = 0;
   for (const entry of out.toString('utf8').split('\0')) {
     if (!entry) continue;
@@ -185,13 +194,19 @@ export function trackedRegularFiles(
       others++;
       continue;
     }
-    const st = lstatSync(join(real, path), { throwIfNoEntry: false });
+    // マージの衝突中は、同じパスが段 1〜3 として何行も出る。1 つに数える
+    if (files.has(path)) continue;
+    let st;
+    try {
+      st = lstatSync(join(real, path), { throwIfNoEntry: false });
+    } catch {
+      st = undefined; // 追跡しているディレクトリを、手元でファイルに置き換えた（ENOTDIR）など
+    }
     if (!st?.isFile()) {
       others++;
       continue;
     }
-    files.push(path);
-    if (opts.maxFiles !== undefined && files.length >= opts.maxFiles) break;
+    files.add(path);
   }
-  return { files, others };
+  return { files: [...files], others };
 }

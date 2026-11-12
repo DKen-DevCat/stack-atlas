@@ -10,6 +10,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -25,25 +26,39 @@ const APP = fileURLToPath(new URL('../../../../prototype/live/app/', import.meta
 const GRAPH = '.stack-atlas/graph/app.yaml';
 const errors = (r: AtlasReport) => r.issues.filter((i) => i.level === 'error');
 const warnings = (r: AtlasReport) => r.issues.filter((i) => i.level === 'warning');
+// 開発者の git の設定（無視の決まりなど）に左右されないよう、全体と利用者の設定を読まない
 const git = (cwd: string, ...args: string[]) =>
-  execFileSync('git', args, { cwd, stdio: 'ignore', env: { ...process.env, GIT_DIR: undefined } });
+  execFileSync('git', args, {
+    cwd,
+    stdio: 'ignore',
+    env: {
+      ...process.env,
+      GIT_DIR: undefined,
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_CONFIG_NOSYSTEM: '1',
+    },
+  });
 
 /**
  * 根拠つきの図を一時ディレクトリに写す: <tmp>/atlas（図。atlas.yaml は ../repo を指す）と <tmp>/repo（サンプルのアプリ）。
- * repo は git の repo ではない（追跡の確かめは飛ばす）。edit で図のファイルを書き換える
+ * repo は git の repo にする（atlas.yaml で宣言した repo は、git の作業ツリーの中でなければ根拠を読まない。2026-11-13 のレビュー）。
+ * あとから足したファイルは、track() で追跡に入れる。edit で図のファイルを書き換える
  */
 function copy(edit: (graph: string) => string = (g) => g) {
   const tmp = mkdtempSync(join(tmpdir(), 'stack-atlas-evidence-'));
   const atlas = join(tmp, 'atlas');
   cpSync(FIXTURE, atlas, { recursive: true });
   cpSync(APP, join(tmp, 'repo', 'app'), { recursive: true });
+  git(join(tmp, 'repo'), 'init', '-q');
+  git(join(tmp, 'repo'), 'add', '-A');
   writeFileSync(join(atlas, '.stack-atlas/atlas.yaml'), 'repo: { path: ../repo }\n');
   writeFileSync(join(atlas, '.stack-atlas/reading.yaml'), 'skipped: []\n');
   const file = join(atlas, GRAPH);
   const before = readFileSync(file, 'utf8');
   const after = edit(before);
   writeFileSync(file, after);
-  return { tmp, atlas, repo: join(tmp, 'repo'), changed: after !== before };
+  const repo = join(tmp, 'repo');
+  return { tmp, atlas, repo, changed: after !== before, track: () => git(repo, 'add', '-A') };
 }
 /** 根拠の 1 つを書き換える（文字列で 1 か所だけ） */
 const swap = (from: string, to: string) => (g: string) => {
@@ -116,6 +131,14 @@ describe('根拠: わざと入れた誤り', () => {
     }
   });
 
+  it('エージェントが書いた文字列の制御文字は、出力で伏せる（端末を操作させない）', () => {
+    const r = only(
+      loadEvidence('app/index.html', '[78, 81]', 'async \u001b[31mfunction nothing()'),
+    );
+    expect(errors(r)[0]!.message).toContain('async ?[31mfunction nothing()');
+    expect(formatAtlasReport(r)).not.toContain('\u001b');
+  });
+
   it('書いた範囲の外でだけ見つかる: 警告（何行めのあたりにあるか）。前後 3 行までは、範囲で見つかったことにする', () => {
     const far = only(loadEvidence('app/index.html', '[10, 20]', 'async function load()'));
     expect(errors(far)).toEqual([]);
@@ -130,32 +153,41 @@ describe('根拠: わざと入れた誤り', () => {
     expect(warnings(common).map((w) => w.message)).toEqual([
       expect.stringContaining('3 か所あります'),
     ]);
-    const { atlas, repo } = copy(loadEvidence('long.txt', '[1, 300]', 'line 150 of the file'));
+    const { atlas, repo, track } = copy(
+      loadEvidence('long.txt', '[1, 300]', 'line 150 of the file'),
+    );
     writeFileSync(
       join(repo, 'long.txt'),
       Array.from({ length: 300 }, (_, i) => `line ${i + 1} of the file`).join('\n'),
     );
+    track();
     expect(warnings(checkAtlas(atlas)).map((w) => w.message)).toEqual([
       expect.stringContaining('広すぎます'),
     ]);
   });
 
   it('根拠に書けないファイル: repo の外・絶対パス・.git・秘密らしいもの・リンク・ハードリンク・図の置き場の中。どれも読まない', () => {
-    const { atlas, repo } = copy();
+    const { atlas, repo, track } = copy();
     writeFileSync(join(repo, '.env'), 'TOKEN=async function load()\n');
     writeFileSync(join(repo, 'id_deploy'), 'async function load()\n');
-    mkdirSync(join(repo, '.git'));
-    writeFileSync(join(repo, '.git/config'), 'async function load()\n');
     symlinkSync(join(repo, 'app/index.html'), join(repo, 'link.html'));
-    linkSync(join(repo, 'app/sw.js'), join(repo, 'hard.js'));
+    // 2026-11-13 変更（レビュー 7）: ハードリンクは、根拠に使っていないファイルに張る（前は sw.js に張ったので、ほかの根拠も誤りになり、
+    // hard.js の判定が働かなくても通っていた）
+    writeFileSync(join(repo, 'unused.txt'), 'async function load()\n');
+    linkSync(join(repo, 'unused.txt'), join(repo, 'hard.js'));
+    track();
     const cases: Array<[string, RegExp]> = [
       ['../atlas/.stack-atlas/graph/app.yaml', /repo の外/],
       ['/etc/hosts', /絶対パス/],
       ['.git/config', /\.git の中/],
+      ['.GIT/config', /\.git の中/],
       ['.env', /秘密らしい/],
       ['id_deploy', /秘密らしい/],
-      ['link.html', /シンボリックリンク/],
+      // 追跡しているリンクは、普通のファイルではないので、追跡している普通のファイルの一覧に入らない
+      ['link.html', /追跡していない|シンボリックリンク/],
       ['hard.js', /ハードリンク/],
+      // 2026-11-13 追加（レビュー 1）: ファイルの下を指すパスで、check が落ちない（その根拠 1 件の誤り）
+      ['app/index.html/x', /追跡していない|ありません/],
     ];
     for (const [file, message] of cases) {
       const g = readFileSync(join(atlas, GRAPH), 'utf8');
@@ -167,6 +199,7 @@ describe('根拠: わざと入れた誤り', () => {
           .join('\n'),
         file,
       ).toMatch(message);
+      expect(errors(r), file).toHaveLength(1);
       // 中身は写さない（エージェントが書いた文字列だけ）
       expect(JSON.stringify(r), file).not.toContain('TOKEN=');
       writeFileSync(join(atlas, GRAPH), g);
@@ -189,8 +222,9 @@ describe('根拠: わざと入れた誤り', () => {
   });
 
   it('大きすぎるファイルは、読まずに警告（確かめられない）', () => {
-    const { atlas, repo } = copy(loadEvidence('big.txt', '[1, 1]', 'async function load()'));
+    const { atlas, repo, track } = copy(loadEvidence('big.txt', '[1, 1]', 'async function load()'));
     writeFileSync(join(repo, 'big.txt'), `async function load()\n${'x'.repeat(1024 * 1024 + 10)}`);
+    track();
     const r = checkAtlas(atlas);
     expect(errors(r)).toEqual([]);
     expect(warnings(r)[0]!.message).toContain('大きすぎる');
@@ -237,6 +271,12 @@ describe('atlas.yaml（repo の表）と reading.yaml（申告）', () => {
       ['repo: { path: ../repo }\nrepos: [{ name: a, path: ../repo }]', /どちらか 1 つだけ/],
       ['repo: { path: ../repo }\nurl: x', /知らないキー url/],
       ['repos: [{ name: "a/b", path: ../repo }]', /英字・数字/],
+      // 2026-11-13 追加（セキュリティのレビュー 1）: 図の置き場の祖先は、repo に取らない（どこでも読める道にしない）
+      ['repo: { path: .. }', /図の置き場を含むディレクトリ/],
+      [
+        'repos: [{ name: r, path: ../../../../../../../../../../../../.. }]',
+        /図の置き場を含むディレクトリか、ホームか、ファイルシステムの根/,
+      ],
     ];
     for (const [yaml, message] of cases) {
       const atlas = join(tmp, 'atlas');
@@ -255,6 +295,38 @@ describe('atlas.yaml（repo の表）と reading.yaml（申告）', () => {
         .map((e) => e.message)
         .join('\n'),
     ).toMatch(/シンボリックリンク/);
+    // 2026-11-13 追加（レビュー 2）: repo が無いときの誤りは 1 件だけ（根拠ごと・申告ごとに重ねない）
+    writeFileSync(join(atlas, '.stack-atlas/atlas.yaml'), 'repo: { path: ../nothing }');
+    writeFileSync(join(atlas, '.stack-atlas/reading.yaml'), 'read: [{ path: a.txt, why: x }]');
+    expect(errors(checkAtlas(atlas))).toHaveLength(1);
+  });
+
+  it('宣言した repo が git の作業ツリーの中でなければ、根拠を読まない（閉じる側に倒す。誤りは 1 件）', () => {
+    const { tmp } = copy();
+    const plain = join(tmp, 'plain');
+    cpSync(APP, join(plain, 'app'), { recursive: true });
+    const atlas = join(tmp, 'atlas');
+    writeFileSync(join(atlas, '.stack-atlas/atlas.yaml'), 'repo: { path: ../plain }');
+    const r = checkAtlas(atlas);
+    expect(errors(r)).toHaveLength(1);
+    expect(errors(r)[0]!.message).toContain('一覧を得られないので、根拠を読みません');
+    expect(r.evidence!.found).toBe(0);
+    // 解いた repo の場所を、出力の先頭に出す（人が、思っていない場所を指していないか気づけるように）
+    expect(formatAtlasReport(r)).toContain(`repo: ${realpathSync(plain)}`);
+  });
+
+  it('git の作業ツリーの中なのに git が一覧を断る（.git がリンク）ときも、根拠を読まない', () => {
+    const self = mkdtempSync(join(tmpdir(), 'stack-atlas-evidence-gitlink-'));
+    cpSync(FIXTURE, self, { recursive: true });
+    cpSync(APP, join(self, 'app'), { recursive: true });
+    writeFileSync(join(self, '.stack-atlas/atlas.yaml'), '# 置き場そのものが repo\n');
+    const real = mkdtempSync(join(tmpdir(), 'stack-atlas-evidence-gitdir-'));
+    git(real, 'init', '-q');
+    symlinkSync(join(real, '.git'), join(self, '.git'));
+    const r = checkAtlas(self);
+    expect(errors(r).map((e) => e.message)).toEqual([
+      expect.stringContaining('一覧を得られないので、根拠を読みません'),
+    ]);
   });
 
   it('複数の repo: 根拠のパスは "<repo の名前>/…"。表に無い repo は誤り', () => {
@@ -298,13 +370,12 @@ describe('atlas.yaml（repo の表）と reading.yaml（申告）', () => {
 describe('未読（使い捨ての git の repo で）', () => {
   /** <tmp>/repo を git の repo にして、ファイルを足す */
   function gitRepo(files: Record<string, string>) {
-    const { atlas, repo } = copy();
+    const { atlas, repo, track } = copy();
     for (const [f, text] of Object.entries(files)) {
       mkdirSync(join(repo, f, '..'), { recursive: true });
       writeFileSync(join(repo, f), text);
     }
-    git(repo, 'init', '-q');
-    git(repo, 'add', '-A');
+    track();
     return { atlas, repo };
   }
 
@@ -376,8 +447,13 @@ describe('未読（使い捨ての git の repo で）', () => {
   });
 
   it('git の repo でなければ、未読は数えない（知らせだけ）', () => {
-    const { atlas } = copy();
+    // 2026-11-13 変更（セキュリティのレビュー 1）: 宣言した repo は git が要るので、置き場そのものが repo の形で確かめる
+    const atlas = mkdtempSync(join(tmpdir(), 'stack-atlas-evidence-plain-'));
+    cpSync(FIXTURE, atlas, { recursive: true });
+    cpSync(APP, join(atlas, 'app'), { recursive: true });
+    writeFileSync(join(atlas, '.stack-atlas/atlas.yaml'), '# 置き場そのものが repo\n');
     const r = checkAtlas(atlas);
+    expect(r.issues).toEqual([]);
     expect(r.unread![0]).toMatchObject({ git: false });
     expect(formatAtlasReport(r)).toContain('未読: 数えられません');
   });
@@ -416,6 +492,26 @@ describe('git を呼ぶときの守り（docs/28 D263。対象の repo は信用
     expect(t).toMatchObject({ files: ['a.txt'] });
     expect(existsSync(`${marker}-fsmonitor`)).toBe(false);
     expect(existsSync(`${marker}-fake`)).toBe(false);
+  });
+
+  it('PATH の、repo の中の絶対パスの段（npm exec が足す node_modules/.bin）にある git も、実行しない', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'stack-atlas-git-npm-'));
+    const repo = join(tmp, 'repo');
+    mkdirSync(join(repo, 'node_modules', '.bin'), { recursive: true });
+    git(repo, 'init', '-q');
+    writeFileSync(join(repo, 'a.txt'), 'a');
+    git(repo, 'add', 'a.txt');
+    const marker = join(tmp, 'ran');
+    for (const dir of [join(repo, 'node_modules', '.bin'), join(repo, 'bin')]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'git'), `#!/bin/sh\ntouch ${marker}\nexit 1\n`);
+      chmodSync(join(dir, 'git'), 0o755);
+    }
+    process.env.PATH = [join(repo, 'node_modules', '.bin'), join(repo, 'bin'), saved.PATH].join(
+      delimiter,
+    );
+    expect(trackedRegularFiles(repo)).toMatchObject({ files: ['a.txt'] });
+    expect(existsSync(marker)).toBe(false);
   });
 
   it('.git が別の repo を指すファイル（gitfile）なら、使わない', () => {

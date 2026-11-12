@@ -6,12 +6,16 @@
  * - 未読: 対象の repo が追跡しているファイルのうち、どの根拠にも、`reading.yaml` の申告にも出てこないもの（知らせだけ）
  * - repo の表: `atlas.yaml`（人の持ち物）の `repo` / `repos`
  *
- * 守り（docs/28 §5・D259・D263）: 読むのは repo の中の、追跡している普通のファイルだけ（リンク・ハードリンク・`.git`・
- * 図の置き場・秘密らしいものは読まない）。出力に、ファイルの中身を写さない（エージェントが書いた文字列と、行の番号だけ）
+ * 守り（docs/28 §5・D259・D262・D263。§11 のレビューで強めた）:
+ * - 読むのは repo の中の、追跡している普通のファイルだけ（リンク・ハードリンク・`.git`・図の置き場・秘密らしいものは読まない）
+ * - `atlas.yaml` で宣言した repo は、git の作業ツリーの中にあること。図の置き場の祖先・ホーム・ファイルシステムの根は取らない。
+ *   git の作業ツリーの中なのに一覧を得られないときは、根拠を読まない（閉じる側に倒す）
+ * - 出力に、ファイルの中身を写さない（エージェントが書いた文字列と、行の番号だけ。制御文字は伏せる）
  */
 import type { EvidenceV2 } from '@stack-atlas/schema';
 import { lstatSync, realpathSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { trackedRegularFiles } from '../git.js';
 import { parseLocalYaml, readLocalFile, whyText } from '../local-files.js';
 import { isSecretFile, repoPathProblem } from '../secrets.js';
@@ -46,6 +50,10 @@ export interface AtlasRepo {
   prefix: string;
   /** repo のディレクトリ（realpath） */
   dir: string;
+  /** `atlas.yaml` で宣言した repo か（図の置き場そのものなら false） */
+  declared: boolean;
+  /** 根拠を読まない理由（git の作業ツリーの中なのに、一覧を得られない、など）。あれば、この repo の根拠は読まない */
+  closed?: string;
 }
 
 export interface EvidenceSummary {
@@ -108,6 +116,24 @@ const realOf = (p: string) => {
     return undefined;
   }
 };
+/** lstat（途中の段がファイルなどで、例外になるときも undefined） */
+const lstatOf = (p: string) => {
+  try {
+    return lstatSync(p, { throwIfNoEntry: false });
+  } catch {
+    return undefined;
+  }
+};
+/** 出力に出す文字（エージェントが書いたもの）の、制御文字を伏せる */
+const shown = (s: string) =>
+  [...s].map((c) => (c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f ? '?' : c)).join('');
+/** ディレクトリか、その祖先に `.git` があるか（git の作業ツリーの中か。git を呼ばずに見る） */
+function underGit(dir: string): boolean {
+  for (let d = dir; ; d = dirname(d)) {
+    if (lstatOf(join(d, '.git'))) return true;
+    if (dirname(d) === d) return false;
+  }
+}
 
 function readYaml(root: string, name: string, add: Add, file: string): unknown {
   const read = readLocalFile(root, [ATLAS_DIR, name], EVIDENCE_LIMITS.bytes);
@@ -123,11 +149,11 @@ function readYaml(root: string, name: string, add: Add, file: string): unknown {
   return parsed.value ?? undefined;
 }
 
-/** `atlas.yaml` の repo の表を読む（D262）。無ければ、図の置き場そのものが repo */
-export function loadRepos(root: string, add: Add): AtlasRepo[] {
+/** `atlas.yaml` の repo の表を読む（D262）。broken: 表に誤りがあった（根拠・申告ごとの誤りは重ねない） */
+export function loadRepos(root: string, add: Add): { repos: AtlasRepo[]; broken: boolean } {
   const rootReal = realOf(root) ?? resolve(root);
   const raw = readYaml(root, ATLAS_CONFIG_FILE, add, ATLAS_CONFIG_PATH);
-  const self: AtlasRepo[] = [{ prefix: '', dir: rootReal }];
+  const self = { repos: [{ prefix: '', dir: rootReal, declared: false }], broken: false };
   if (raw === undefined) return self;
   if (!isPlainObject(raw)) {
     add(
@@ -136,7 +162,7 @@ export function loadRepos(root: string, add: Add): AtlasRepo[] {
       ATLAS_CONFIG_PATH,
       'atlas.yaml のトップレベルは { repo: ... } か { repos: [...] } にしてください',
     );
-    return self;
+    return { ...self, broken: true };
   }
   const unknown = Object.keys(raw).filter((k) => !['repo', 'repos', 'screens'].includes(k));
   if (unknown.length)
@@ -148,101 +174,79 @@ export function loadRepos(root: string, add: Add): AtlasRepo[] {
     );
   if (raw.repo !== undefined && raw.repos !== undefined) {
     add('error', 'form', ATLAS_CONFIG_PATH, 'repo と repos は、どちらか 1 つだけ書いてください');
-    return self;
+    return { repos: [], broken: true };
   }
+  if (raw.repo === undefined && raw.repos === undefined) return self;
+  let broken = false;
+  const fail = (message: string, where: string, check: AtlasIssue['check'] = 'form') => {
+    broken = true;
+    add('error', check, ATLAS_CONFIG_PATH, message, where);
+  };
+  const home = realOf(homedir()) ?? homedir();
   /** 置き場からの相対パスを、repo のディレクトリに解く。誤りなら指摘して undefined */
   const dirOf = (path: unknown, where: string): string | undefined => {
     if (typeof path !== 'string' || !path.trim()) {
-      add(
-        'error',
-        'form',
-        ATLAS_CONFIG_PATH,
-        `${where} の path がありません（置き場からの相対パス）`,
-        where,
-      );
+      fail(`${where} の path がありません（置き場からの相対パス）`, where);
       return undefined;
     }
     if (isAbsolute(path) || path.startsWith('~') || /^[A-Za-z]:[\\/]/.test(path)) {
-      add(
-        'error',
-        'form',
-        ATLAS_CONFIG_PATH,
-        `${where} の path は、置き場からの相対パスにしてください（"${path}"）`,
-        where,
-      );
+      fail(`${where} の path は、置き場からの相対パスにしてください（"${shown(path)}"）`, where);
       return undefined;
     }
     const abs = resolve(rootReal, path);
-    const st = lstatSync(abs, { throwIfNoEntry: false });
+    const st = lstatOf(abs);
     if (!st || st.isSymbolicLink() || !st.isDirectory()) {
-      add(
-        'error',
+      fail(
+        `${where} の repo "${shown(path)}" が、${!st ? 'ありません' : st.isSymbolicLink() ? 'シンボリックリンクです' : 'ディレクトリではありません'}（この repo の根拠は確かめません）`,
+        where,
         'evidence',
-        ATLAS_CONFIG_PATH,
-        `${where} の repo "${path}" が、${!st ? 'ありません' : st.isSymbolicLink() ? 'シンボリックリンクです' : 'ディレクトリではありません'}（この repo の根拠は確かめません）`,
+      );
+      return undefined;
+    }
+    const real = realOf(abs) ?? abs;
+    // 図の置き場の祖先・ホーム・ファイルシステムの根は、repo に取らない（根拠の検査が、どこでも読める道にならないように）
+    if (pathWithin(real, rootReal, true) || real === home || real === parse(real).root) {
+      fail(
+        `${where} の repo "${shown(path)}" は、図の置き場を含むディレクトリか、ホームか、ファイルシステムの根です。repo そのもののディレクトリを書いてください`,
         where,
       );
       return undefined;
     }
-    return realOf(abs);
+    return real;
   };
   if (raw.repo !== undefined) {
     if (!isPlainObject(raw.repo)) {
-      add(
-        'error',
-        'form',
-        ATLAS_CONFIG_PATH,
-        'repo は { path: "<置き場からの相対パス>" } で書いてください',
-      );
-      return [];
+      fail('repo は { path: "<置き場からの相対パス>" } で書いてください', 'repo');
+      return { repos: [], broken };
     }
     const dir = dirOf(raw.repo.path, 'repo');
-    return dir ? [{ prefix: '', dir }] : [];
+    return { repos: dir ? [{ prefix: '', dir, declared: true }] : [], broken };
   }
-  if (raw.repos === undefined) return self;
   if (!Array.isArray(raw.repos) || raw.repos.length === 0) {
-    add('error', 'form', ATLAS_CONFIG_PATH, 'repos は [{ name, path }, ...] で書いてください');
-    return [];
+    fail('repos は [{ name, path }, ...] で書いてください', 'repos');
+    return { repos: [], broken };
   }
   const out: AtlasRepo[] = [];
   for (const [i, r] of raw.repos.entries()) {
     const where = `repos ${i + 1} 番め`;
     if (!isPlainObject(r) || typeof r.name !== 'string' || !REPO_NAME.test(r.name)) {
-      add(
-        'error',
-        'form',
-        ATLAS_CONFIG_PATH,
-        `${where}: name は英字・数字・_・- で書いてください`,
-        where,
-      );
+      fail(`${where}: name は英字・数字・_・- で書いてください`, where);
       continue;
     }
     if (out.some((x) => x.name === r.name)) {
-      add(
-        'error',
-        'form',
-        ATLAS_CONFIG_PATH,
-        `${where}: repo の名前 "${r.name}" が重複しています`,
-        where,
-      );
+      fail(`${where}: repo の名前 "${r.name}" が重複しています`, where);
       continue;
     }
     const dir = dirOf(r.path, `repo "${r.name}"`);
     if (!dir) continue;
     const nested = out.find((x) => pathWithin(x.dir, dir, true) || pathWithin(dir, x.dir, true));
     if (nested) {
-      add(
-        'error',
-        'form',
-        ATLAS_CONFIG_PATH,
-        `repo "${r.name}" と repo "${nested.name}" が、入れ子か同じ場所です`,
-        where,
-      );
+      fail(`repo "${r.name}" と repo "${nested.name}" が、入れ子か同じ場所です`, where);
       continue;
     }
-    out.push({ name: r.name, prefix: `${r.name}/`, dir });
+    out.push({ name: r.name, prefix: `${r.name}/`, dir, declared: true });
   }
-  return out;
+  return { repos: out, broken };
 }
 
 /** 根拠のパスを、repo と repo からの相対パスに分ける。分けられなければ undefined */
@@ -287,7 +291,8 @@ function indexLines(text: string) {
     return lineOf[lo] ?? 1;
   };
   // 最後が改行で終わるファイルは、その後ろの空の行を数えない
-  const count = lines.length > 1 && lines[lines.length - 1] === '' ? lines.length - 1 : lines.length;
+  const count =
+    lines.length > 1 && lines[lines.length - 1] === '' ? lines.length - 1 : lines.length;
   return { count, joined, at };
 }
 
@@ -298,9 +303,11 @@ export function checkEvidence(
   repos: readonly AtlasRepo[],
   tracked: ReadonlyMap<AtlasRepo, ReadonlySet<string> | undefined>,
   add: Add,
+  opts: { reposBroken?: boolean } = {},
 ): { summary: EvidenceSummary; files: Map<AtlasRepo, Set<string>> } {
   const rootReal = realOf(root) ?? resolve(root);
-  const atlasDir = join(rootReal, ATLAS_DIR);
+  // 図の置き場の中は、根拠に書けない。大文字と小文字を区別しないファイルシステムでも外れないよう、小文字にそろえて比べる
+  const atlasDir = join(rootReal, ATLAS_DIR).toLowerCase();
   const files = new Map<AtlasRepo, Set<string>>(repos.map((r) => [r, new Set<string>()]));
   const summary: EvidenceSummary = {
     nodes: { with: 0, total: 0 },
@@ -329,18 +336,16 @@ export function checkEvidence(
           ? '絶対パスは書けません（repo からの相対パス）'
           : 'repo の外（..）は書けません',
       );
-    const segs = rel.split('/');
+    const segs = rel.split(/[\\/]/);
     if (segs.some((s) => s === '' || s === '.')) return fail('パスの書き方が正しくありません');
     if (segs.some((s) => s.toLowerCase() === '.git')) return fail('.git の中は、根拠に書けません');
     if (isEvidenceSecret(rel)) return fail('秘密らしいファイルなので、読みません');
     const abs = join(repo.dir, ...segs);
-    if (pathWithin(atlasDir, abs, true))
+    if (pathWithin(atlasDir, abs.toLowerCase(), true))
       return fail('図の置き場（.stack-atlas/）の中は、根拠に書けません');
     const set = tracked.get(repo);
     if (set && !set.has(rel))
       return fail('git が追跡していないファイルです（追跡しているファイルだけを、根拠に書けます）');
-    const st = lstatSync(abs, { throwIfNoEntry: false });
-    if (st?.isFile() && st.nlink > 1) return fail('ハードリンクなので、読みません');
     const read = readLocalFile(repo.dir, segs, EVIDENCE_LIMITS.bytes);
     if ('why' in read)
       return read.why === 'too-large'
@@ -349,6 +354,8 @@ export function checkEvidence(
             'warning',
           )
         : fail(`ファイルが${whyText(read.why)}`);
+    // 読めたあとで、ハードリンクかを確かめる（途中の段がファイルなどで lstat が例外になる所は、上の読みで断っている）
+    if ((lstatOf(abs)?.nlink ?? 1) > 1) return fail('ハードリンクなので、読みません');
     const v = indexLines(read.text);
     cache.set(key, v);
     return v;
@@ -367,7 +374,7 @@ export function checkEvidence(
         'error',
         'evidence',
         file,
-        `根拠の文字列 "${text}" は、${EVIDENCE_LIMITS.textMin}〜${EVIDENCE_LIMITS.textMax} 字で、文字か数字を含めてください（短い字句・記号だけは、どこにでもあるので、見た証になりません）`,
+        `根拠の文字列 "${shown(text.slice(0, 80))}" は、${EVIDENCE_LIMITS.textMin}〜${EVIDENCE_LIMITS.textMax} 字で、文字か数字を含めてください（短い字句・記号だけは、どこにでもあるので、見た証になりません）`,
         where,
       );
       return;
@@ -385,21 +392,24 @@ export function checkEvidence(
     }
     const loc = locate(repos, ev.file);
     if (!loc) {
-      add(
-        'error',
-        'evidence',
-        file,
-        `根拠のファイル "${ev.file}" の repo が、atlas.yaml の表にありません（"<repo の名前>/…" で書いてください）`,
-        where,
-      );
+      // repo の表に誤りがあるときは、そちらを 1 件だけ出す（根拠ごとに重ねない。D262）
+      if (!opts.reposBroken)
+        add(
+          'error',
+          'evidence',
+          file,
+          `根拠のファイル "${shown(ev.file)}" の repo が、atlas.yaml の表にありません（"<repo の名前>/…" で書いてください）`,
+          where,
+        );
+      return;
+    }
+    if (loc.repo.closed) return; // この repo の根拠は読まない（repo ごとに 1 件、別に出している）
+    const idx = readIndexed(loc.repo, loc.rel);
+    if ('why' in idx) {
+      add(idx.level, 'evidence', file, `根拠のファイル "${shown(ev.file)}": ${idx.why}`, where);
       return;
     }
     files.get(loc.repo)!.add(loc.rel);
-    const idx = readIndexed(loc.repo, loc.rel);
-    if ('why' in idx) {
-      add(idx.level, 'evidence', file, `根拠のファイル "${ev.file}": ${idx.why}`, where);
-      return;
-    }
     if (to > idx.count) {
       add(
         'error',
@@ -418,7 +428,13 @@ export function checkEvidence(
     )
       hits.push(idx.at(at));
     if (hits.length === 0) {
-      add('error', 'evidence', file, `根拠の文字列 "${text}" が、"${ev.file}" にありません`, where);
+      add(
+        'error',
+        'evidence',
+        file,
+        `根拠の文字列 "${shown(text)}" が、"${shown(ev.file)}" にありません`,
+        where,
+      );
       return;
     }
     const near = hits.some(
@@ -429,7 +445,7 @@ export function checkEvidence(
         'warning',
         'evidence',
         file,
-        `根拠の文字列 "${text}" が、書いた行の範囲 [${from}, ${to}] にありません（${hits[0]} 行めのあたりにあります）`,
+        `根拠の文字列 "${shown(text)}" が、書いた行の範囲 [${from}, ${to}] にありません（${hits[0]} 行めのあたりにあります）`,
         where,
       );
       return;
@@ -440,7 +456,7 @@ export function checkEvidence(
         'warning',
         'evidence',
         file,
-        `根拠の文字列 "${text}" は、"${ev.file}" に ${hits.length} か所あります（ありふれた文字列は、見た証になりにくい）`,
+        `根拠の文字列 "${shown(text)}" は、"${shown(ev.file)}" に ${hits.length} か所あります（ありふれた文字列は、見た証になりにくい）`,
         where,
       );
     if (to - from + 1 > EVIDENCE_LIMITS.wideLines)
@@ -466,7 +482,8 @@ export function checkEvidence(
     );
     // 箱の `file` も、根拠に出てくるファイルとして数える（未読から除く）
     const loc = n.file ? locate(repos, n.file) : undefined;
-    if (loc && !repoPathProblem(loc.rel)) files.get(loc.repo)!.add(loc.rel);
+    if (loc && !repoPathProblem(loc.rel) && !isEvidenceSecret(loc.rel))
+      files.get(loc.repo)!.add(loc.rel);
   }
   for (const [i, w] of atlas.wires.entries()) {
     const list = w.evidence ?? [];
@@ -491,7 +508,12 @@ interface Declaration {
 }
 
 /** `reading.yaml` を読む（D265）。形の誤りは指摘して、その申告を捨てる */
-export function loadReading(root: string, repos: readonly AtlasRepo[], add: Add): Declaration[] {
+export function loadReading(
+  root: string,
+  repos: readonly AtlasRepo[],
+  add: Add,
+  opts: { reposBroken?: boolean } = {},
+): Declaration[] {
   const raw = readYaml(root, ATLAS_READING_FILE, add, ATLAS_READING_PATH);
   if (raw === undefined) return [];
   if (!isPlainObject(raw)) {
@@ -535,9 +557,10 @@ export function loadReading(root: string, repos: readonly AtlasRepo[], add: Add)
       }
       const loc = locate(repos, d.path);
       if (!loc) {
-        bad(
-          `申告 "${d.path}" の repo が、atlas.yaml の表にありません（"<repo の名前>/…" で書いてください）`,
-        );
+        if (!opts.reposBroken)
+          bad(
+            `申告 "${shown(d.path)}" の repo が、atlas.yaml の表にありません（"<repo の名前>/…" で書いてください）`,
+          );
         continue;
       }
       const rel = loc.rel;
@@ -576,7 +599,7 @@ export function loadReading(root: string, repos: readonly AtlasRepo[], add: Add)
           )
           .join('/')}${dir ? '/' : '$'}`,
       );
-      out.push({ kind, path: d.path, repo: loc.repo, test: (p) => re.test(p), where });
+      out.push({ kind, path: shown(d.path), repo: loc.repo, test: (p) => re.test(p), where });
     }
   }
   return out;
@@ -598,6 +621,7 @@ export function computeUnread(
   const atlasDir = join(rootReal, ATLAS_DIR);
   const out: UnreadRepo[] = [];
   const hits = new Map<Declaration, number>();
+  const evHits = new Map<Declaration, string[]>();
   for (const repo of repos) {
     const base: UnreadRepo = {
       ...(repo.name ? { name: repo.name } : {}),
@@ -631,13 +655,15 @@ export function computeUnread(
       const d = dirs.get(topDir(f)) ?? { dir: topDir(f), total: 0, unread: 0 };
       dirs.set(d.dir, d);
       d.total++;
+      // 1 つのファイルに、申告ごとに 1 回だけ当てる
+      const matched = mine.filter((x) => x.test(f));
+      for (const x of matched) hits.set(x, (hits.get(x) ?? 0) + 1);
       if (ev.has(f)) {
         r.evidenced++;
+        for (const x of matched) evHits.set(x, [...(evHits.get(x) ?? []), f]);
         continue;
       }
-      const decl = mine.find((x) => x.test(f));
-      for (const x of mine) if (x.test(f)) hits.set(x, (hits.get(x) ?? 0) + 1);
-      if (decl) {
+      if (matched.length) {
         r.declared++;
         continue;
       }
@@ -653,7 +679,7 @@ export function computeUnread(
     // 申告の当たり方（D265）
     for (const d of mine) {
       const n = hits.get(d) ?? 0;
-      if (n === 0 && !files.some((f) => ev.has(f) && d.test(f)))
+      if (n === 0)
         add(
           'warning',
           'unread',
@@ -669,17 +695,15 @@ export function computeUnread(
           `申告 "${d.path}" は、追跡しているファイルの半分を超える ${n} 件に当たります（読まなかった所は、狭く申告してください）`,
           d.where,
         );
-      if (d.kind === 'skipped') {
-        const both = files.filter((f) => ev.has(f) && d.test(f));
-        if (both.length)
-          add(
-            'warning',
-            'unread',
-            ATLAS_READING_PATH,
-            `skipped の申告 "${d.path}" に、根拠に出てくるファイル（${both.slice(0, 3).join(', ')}）が入っています`,
-            d.where,
-          );
-      }
+      const both = evHits.get(d) ?? [];
+      if (d.kind === 'skipped' && both.length)
+        add(
+          'warning',
+          'unread',
+          ATLAS_READING_PATH,
+          `skipped の申告 "${d.path}" に、根拠に出てくるファイル（${both.slice(0, 3).join(', ')}）が入っています`,
+          d.where,
+        );
     }
     out.push(r);
   }
@@ -688,16 +712,30 @@ export function computeUnread(
 
 /** 根拠と未読をまとめて見る（check から呼ぶ。bundle・live は呼ばない。D261） */
 export function inspectEvidence(atlas: LoadedAtlas, root: string, add: Add): EvidenceResult {
-  const repos = loadRepos(root, add);
+  const { repos, broken } = loadRepos(root, add);
   const trackedAll = new Map<AtlasRepo, { files: string[]; others: number } | { why: string }>();
   const trackedSets = new Map<AtlasRepo, ReadonlySet<string> | undefined>();
   for (const repo of repos) {
     const t = trackedRegularFiles(repo.dir);
     trackedAll.set(repo, t);
     trackedSets.set(repo, 'why' in t ? undefined : new Set(t.files));
+    // 閉じる側に倒す（2026-11-13 のレビュー）: atlas.yaml で宣言した repo は、git の作業ツリーの中であること。
+    // git の作業ツリーの中なのに一覧を得られない（git が見つからない・断られた・時間切れ）ときも、根拠を読まない
+    // （追跡していないファイルの中身を確かめる口にしない）
+    if ('why' in t && (repo.declared || underGit(repo.dir))) {
+      repo.closed = t.why;
+      add(
+        'error',
+        'evidence',
+        repo.declared ? ATLAS_CONFIG_PATH : ATLAS_DIR,
+        `${repo.name ? `repo "${repo.name}"` : 'repo'} の、git が追跡しているファイルの一覧を得られないので、根拠を読みません（${t.why}）`,
+      );
+    }
   }
-  const { summary, files } = checkEvidence(atlas, root, repos, trackedSets, add);
-  const declarations = loadReading(root, repos, add);
+  const { summary, files } = checkEvidence(atlas, root, repos, trackedSets, add, {
+    reposBroken: broken,
+  });
+  const declarations = loadReading(root, repos, add, { reposBroken: broken });
   const unread = computeUnread(root, repos, trackedAll, files, declarations, add);
   return { repos, evidence: summary, unread };
 }

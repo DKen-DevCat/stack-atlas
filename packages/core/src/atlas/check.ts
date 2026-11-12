@@ -160,6 +160,9 @@ export function inspectAtlas(
     issues,
   };
   if (ev) {
+    const declared = ev.repos.filter((r) => r.declared);
+    if (declared.length)
+      report.repos = declared.map((r) => (r.name ? { name: r.name, dir: r.dir } : { dir: r.dir }));
     report.evidence = ev.evidence;
     report.unread = ev.unread;
   }
@@ -187,6 +190,8 @@ export function formatAtlasReport(r: AtlasReport): string {
     lines.push(
       `  [${i.level === 'error' ? 'エラー' : '警告'}・${CHECK_NAME[i.check]}] ${i.file}${i.path ? `（${i.path}）` : ''}: ${i.message}`,
     );
+  for (const repo of r.repos ?? [])
+    lines.push(`repo${repo.name ? ` "${repo.name}"` : ''}: ${repo.dir}`);
   if (r.evidence) {
     const e = r.evidence;
     lines.push(

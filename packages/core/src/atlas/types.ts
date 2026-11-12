@@ -94,6 +94,8 @@ export interface AtlasReport {
     warnings: number;
   };
   issues: AtlasIssue[];
+  /** atlas.yaml で宣言した repo の、解いた場所（人が、思っていない場所を指していないか気づけるように出す） */
+  repos?: Array<{ name?: string; dir: string }>;
   /** 根拠の数（check だけが見る。docs/28 D260・D261） */
   evidence?: EvidenceSummary;
   /** 未読の要約（知らせ。関門にしない。D204・D264） */
