@@ -1,12 +1,20 @@
 // `.stack-atlas/` の図の検査（Phase 10-1a。docs/25 §3.4 の「形・参照・挙動」、docs/26）。
 // 正解の図（サンプルのアプリ prototype/live/app を手で読んで書いたもの）が通ることと、
 // わざと入れた誤り（無い線・つながらない段・合わない始まり・無い部品・宣言していない分岐など）を見つけることを確かめる
-import { cpSync, mkdtempSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { checkAtlas, formatAtlasReport, type AtlasReport } from '../atlas/index.js';
+import { checkAtlas, formatAtlasReport, loadAtlas, type AtlasReport } from '../atlas/index.js';
 
 const ANSWER = fileURLToPath(new URL('./fixtures/atlas-live/', import.meta.url));
 const GRAPH = '.stack-atlas/graph/app.yaml';
@@ -313,5 +321,184 @@ describe('checkAtlas: ファイルの形と、読みの守り', () => {
     expect(report.counts.errors).toBe(0);
     expect(report.issues).toHaveLength(1);
     expect(report.issues[0]).toMatchObject({ level: 'warning', check: 'behavior' });
+  });
+});
+
+// コードレビュー（10-1a。PR を作る前に 1 回）で見つかったことを、事実のまま固定する
+describe('checkAtlas: レビューで見つかったこと', () => {
+  /** 正解の図を写し、ファイルを足す・書き換える・消す（値が null なら消す） */
+  const withFiles = (
+    files: Record<string, string | null>,
+    edits: Parameters<typeof withEdits>[0] = {},
+  ) => {
+    const { root } = withEdits(edits);
+    for (const [file, content] of Object.entries(files)) {
+      if (content === null) rmSync(join(root, file));
+      else writeFileSync(join(root, file), content);
+    }
+    return { root, report: checkAtlas(root) };
+  };
+
+  it('1 つの誤りで、後ろの正しい段に指摘を重ねない（段の線の打ち間違い）', () => {
+    // 最初の段の線を打ち間違えても、後ろの段（どれも正しい）に「つながっていません」は出ない
+    const { report } = withEdits({
+      [BEHAVIORS]: swap(
+        'send: [{ from: "part:comment-form#out/comment", to: "endpoint:POST /api/comments#in/body.comment" }]',
+        'send: [{ from: "part:comment-form#out/comment", to: "endpoint:POST /api/comments#in/body.commentx" }]',
+      ),
+    });
+    expect(messages(report)).toHaveLength(1);
+    expect(messages(report)[0]).toContain('図（.stack-atlas/graph/）にありません');
+  });
+
+  it('形の違う箱が 1 つあっても、ほかの箱・線の参照の検査は止まらない', () => {
+    const { report } = withEdits({
+      [GRAPH]: (t) =>
+        swap(
+          '    name: load\n    runtime: browser\n',
+          '    name: load\n',
+        )(
+          swap(
+            '{ from: "endpoint:DELETE /api/comments/{id}#req/id", to: "table:comments#key/id", via: call }',
+            '{ from: "endpoint:DELETE /api/comments/{id}#req/id", to: "table:comments#key/nothing", via: call }',
+          )(t),
+        ),
+    });
+    const form = errors(report).filter((i) => i.check === 'form');
+    expect(form.every((i) => i.path?.startsWith('箱 "fn:load"'))).toBe(true);
+    expect(form.length).toBeGreaterThan(0);
+    // 形の誤り（fn:load）と同じ回に、別の線の行き先が無いことも出る
+    expect(
+      errors(report).some(
+        (i) =>
+          i.check === 'ref' &&
+          i.path?.includes('"table:comments#key/nothing"') &&
+          i.message.includes('終点'),
+      ),
+    ).toBe(true);
+    // 形の違う箱は捨てるので、数に入らない
+    expect(report.counts.nodes).toBe(8);
+  });
+
+  it('検証器が誤りにした線は、「図にある線」として扱わない（行き先の無い線を通る段は、線が無いと言われる）', () => {
+    const { report } = withEdits({
+      [GRAPH]: swap(
+        '{ from: "endpoint:DELETE /api/comments/{id}#req/id", to: "table:comments#key/id", via: call }',
+        '{ from: "endpoint:DELETE /api/comments/{id}#req/id", to: "table:comments#key/nothing", via: call }',
+      ),
+      [BEHAVIORS]: swap(
+        'send: [{ from: "endpoint:DELETE /api/comments/{id}#req/id", to: "table:comments#key/id" }]',
+        'send: [{ from: "endpoint:DELETE /api/comments/{id}#req/id", to: "table:comments#key/nothing" }]',
+      ),
+    });
+    expect(errors(report).filter((i) => i.check === 'behavior')).toHaveLength(1);
+    expect(errors(report).filter((i) => i.check === 'ref')).toHaveLength(1);
+  });
+
+  it('同じ両端の線を 2 度書いても、挙動の側に偽の指摘は出ない（重複の指摘だけ）', () => {
+    const { report } = withEdits({
+      [GRAPH]: (t) =>
+        t +
+        '  - { from: "part:comment-form#out/comment", to: "endpoint:POST /api/comments#in/body.comment", via: http, reply: true }\n',
+    });
+    expect(messages(report)).toHaveLength(1);
+    expect(messages(report)[0]).toContain('重複しています');
+  });
+
+  it('箱 id の # は誤り（項目の参照と、分岐のキーで解けなくなる）', () => {
+    const { report } = withEdits({
+      [GRAPH]: swap('  - id: "part:comment-list"', '  - id: "part:comment#list"'),
+    });
+    // 契約のスキーマが、箱 id の形で断る（その箱は捨てられ、形の誤りとして出る）
+    expect(
+      errors(report).some(
+        (i) => i.check === 'form' && i.path === '箱 "part:comment#list"/id' && i.file === GRAPH,
+      ),
+    ).toBe(true);
+    expect(report.counts.nodes).toBe(8);
+  });
+
+  it('知らないキーは誤り（back の打ち間違いで、返りの線が黙って消えない）', () => {
+    const typo = withEdits({
+      [BEHAVIORS]: swap(
+        '        back: [{ from: "endpoint:DELETE /api/comments/{id}#out/status", to: "part:comment-delete#in/done" }]',
+        '        bak: [{ from: "endpoint:DELETE /api/comments/{id}#out/status", to: "part:comment-delete#in/done" }]',
+      ),
+    }).report;
+    expect(messages(typo)).toEqual([
+      '段に、知らないキー bak があります（書けるのは send, back, say, when）',
+    ]);
+    expect(typo.counts.behaviors).toBe(2); // その挙動は読まない
+
+    const mixed = withEdits({
+      [BEHAVIORS]: swap(
+        '      - send: [{ from: "fn:load#out/render", to: "part:comment-list#in/comments" }]\n    result: { say: "コメントの一覧が出る。", part: comment-list }',
+        '      - parallel: [[{ send: [{ from: "a#out/x", to: "b#in/x" }] }], [{ send: [{ from: "a#out/x", to: "c#in/x" }] }]]\n        send: [{ from: "fn:load#out/render", to: "part:comment-list#in/comments" }]\n    result: { say: "コメントの一覧が出る。", part: comment-list }',
+      ),
+    }).report;
+    expect(messages(mixed)[0]).toContain(
+      '同時に呼ぶ所（parallel）に、知らないキー send があります',
+    );
+
+    const part = withEdits({
+      [PARTS]: swap('    selector: "#comments"', '    selector: "#comments"\n    selecter: "x"'),
+    }).report;
+    expect(messages(part).some((m) => m.includes('部品に、知らないキー selecter があります'))).toBe(
+      true,
+    );
+
+    const topLevel = withEdits({ [GRAPH]: swap('\nwires:\n', '\nwire: []\nwires:\n') }).report;
+    expect(messages(topLevel)[0]).toContain('トップレベルに、知らないキー wire があります');
+  });
+
+  it('behaviors.yaml が「あるが読めない」ときは、「ありません」と言わない', () => {
+    const { report } = withEdits({ [BEHAVIORS]: (t) => t + '\n  - id: [unclosed\n' });
+    expect(report.issues.filter((i) => i.file === BEHAVIORS)).toHaveLength(1);
+    expect(report.issues.some((i) => i.message.includes('がありません'))).toBe(false);
+  });
+
+  it('名前の似たファイル（*.yml）は、読まずに名指しで誤りにする。parts.yaml が無ければ警告', () => {
+    const { report } = withFiles({
+      '.stack-atlas/graph/api.yml': 'nodes: []\n',
+      '.stack-atlas/parts.yml': 'parts: []\n',
+      '.stack-atlas/behaviors.yml': 'behaviors: []\n',
+    });
+    expect(messages(report).sort()).toEqual([
+      '*.yml（api.yml）は読みません。*.yaml という名前にしてください',
+      'behaviors.yml は読みません。behaviors.yaml という名前にしてください',
+      'parts.yml は読みません。parts.yaml という名前にしてください',
+    ]);
+
+    const noParts = withFiles({ [PARTS]: null, [BEHAVIORS]: null }).report;
+    expect(noParts.counts.errors).toBe(0);
+    expect(noParts.issues.map((i) => i.file).sort()).toEqual([BEHAVIORS, PARTS]);
+    expect(noParts.issues.every((i) => i.level === 'warning')).toBe(true);
+  });
+
+  it('型の指摘にも、どのファイルの、どの型かが出る', () => {
+    const { report } = withFiles(
+      { '.stack-atlas/graph/more.yaml': 'types:\n  - { id: "type:Comment", name: Comment }\n' },
+      { [GRAPH]: (t) => t + 'types:\n  - { id: "type:Comment", name: Comment }\n' },
+    );
+    expect(errors(report)).toHaveLength(1);
+    expect(errors(report)[0]).toMatchObject({
+      file: '.stack-atlas/graph/more.yaml',
+      path: '型 "type:Comment"/id',
+    });
+  });
+
+  it('loadAtlas が返す箱・線は、形の検査を通ったものだけ（生の値を型だけ付けて返さない）', () => {
+    const { root } = withFiles({
+      '.stack-atlas/graph/app.yaml':
+        'nodes:\n  - null\n  - "x"\n  - { id: "screen:/", kind: screen, name: s, runtime: browser, ports: [] }\nwires:\n  - 3\n',
+    });
+    const { atlas, issues } = loadAtlas(root);
+    expect(atlas.nodes.map((n) => n.id)).toEqual(['screen:/']);
+    expect(atlas.wires).toEqual([]);
+    expect(issues.filter((i) => i.file === GRAPH).map((i) => i.path?.split('/')[0])).toEqual([
+      '箱 1 番め',
+      '箱 2 番め',
+      '線 1 番め',
+    ]);
   });
 });

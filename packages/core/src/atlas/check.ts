@@ -1,19 +1,15 @@
 /**
- * `.stack-atlas/` の図の検査（docs/25 §3.4 の「形・参照・挙動」。根拠・未読・古さは、まだ無い）。
+ * `.stack-atlas/` の図の検査（docs/25 §3.4 の「形・参照・挙動」、docs/26 §5。根拠・未読・古さは、まだ無い）。
  * どれも、契約と、図の中の参照だけを見る。対象のコードは読まない（言語を知らずにできる検査だけ）。
  *
- * - 形: ファイルの形（load.ts）と、箱・線・型の中身（契約のスキーマ）
- * - 参照: 箱・口・項目・線が解けるか（契約の検証器）。部品の箱と画面があるか
+ * - 形: ファイルと要素の形（load.ts。形の違う要素は、その要素だけ捨てる）
+ * - 参照: 箱・口・項目・線が解けるか（契約の検証器を、形の合った要素の全部に掛ける）。部品の箱と画面があるか
  * - 挙動: 段の線がすべて図にあるか／段がつながっているか／始まりの部品が最初の段の出る箱か／分岐のキーは箱が宣言したものか
  */
 import { parseItemRef, parseWhenKey, validateGraphV2 } from '@stack-atlas/schema';
-import { isPlainObject } from '../util.js';
 import { loadAtlas } from './load.js';
 import {
-  ATLAS_BEHAVIORS_FILE,
-  ATLAS_DIR,
-  ATLAS_GRAPH_DIR,
-  ATLAS_PARTS_FILE,
+  ATLAS_PATHS,
   type AtlasIssue,
   type AtlasReport,
   type Behavior,
@@ -22,52 +18,36 @@ import {
   type WireRef,
 } from './types.js';
 
-const GRAPH = `${ATLAS_DIR}/${ATLAS_GRAPH_DIR}`;
-const PARTS = `${ATLAS_DIR}/${ATLAS_PARTS_FILE}`;
-const BEHAVIORS = `${ATLAS_DIR}/${ATLAS_BEHAVIORS_FILE}`;
+const { graph: GRAPH, parts: PARTS, behaviors: BEHAVIORS } = ATLAS_PATHS;
 const wireKey = (w: WireRef) => `${w.from}\u0000${w.to}`;
 const arrow = (w: WireRef) => `"${w.from}" → "${w.to}"`;
 
-interface Index {
-  /** 箱 id → 種類と、宣言した分岐 */
-  nodes: Map<string, { kind: string | undefined; variants: Set<string> }>;
-  /** 線（両端の組）→ 戻りの線か */
-  wires: Map<string, { reply: boolean }>;
-}
-
-/** 検証を通っていない生の値からも作れるように、形を確かめながら索引を作る */
-function indexOf(atlas: LoadedAtlas): Index {
-  const nodes: Index['nodes'] = new Map();
-  for (const n of atlas.nodes as unknown[]) {
-    if (!isPlainObject(n) || typeof n.id !== 'string') continue;
-    const variants = new Set<string>();
-    if (Array.isArray(n.variants))
-      for (const v of n.variants)
-        if (isPlainObject(v) && typeof v.id === 'string') variants.add(v.id);
-    nodes.set(n.id, { kind: typeof n.kind === 'string' ? n.kind : undefined, variants });
-  }
-  const wires: Index['wires'] = new Map();
-  for (const w of atlas.wires as unknown[]) {
-    if (!isPlainObject(w) || typeof w.from !== 'string' || typeof w.to !== 'string') continue;
-    wires.set(wireKey({ from: w.from, to: w.to }), { reply: w.reply === true });
-  }
-  return { nodes, wires };
-}
-
-/** `/nodes/3/ports/0` のような検証器の場所を、「どのファイルの、どの箱・線か」に直す */
-function locate(atlas: LoadedAtlas, path: string): { file: string; path: string } {
-  const m = /^\/(nodes|wires)\/(\d+)(.*)$/.exec(path);
+/** `/nodes/3/ports/0` のような検証器の場所を、「どのファイルの、どの箱・線・型か」に直す */
+function locate(atlas: LoadedAtlas, path: string): { file: string; path: string; wire?: number } {
+  const m = /^\/(nodes|wires|types)\/(\d+)(.*)$/.exec(path);
   if (!m) return { file: GRAPH, path };
   const i = Number(m[2]);
-  const raw = (m[1] === 'nodes' ? atlas.nodes : atlas.wires)[i] as unknown;
-  const file = (m[1] === 'nodes' ? atlas.nodeFiles : atlas.wireFiles)[i] ?? GRAPH;
-  let what = `${m[1] === 'nodes' ? '箱' : '線'} ${i + 1} 番め`;
-  if (isPlainObject(raw)) {
-    if (m[1] === 'nodes' && typeof raw.id === 'string') what = `箱 "${raw.id}"`;
-    if (m[1] === 'wires' && typeof raw.from === 'string' && typeof raw.to === 'string')
-      what = `線 ${arrow({ from: raw.from, to: raw.to })}`;
+  const rest = m[3] ?? '';
+  if (m[1] === 'nodes') {
+    const n = atlas.nodes[i];
+    return {
+      file: atlas.nodeFiles[i] ?? GRAPH,
+      path: `${n ? `箱 "${n.id}"` : `箱 ${i + 1} 番め`}${rest}`,
+    };
   }
-  return { file, path: `${what}${m[3] ?? ''}` };
+  if (m[1] === 'wires') {
+    const w = atlas.wires[i];
+    return {
+      file: atlas.wireFiles[i] ?? GRAPH,
+      path: `${w ? `線 ${arrow(w)}` : `線 ${i + 1} 番め`}${rest}`,
+      wire: i,
+    };
+  }
+  const t = atlas.types[i];
+  return {
+    file: atlas.typeFiles[i] ?? GRAPH,
+    path: `${t ? `型 "${t.id}"` : `型 ${i + 1} 番め`}${rest}`,
+  };
 }
 
 export function checkAtlas(root: string): AtlasReport {
@@ -83,12 +63,15 @@ export function checkAtlas(root: string): AtlasReport {
       path === undefined ? { level, check, file, message } : { level, check, file, path, message },
     );
 
-  // 1. 箱・線・型の中身と参照（契約の検証器。全部のファイルを合わせてから掛ける）
+  // 1. 参照（契約の検証器。形の合った要素を、全部のファイルを合わせてから掛ける）
   const graph: Record<string, unknown> = { version: 2, nodes: atlas.nodes, wires: atlas.wires };
   if (atlas.types.length) graph.types = atlas.types;
   const v = validateGraphV2(graph);
+  /** 検証器が誤りにした線（端が解けない・重複）。挙動からは「図に無い線」として扱う */
+  const badWires = new Set<number>();
   for (const e of v.errors) {
     const at = locate(atlas, e.path);
+    if (at.wire !== undefined) badWires.add(at.wire);
     add('error', v.graph ? 'ref' : 'form', at.file, e.message, at.path);
   }
   for (const w of v.warnings) {
@@ -96,7 +79,15 @@ export function checkAtlas(root: string): AtlasReport {
     add('warning', 'ref', at.file, w.message, at.path);
   }
 
-  const ix = indexOf(atlas);
+  /** 箱 id → 種類と、宣言した分岐（同じ id が 2 つあれば、先のもの。重複は検証器が誤りにする） */
+  const nodes = new Map<string, { kind: string; variants: Set<string> }>();
+  for (const n of atlas.nodes)
+    if (!nodes.has(n.id))
+      nodes.set(n.id, { kind: n.kind, variants: new Set((n.variants ?? []).map((x) => x.id)) });
+  /** 線（両端の組）→ 戻りの線か。検証器が誤りにした線は入れない */
+  const wires = new Map<string, { reply: boolean }>();
+  for (const [i, w] of atlas.wires.entries())
+    if (!badWires.has(i)) wires.set(wireKey(w), { reply: w.reply === true });
   const boxOf = (ref: string) => parseItemRef(ref)?.nodeId;
 
   /** 分岐のキーは `<箱 id>#<分岐 id>`。箱があり、その分岐を宣言していること */
@@ -111,9 +102,9 @@ export function checkAtlas(root: string): AtlasReport {
           `when のキー "${key}" は "<箱 id>#<分岐 id>" で書いてください`,
           path,
         );
-      else if (!ix.nodes.has(nodeId))
+      else if (!nodes.has(nodeId))
         add('error', 'behavior', file, `when のキー "${key}" の箱 "${nodeId}" がありません`, path);
-      else if (!ix.nodes.get(nodeId)!.variants.has(variantId))
+      else if (!nodes.get(nodeId)!.variants.has(variantId))
         add(
           'error',
           'behavior',
@@ -124,14 +115,14 @@ export function checkAtlas(root: string): AtlasReport {
     }
   };
   const checkScreen = (id: string, file: string, path: string, who: string) => {
-    const n = ix.nodes.get(id);
+    const n = nodes.get(id);
     if (!n) add('error', 'ref', file, `${who}の screen "${id}" の箱がありません`, path);
     else if (n.kind !== 'screen')
       add(
         'error',
         'ref',
         file,
-        `${who}の screen "${id}" は、画面の箱（kind: screen）ではありません（${n.kind ?? '?'}）`,
+        `${who}の screen "${id}" は、画面の箱（kind: screen）ではありません（${n.kind}）`,
         path,
       );
   };
@@ -145,7 +136,7 @@ export function checkAtlas(root: string): AtlasReport {
       continue;
     }
     parts.set(p.id, { box: p.box, screen: p.screen });
-    if (!ix.nodes.has(p.box))
+    if (!nodes.has(p.box))
       add('error', 'ref', PARTS, `部品 "${p.id}" の box "${p.box}" の箱がありません`, path);
     checkScreen(p.screen, PARTS, path, `部品 "${p.id}" `);
   }
@@ -161,7 +152,7 @@ export function checkAtlas(root: string): AtlasReport {
       const froms = new Set<string>();
       const tos = new Set<string>();
       for (const w of refs) {
-        const hit = ix.wires.get(wireKey(w));
+        const hit = wires.get(wireKey(w));
         if (!hit) {
           add(
             'error',
@@ -236,12 +227,13 @@ export function checkAtlas(root: string): AtlasReport {
   /**
    * 段のつながり。stack は「いま通っている経路」（始まりの箱から、呼び出しが重なっていく順）。
    * 次の段は、この経路の上のどれかの箱から出る: いちばん先の箱から出れば「さらに奥を呼ぶ」、手前の箱から出れば「戻ってから次を呼ぶ」。
-   * 解けなかった段のあとは null にして、つながりを問わない（指摘を重ねない）
+   *
+   * 段が解けなかった・つながらなかったあとは null にして、その挙動（その列）の残りでは、つながりを問わない。
+   * 1 つの誤りで、後ろの正しい段に指摘を重ねないため（誤りを直して、もう一度 check する）
    */
   const advance = (stack: string[] | null, step: BehaviorStep, where: string): string[] | null => {
-    const r = resolveStep(step, where);
-    if (!r) return null;
-    if (!stack) return [r.from, r.to];
+    const r = resolveStep(step, where); // つながりを問わないときも、線があるかは確かめる
+    if (!r || !stack) return null;
     const at = stack.lastIndexOf(r.from);
     if (at < 0) {
       add(
@@ -253,7 +245,7 @@ export function checkAtlas(root: string): AtlasReport {
           : `段がつながっていません: この段は "${r.from}" から出ていますが、ここまでの経路（${stack.join(' → ')}）に、その箱がありません`,
         where,
       );
-      return [r.from, r.to];
+      return null;
     }
     return [...stack.slice(0, at + 1), r.to];
   };
@@ -304,18 +296,27 @@ export function checkAtlas(root: string): AtlasReport {
   };
   const seen = new Set<string>();
   for (const [i, b] of atlas.behaviors.entries()) checkBehavior(b, seen, i);
-  if (
-    atlas.files.includes(BEHAVIORS) &&
-    atlas.behaviors.length === 0 &&
-    !issues.some((x) => x.file === BEHAVIORS)
-  )
-    add('warning', 'behavior', BEHAVIORS, '挙動が 1 つもありません');
-  if (!atlas.files.includes(BEHAVIORS))
+
+  // 無いファイルの案内（「あるが読めない」ときは、読めない理由だけを出す）
+  if (atlas.status.behaviors === 'missing')
     add(
       'warning',
       'behavior',
       BEHAVIORS,
       `${BEHAVIORS} がありません（挙動を書くと、経路を 1 本ずつ追えます）`,
+    );
+  else if (
+    atlas.status.behaviors === 'ok' &&
+    atlas.behaviors.length === 0 &&
+    !issues.some((x) => x.file === BEHAVIORS)
+  )
+    add('warning', 'behavior', BEHAVIORS, '挙動が 1 つもありません');
+  if (atlas.status.parts === 'missing')
+    add(
+      'warning',
+      'ref',
+      PARTS,
+      `${PARTS} がありません（画面の部品を書くと、挙動の始まりを指せます）`,
     );
 
   const order = { error: 0, warning: 1 } as const;

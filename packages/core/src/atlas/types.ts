@@ -4,13 +4,20 @@
  * 道具は、ここに書かれたものを確かめるだけで、対象のコードの意味は読まない（言語に依る処理を持たない。docs/24）
  */
 import type { NamedType, NodeV2, WireV2 } from '@stack-atlas/schema';
+import { HARNESS_DIR } from '../local-files.js';
 
 /** 図の置き場（対象の repo の中か、複数の repo を束ねるディレクトリの下。docs/25 Q37） */
-export const ATLAS_DIR = '.stack-atlas';
+export const ATLAS_DIR = HARNESS_DIR;
 /** 箱と線を書くファイルの置き場（`graph/*.yaml`。古い読みこみが読む `*.v2.yaml` は読まない） */
 export const ATLAS_GRAPH_DIR = 'graph';
 export const ATLAS_BEHAVIORS_FILE = 'behaviors.yaml';
 export const ATLAS_PARTS_FILE = 'parts.yaml';
+/** 図の置き場（`.stack-atlas/` の親）からの相対パス。指摘の `file` に出す名前は、ここだけで作る */
+export const ATLAS_PATHS = {
+  graph: `${ATLAS_DIR}/${ATLAS_GRAPH_DIR}`,
+  parts: `${ATLAS_DIR}/${ATLAS_PARTS_FILE}`,
+  behaviors: `${ATLAS_DIR}/${ATLAS_BEHAVIORS_FILE}`,
+} as const;
 
 /** 読む量の上限（エージェントが書くファイルなので、大きさを信用しない） */
 export const ATLAS_LIMITS = {
@@ -95,7 +102,10 @@ export interface AtlasIssue {
   message: string;
 }
 
-/** 読みこんだ図（形の検査を通った分だけ） */
+/** ファイルが、あって読めた・無い・あるが読めない（読めない理由は指摘に出す） */
+export type AtlasFileStatus = 'ok' | 'missing' | 'unreadable';
+
+/** 読みこんだ図。どの要素も、形の検査（契約のスキーマ）を通ったものだけ。参照は、まだ確かめていない */
 export interface LoadedAtlas {
   /** 図の置き場（`.stack-atlas/` の親） */
   root: string;
@@ -106,9 +116,11 @@ export interface LoadedAtlas {
   parts: Part[];
   /** 読んだファイル（root からの相対） */
   files: string[];
-  /** nodes[i]・wires[i] を書いたファイル（指摘にファイル名を出すため） */
+  /** nodes[i]・wires[i]・types[i] を書いたファイル（指摘にファイル名を出すため） */
   nodeFiles: string[];
   wireFiles: string[];
+  typeFiles: string[];
+  status: { parts: AtlasFileStatus; behaviors: AtlasFileStatus };
 }
 
 export interface AtlasReport {
