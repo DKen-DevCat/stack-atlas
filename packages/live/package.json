@@ -1,0 +1,31 @@
+{
+  "name": "@stack-atlas/live",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Stack Atlas のライブ（本物のアプリを人が操作し、道具は見るだけ。手元の外へはつながせない。docs/27）",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "@stack-atlas/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "page"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@stack-atlas/core": "workspace:*",
+    "@stack-atlas/schema": "workspace:*",
+    "@stack-atlas/wiring": "workspace:*",
+    "playwright": "1.63.0"
+  }
+}

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Stack Atlas ライブ</title>
+    <link rel="stylesheet" href="./live.css" />
+  </head>
+  <body>
+    <main id="live">
+      <section id="app-pane" aria-label="アプリ"></section>
+      <aside id="side" aria-label="ライブ">
+        <div id="controls">
+          <button id="reveal" type="button" aria-pressed="false" title="通信の値を見る（既定は切）">
+            <span aria-hidden="true">◉</span> 値を見る
+          </button>
+          <button
+            id="hold"
+            type="button"
+            aria-pressed="false"
+            title="手元への書きこみを、出る直前で止める"
+          >
+            <span aria-hidden="true">⛨</span> 止めて見る
+          </button>
+          <button id="reload" type="button" title="アプリを開き直す" aria-label="アプリを開き直す">
+            ↻
+          </button>
+        </div>
+        <p id="note"></p>
+        <ol id="events"></ol>
+      </aside>
+    </main>
+    <script type="module" src="./live.js"></script>
+  </body>
+</html>

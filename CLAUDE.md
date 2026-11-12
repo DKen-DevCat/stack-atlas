@@ -38,7 +38,7 @@
 
 ## 現在の状態と次のタスク
 
-テストは `pnpm test` で 1684 件（skip 2。`STACK_ATLAS_REQUIRE_GO=1` で go の側も）、viewer の e2e は 71 件（skip 4。3D の地図の spec は手元のヘッドレスで止まる・遅いことがある。CI で実行。配線図だけを確かめる spec は `&pane=wiring`）。`examples/fixture-poly/`（2 repo の合成）は 56 ノード / 95 エッジ / 2 フロー / エラー 0。
+テストは `pnpm test` で 1698 件（skip 2。`STACK_ATLAS_REQUIRE_GO=1` で go の側も）、viewer の e2e は 71 件（skip 4。3D の地図の spec は手元のヘッドレスで止まる・遅いことがある。CI で実行。配線図だけを確かめる spec は `&pane=wiring`）。`examples/fixture-poly/`（2 repo の合成）は 56 ノード / 95 エッジ / 2 フロー / エラー 0。
 実リポジトリでは設定を**この公開リポジトリの外**（兄弟ディレクトリ。`repos: { web: ../damage-web, platform: ../damage-platform }`）に置いて build し、149 / 330 / エラー 0 / 警告 0 を確認した（内訳は `HANDOFF.md` §0）。
 
 次にやること（2026-11-11 から）: **docs/24 の要件 v2 の設計**（エージェントの書きこみ口・検査・画面から始めるビューア。docs/24 §7）。以下はそれより前の記録で、Phase 6 の残りのうち抽出器に依るものは進めない。
@@ -86,6 +86,7 @@ tsconfig.base.json  eslint.config.js  .prettierrc  .editorconfig  .nvmrc(22)
 .github/workflows/ci.yml           ← lint・typecheck・test・build・サンプル検証・e2e
 packages/
   schema/                          ← graph.json の JSON Schema（正。v1 と v2）・型・validateGraph() / validateGraphV2()・検証 CLI
+  live/                            ← ライブ（stack-atlas live。docs/27）: 手元の判定・行き先の無い中継・枠の中で見るだけのスクリプト・見張り・ライブの画面のサーバー（page/ は最小の画面）。ブラウザを動かす部品に依るのはここだけ
   wiring/                          ← 配線図の規則（v2 の索引・たどる・選ぶ・球の時刻・切れている線）と地図の射影（projectMap・litOnMap・mapFlow）、挙動の見せ方（behaviorView）、ライブの純粋な計算（src/live/。docs/27）。純 TS、schema にだけ依存
   core/                            ← 抽出器の契約（src/types.ts）、repo / classify / deploy / merge / overrides / flows / rules/ / buildGraph()（src/pipeline.ts）、diff、memos
   tf-graph/                        ← IaC 共通: Terraform JSON → infra ノード・エッジ・cache（cdktf / terraform / cloudformation が使う）
@@ -111,4 +112,4 @@ prototype/                         ← 単一 HTML のプロトタイプ（three
 scripts/                           ← export-prototype-data / validate-graph（互換ラッパ）/ sync-samples
 ```
 
-主なコマンド: `pnpm atlas build examples/fixture-repo -o out --with-viewer --no-screenshots`（または `examples/fixture-poly`）→ `pnpm atlas serve out`、`pnpm validate <graph.json>`、`pnpm dev`（ビューア開発サーバ）。新しい道（docs/25・docs/26）: `pnpm atlas check <dir>`（`<dir>/.stack-atlas/` の図を検査する。`--json`）、`pnpm atlas bundle <dir> [-o <outDir>]`（図を 1 つの graph.json にまとめる。`serve` で開ける）。ハーネス: `pnpm atlas build <repo> --dry-run --json`（止まったときも `{ error }` の JSON）/ `--strict --no-screenshots`、`pnpm atlas validate --strict <graph.json>`、`pnpm atlas init --skill <dir> [--update]`、`pnpm atlas init-views <repo>`（docs/13 §3.6b）。
+主なコマンド: `pnpm atlas build examples/fixture-repo -o out --with-viewer --no-screenshots`（または `examples/fixture-poly`）→ `pnpm atlas serve out`、`pnpm validate <graph.json>`、`pnpm dev`（ビューア開発サーバ）。新しい道（docs/25・docs/26）: `pnpm atlas check <dir>`（`<dir>/.stack-atlas/` の図を検査する。`--json`）、`pnpm atlas bundle <dir> [-o <outDir>]`（図を 1 つの graph.json にまとめる。`serve` で開ける）、`pnpm atlas live <dir> --url <手元の URL>`（本物のアプリを操作しながら見る。手元の外へはつながせない。docs/27）。ハーネス: `pnpm atlas build <repo> --dry-run --json`（止まったときも `{ error }` の JSON）/ `--strict --no-screenshots`、`pnpm atlas validate --strict <graph.json>`、`pnpm atlas init --skill <dir> [--update]`、`pnpm atlas init-views <repo>`（docs/13 §3.6b）。

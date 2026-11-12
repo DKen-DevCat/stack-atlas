@@ -316,6 +316,9 @@ importers:
       '@stack-atlas/extractor-ts-types':
         specifier: workspace:*
         version: link:../../extractors/ts-types
+      '@stack-atlas/live':
+        specifier: workspace:*
+        version: link:../live
       '@stack-atlas/schema':
         specifier: workspace:*
         version: link:../schema
@@ -335,6 +338,21 @@ importers:
       yaml:
         specifier: ^2.8.0
         version: 2.9.1
+
+  packages/live:
+    dependencies:
+      '@stack-atlas/core':
+        specifier: workspace:*
+        version: link:../core
+      '@stack-atlas/schema':
+        specifier: workspace:*
+        version: link:../schema
+      '@stack-atlas/wiring':
+        specifier: workspace:*
+        version: link:../wiring
+      playwright:
+        specifier: 1.63.0
+        version: 1.63.0
 
   packages/schema:
     dependencies:

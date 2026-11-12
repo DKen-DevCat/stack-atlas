@@ -8,6 +8,7 @@ import { runInitFlows } from './commands/init-flows.js';
 import { harnessVersion, runInitSkill } from './commands/init-skill.js';
 import { runInitViews } from './commands/init-views.js';
 import { runServe } from './commands/serve.js';
+import { LIVE_USAGE, runLive } from './commands/live.js';
 import { runValidate } from './commands/validate.js';
 import { createStderrLogger } from './commands/harness.js';
 
@@ -29,6 +30,12 @@ export const USAGE = `使い方: stack-atlas <コマンド> [オプション]
   bundle [<dir>] [-o <outDir>] [--json]
       <dir>/.stack-atlas/ の図を検査して、<outDir>/graph.json（部品と挙動つき）にまとめる。既定の出力先は <dir>/.stack-atlas/out。
       図に誤りがあれば、書かずに終了コード 1。まとめた graph.json は serve で開ける
+  live [<dir>] --url <手元の URL> [--hold-writes] [--window] [--local-name <名前>]...
+      <dir>/.stack-atlas/ の図を検査し、ブラウザの窓を開く。人がその窓の中で、手元で起動したアプリを操作すると、
+      押した部品・通った経路・送ったもの・返ったもの・画面の変わった所が出る。道具は見るだけ（何も押さない）。
+      手元の外へは、読むことも書くこともつながない。通信の値は、画面の「値を見る」を入れたときだけ出す。
+      --hold-writes は手元への書きこみも出る直前で止める。--window はアプリを別の窓で開く。
+      --local-name は、開発用に決めた名前を手元に数える（ブラウザの中で 127.0.0.1 に固定する）。窓を閉じると終わる
   validate [--strict] <graph.json...>
       graph.json をスキーマと参照整合性で検証する（version 1 / 2 を見て検証器を選ぶ）。
       --strict は graph.json の build の報告を読み、報告が無い・言語アダプタを飛ばした・strict の違反がある graph をエラーにする
@@ -113,6 +120,24 @@ export async function main(argv: string[]): Promise<number> {
         return runBundle(positionals, console.log, {
           out: values.out as string | undefined,
           json: Boolean(values.json),
+        });
+      }
+      case 'live': {
+        const { values, positionals } = parse(rest, {
+          url: { type: 'string' },
+          'hold-writes': { type: 'boolean' },
+          window: { type: 'boolean' },
+          'local-name': { type: 'string', multiple: true },
+        });
+        if (!values.url) {
+          console.error(LIVE_USAGE);
+          return 2;
+        }
+        return await runLive(positionals, (l) => console.log(l), {
+          url: values.url as string,
+          holdWrites: Boolean(values['hold-writes']),
+          window: Boolean(values.window),
+          localNames: (values['local-name'] as unknown as string[] | undefined) ?? [],
         });
       }
       case 'validate': {

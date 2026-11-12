@@ -10,7 +10,7 @@
  *   道具が通信を名指しするときは、通信の id を使う
  * - `value` と `raw`（伏せていない値）を付けるのは、道具だけ。アプリの枠からの知らせ（sanitize.ts）には、付かない
  */
-import type { TriggerAction } from '@stack-atlas/schema';
+import type { GraphV2, TriggerAction } from '@stack-atlas/schema';
 
 export const LIVE_PROTOCOL = 1;
 
@@ -154,3 +154,29 @@ export interface LiveStatus {
   hold: boolean;
   holdLocked: boolean;
 }
+
+/**
+ * 「値を見る」を入れたとき、道具が、メモリに持っている直近の通信の値を渡す（入れる前に起きた操作の分も見られるように）。
+ * どれも上限つきの文字。ファイルの形の中身は、入らない
+ */
+export interface LiveValues {
+  id: string;
+  /** 伏せていないパスと、問い合わせの文字列 */
+  raw: string;
+  sent?: string;
+  received?: string;
+}
+
+/** 道具が、ライブの画面に渡す知らせ（ライブの画面の、いちばん上の枠にだけ渡す） */
+export type LiveMessage =
+  | { t: 'status'; status: LiveStatus }
+  | { t: 'graph'; graph: GraphV2 }
+  | { t: 'events'; events: LiveEvent[] }
+  | { t: 'values'; values: LiveValues[] };
+
+/** ライブの画面が、道具に送る合図。道具は、ライブの画面の、いちばん上の枠から来たものだけを受ける（docs/27 §4.2） */
+export type LiveSignal =
+  | { t: 'reveal'; on: boolean }
+  | { t: 'hold'; on: boolean }
+  /** アプリを開き直す（枠の中のアプリには、ブラウザの読み直しが届かないため） */
+  | { t: 'reload' };
