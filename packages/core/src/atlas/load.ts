@@ -341,10 +341,16 @@ function parsePart(v: unknown, file: string, path: string, push: Push): Part | u
   return part;
 }
 
-type GraphKey = 'nodes' | 'wires' | 'types';
-const WHAT: Record<GraphKey, string> = { nodes: '箱', wires: '線', types: '型' };
+type GraphKey = 'nodes' | 'wires' | 'types' | 'parts' | 'behaviors';
+const WHAT: Record<GraphKey, string> = {
+  nodes: '箱',
+  wires: '線',
+  types: '型',
+  parts: '部品',
+  behaviors: '挙動',
+};
 
-/** 1 つの箱・線・型を、契約のスキーマに掛ける。合わなければ指摘して undefined（その要素だけ捨てる） */
+/** 1 つの箱・線・型・部品・挙動を、契約のスキーマに掛ける。合わなければ指摘して undefined（その要素だけ捨てる） */
 function validElement<T>(
   key: GraphKey,
   raw: unknown,
@@ -363,6 +369,8 @@ function validElement<T>(
     nodes: [],
     wires: [],
     types: [],
+    parts: [],
+    behaviors: [],
   };
   doc[key] = [raw];
   const v = validateGraphV2(doc);
@@ -514,7 +522,9 @@ export function loadAtlas(root: string): { atlas: LoadedAtlas; issues: AtlasIssu
     atlas.files.push(ATLAS_PATHS.parts);
     const list = listOf(py.value, 'parts', ATLAS_PATHS.parts, push);
     for (const [i, v] of list.slice(0, ATLAS_LIMITS.parts).entries()) {
-      const part = parsePart(v, ATLAS_PATHS.parts, `/parts/${i}`, push);
+      // 手で形を確かめたあと、契約のスキーマにも掛ける（id や参照の字の決まりは、スキーマにある）
+      const parsed = parsePart(v, ATLAS_PATHS.parts, `/parts/${i}`, push);
+      const part = parsed && validElement<Part>('parts', parsed, ATLAS_PATHS.parts, i, push);
       if (part) atlas.parts.push(part);
     }
     if (list.length > ATLAS_LIMITS.parts)
@@ -531,7 +541,9 @@ export function loadAtlas(root: string): { atlas: LoadedAtlas; issues: AtlasIssu
     atlas.files.push(ATLAS_PATHS.behaviors);
     const list = listOf(by.value, 'behaviors', ATLAS_PATHS.behaviors, push);
     for (const [i, v] of list.slice(0, ATLAS_LIMITS.behaviors).entries()) {
-      const b = parseBehavior(v, ATLAS_PATHS.behaviors, `/behaviors/${i}`, push);
+      const parsed = parseBehavior(v, ATLAS_PATHS.behaviors, `/behaviors/${i}`, push);
+      const b =
+        parsed && validElement<Behavior>('behaviors', parsed, ATLAS_PATHS.behaviors, i, push);
       if (b) atlas.behaviors.push(b);
     }
     if (list.length > ATLAS_LIMITS.behaviors)

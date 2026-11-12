@@ -52,6 +52,16 @@
       "type": "array",
       "description": "group になった v1 の箱（関数の箱で置き換わり、箱としては消えたもの）の元の名前・kind・file。3D の地図（projectMap）が group のノードの名前と kind に使う（docs/20 §5.1 #3、Phase 8-6）",
       "items": { "$ref": "#/$defs/groupInfo" }
+    },
+    "parts": {
+      "type": "array",
+      "description": "画面の部品。画面の中の要素（セレクタ）を、箱に結ぶ（docs/26 §3、Phase 10）",
+      "items": { "$ref": "#/$defs/part" }
+    },
+    "behaviors": {
+      "type": "array",
+      "description": "挙動。「どの部品を、どうすると」「どの線を順に通って」「何が返り、画面がどう変わるか」。線は作らず、wires の線の上に名前と順番を載せる（docs/26 §4、Phase 10）",
+      "items": { "$ref": "#/$defs/behavior" }
     }
   },
   "$defs": {
@@ -434,6 +444,107 @@
           "type": "string",
           "description": "v1 の箱の file（リポジトリルートからの相対パス）"
         }
+      }
+    },
+    "localId": {
+      "type": "string",
+      "pattern": "^[^#\\u0000-\\u001f]+$",
+      "description": "部品・挙動の id。# と制御文字は使えない"
+    },
+    "wireRef": {
+      "type": "object",
+      "description": "線の名指し。線に id は無いので、両端の組で指す（wires にある線と同じ参照）",
+      "required": ["from", "to"],
+      "additionalProperties": false,
+      "properties": {
+        "from": { "$ref": "#/$defs/itemRef" },
+        "to": { "$ref": "#/$defs/itemRef" }
+      }
+    },
+    "part": {
+      "type": "object",
+      "required": ["id", "box", "screen", "selector"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/localId" },
+        "name": { "type": "string" },
+        "box": { "$ref": "#/$defs/nodeId", "description": "この部品を表す箱" },
+        "screen": {
+          "$ref": "#/$defs/nodeId",
+          "description": "この部品が出る画面の箱（kind: screen）"
+        },
+        "selector": {
+          "type": "string",
+          "minLength": 1,
+          "description": "画面の中で、この部品に当たる要素のセレクタ"
+        }
+      }
+    },
+    "behaviorStep": {
+      "type": "object",
+      "description": "挙動の 1 段: 送る線の列と、返る線の列。送る線は 1 つの箱から 1 つの箱へ、返る線はその逆向き",
+      "required": ["send"],
+      "additionalProperties": false,
+      "properties": {
+        "send": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/wireRef" } },
+        "back": { "type": "array", "items": { "$ref": "#/$defs/wireRef" } },
+        "say": { "type": "string", "description": "任意の補足の文" },
+        "when": { "$ref": "#/$defs/when" }
+      }
+    },
+    "behavior": {
+      "type": "object",
+      "required": ["id", "name", "screen", "trigger", "steps"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/localId" },
+        "name": { "type": "string" },
+        "screen": { "$ref": "#/$defs/nodeId", "description": "画面の箱（kind: screen）" },
+        "trigger": {
+          "type": "object",
+          "description": "始まりの操作。open（画面を開く）のときは part を書かない",
+          "required": ["action"],
+          "additionalProperties": false,
+          "properties": {
+            "action": { "enum": ["open", "click", "submit", "input", "change"] },
+            "part": { "$ref": "#/$defs/localId" }
+          }
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "description": "段の列。同時に呼ぶ所は { parallel: [[段, …], [段, …]] }",
+          "items": {
+            "anyOf": [
+              { "$ref": "#/$defs/behaviorStep" },
+              {
+                "type": "object",
+                "required": ["parallel"],
+                "additionalProperties": false,
+                "properties": {
+                  "parallel": {
+                    "type": "array",
+                    "minItems": 2,
+                    "items": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": { "$ref": "#/$defs/behaviorStep" }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "say": { "type": "string" },
+            "part": { "$ref": "#/$defs/localId", "description": "変わる部品" }
+          }
+        },
+        "when": { "$ref": "#/$defs/when" }
       }
     },
     "view": {

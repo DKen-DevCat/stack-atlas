@@ -166,3 +166,4 @@ export {
   type RoutePlan,
   type BrokenRoute,
 } from './layout/index.js';
+export { behaviorView, type BehaviorView, type StepView, type BoxView } from './behavior-view.js';

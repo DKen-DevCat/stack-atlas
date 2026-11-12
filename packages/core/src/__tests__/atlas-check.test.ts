@@ -77,7 +77,7 @@ describe('checkAtlas: 挙動の誤りを見つける', () => {
       file: BEHAVIORS,
       path: '挙動 "post-comment" の段 2',
     });
-    expect(messages(report)[0]).toContain('図（.stack-atlas/graph/）にありません');
+    expect(messages(report)[0]).toContain('図の線（wires）にありません');
   });
 
   it('段がつながっていない（経路の上に無い箱から出ている）', () => {
@@ -125,8 +125,8 @@ describe('checkAtlas: 挙動の誤りを見つける', () => {
         ),
     });
     expect(messages(report).sort()).toEqual([
-      '挙動 "delete-comment" の始まりの部品 "nope" が、.stack-atlas/parts.yaml にありません',
-      '挙動 "open" の result の部品 "gone" が、.stack-atlas/parts.yaml にありません',
+      '挙動 "delete-comment" の始まりの部品 "nope" が、部品（parts）にありません',
+      '挙動 "open" の result の部品 "gone" が、部品（parts）にありません',
     ]);
   });
 
@@ -348,7 +348,7 @@ describe('checkAtlas: レビューで見つかったこと', () => {
       ),
     });
     expect(messages(report)).toHaveLength(1);
-    expect(messages(report)[0]).toContain('図（.stack-atlas/graph/）にありません');
+    expect(messages(report)[0]).toContain('図の線（wires）にありません');
   });
 
   it('形の違う箱が 1 つあっても、ほかの箱・線の参照の検査は止まらない', () => {

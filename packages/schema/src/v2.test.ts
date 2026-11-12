@@ -11,6 +11,7 @@ import {
   PORT_DIRS,
   RUNTIMES,
   SCREEN_SOURCES,
+  TRIGGER_ACTIONS,
   WIRE_TYPES,
   WIRE_VIAS,
   parseItemRef,
@@ -53,7 +54,19 @@ describe('v2.ts と graph-v2.schema.json の一致', () => {
   it('トップレベルのフィールド', () => {
     expect(sorted(Object.keys(schema.properties))).toEqual(
       // 2026-11-10 変更（8-6）: groups（group になった v1 の箱の元の名前・kind・file）を足した
-      sorted(['$schema', 'version', 'project', 'types', 'nodes', 'wires', 'views', 'groups']),
+      // 2026-11-12 変更（Phase 10。docs/26）: parts（画面の部品）と behaviors（挙動）を足した（どちらも任意）
+      sorted([
+        '$schema',
+        'version',
+        'project',
+        'types',
+        'nodes',
+        'wires',
+        'views',
+        'groups',
+        'parts',
+        'behaviors',
+      ]),
     );
     expect(sorted(schema.required)).toEqual(['nodes', 'version', 'wires']);
   });
@@ -122,6 +135,29 @@ describe('v2.ts と graph-v2.schema.json の一致', () => {
     expect(keys(schema.$defs.screen!)).toEqual(
       sorted(['html', 'source', 'screenshot', 'width', 'height', 'regions']),
     );
+  });
+
+  it('部品と挙動のフィールド（PartV2・BehaviorV2・BehaviorStepV2・WireRef と同じ。Phase 10）', () => {
+    expect(keys(schema.$defs.part!)).toEqual(sorted(['id', 'name', 'box', 'screen', 'selector']));
+    expect(sorted(schema.$defs.part!.required!)).toEqual(['box', 'id', 'screen', 'selector']);
+    expect(keys(schema.$defs.behavior!)).toEqual(
+      sorted(['id', 'name', 'screen', 'trigger', 'steps', 'result', 'when']),
+    );
+    expect(sorted(schema.$defs.behavior!.required!)).toEqual([
+      'id',
+      'name',
+      'screen',
+      'steps',
+      'trigger',
+    ]);
+    expect(keys(schema.$defs.behaviorStep!)).toEqual(sorted(['send', 'back', 'say', 'when']));
+    expect(schema.$defs.behaviorStep!.required).toEqual(['send']);
+    expect(keys(schema.$defs.wireRef!)).toEqual(['from', 'to']);
+    const trigger = schema.$defs.behavior!.properties.trigger as unknown as Def;
+    expect(keys(trigger)).toEqual(['action', 'part']);
+    expect(sorted(trigger.properties.action!.enum!)).toEqual(sorted(TRIGGER_ACTIONS));
+    const result = schema.$defs.behavior!.properties.result as unknown as Def;
+    expect(keys(result)).toEqual(['part', 'say']);
   });
 
   it('regions の source と project.generator.report（8-4。docs/19 §3.2・§3.7）', () => {

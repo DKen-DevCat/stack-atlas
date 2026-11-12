@@ -5,7 +5,7 @@
 
 ## 1. 結論
 
-- `version: 2`。トップは `project` / `nodes` / `wires` / `types` / `views`（と `groups`。§8.2）。v1 の `layers` / `edges` / `flows` は無い（`runtime` と `wires` と `views` に置き換わる）
+- `version: 2`。トップは `project` / `nodes` / `wires` / `types` / `views`（と `groups`。§8.2。2026-11-12 から、任意の `parts`・`behaviors`。§8.3）。v1 の `layers` / `edges` / `flows` は無い（`runtime` と `wires` と `views` に置き換わる）
 - 箱（node）は口（ports）を持ち、口は項目（items）を持ち、項目は入れ子になる。線（wire）は項目から項目へ。箱の中の対応は `links`。状態による分岐は `variants` と `when`
 - 参照は文字列 1 種類: `<nodeId>#<portId>/<itemId>.<itemId>…`。ID の文字集合を絞って、`#` `/` `.` で必ず切れるようにする
 - 既存の 12 抽出器（v1）は捨てない。**v1 → v2 変換**で「箱の単位の線」に落として読む。項目まで下げるのは言語アダプタ（8-2）
@@ -211,6 +211,17 @@ body の無い応答（`out/status`）から呼び出し元の `ret_n` への線
 - 検証: `id`・`name`・`kind` は必須（スキーマ）、`id` の重複はエラー、どの箱の `group` でもない `id` と箱と同じ `id` は警告
 
 画面の `screen.regions[].source`（2026-11-09 8-4。docs/19 §3.7）: 省略時は `screenshot`（スクショで測った値）。`yaml` は `.stack-atlas/screens/<slug>.regions.yaml` で補った値で、ビューアは ref ごとに合わせ、HTML の計測（とスクショの regions）にある ref はそちらが勝つ。v1 の `screen.regions[].source` も同じ語彙
+
+### 8.3 画面の部品と挙動（`parts`・`behaviors`。2026-11-12 Phase 10）
+
+どちらも任意。形と決まりは **docs/26**（§3 部品、§4 挙動、§5 検査）。ここには、契約としての要点だけを書く。
+
+- `parts[]`: `{ id, name?, box, screen, selector }`。画面の中の要素（セレクタ）を、箱に結ぶ。`box` は箱 id、`screen` は画面の箱（`kind: screen`）
+- `behaviors[]`: `{ id, name, screen, trigger: { action, part? }, steps, result?, when? }`。**線は作らない**。`wires` の線の上に、名前と順番を載せる
+  - `steps[]` の 1 段は `{ send: [{ from, to }…], back?: [{ from, to }…], say?, when? }`。線は両端の組で名指しする（views の線の始点と同じ）。同時に呼ぶ所は `{ parallel: [[段…], [段…]] }`
+  - `trigger.action` は `open`・`click`・`submit`・`input`・`change`。`open` のとき `part` は書かない
+- `id` に `#` と制御文字は使えない。`when` のキーは、必ず `<nodeId>#<variantId>`（箱が宣言した分岐）
+- 検証（`validateGraphV2`）は、部品と挙動の参照と、段のつながりも確かめる（`packages/schema/src/behaviors.ts` の `checkBehaviors`。指摘に `rule: "ref" | "behavior"` が付く）。検証器が誤りにした線は、挙動からは「無い線」として扱う
 
 ## 9. 検証（validateGraph v2）
 

@@ -1,6 +1,7 @@
 import { createConsoleLogger } from '@stack-atlas/core';
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { runBuild } from './commands/build.js';
+import { runBundle } from './commands/bundle.js';
 import { runCheck } from './commands/check.js';
 import { runDiff } from './commands/diff.js';
 import { runInitFlows } from './commands/init-flows.js';
@@ -25,6 +26,9 @@ export const USAGE = `使い方: stack-atlas <コマンド> [オプション]
       形・参照・挙動（段の線が図にあるか、段がつながっているか、始まりの部品が合っているか）を見る。対象のコードは読まない。
       --json は結果を JSON で出す（検査できなかったときも { error } の JSON）。
       終了コード: 0 = 誤りなし、1 = 図に誤りがある、2 = 検査できなかった
+  bundle [<dir>] [-o <outDir>] [--json]
+      <dir>/.stack-atlas/ の図を検査して、<outDir>/graph.json（部品と挙動つき）にまとめる。既定の出力先は <dir>/.stack-atlas/out。
+      図に誤りがあれば、書かずに終了コード 1。まとめた graph.json は serve で開ける
   validate [--strict] <graph.json...>
       graph.json をスキーマと参照整合性で検証する（version 1 / 2 を見て検証器を選ぶ）。
       --strict は graph.json の build の報告を読み、報告が無い・言語アダプタを飛ばした・strict の違反がある graph をエラーにする
@@ -100,6 +104,16 @@ export async function main(argv: string[]): Promise<number> {
       case 'check': {
         const { values, positionals } = parse(rest, { json: { type: 'boolean' } });
         return runCheck(positionals, console.log, { json: Boolean(values.json) });
+      }
+      case 'bundle': {
+        const { values, positionals } = parse(rest, {
+          out: { type: 'string', short: 'o' },
+          json: { type: 'boolean' },
+        });
+        return runBundle(positionals, console.log, {
+          out: values.out as string | undefined,
+          json: Boolean(values.json),
+        });
       }
       case 'validate': {
         const { values, positionals } = parse(rest, { strict: { type: 'boolean' } });

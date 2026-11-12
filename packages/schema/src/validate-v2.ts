@@ -4,6 +4,7 @@
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 import schema from '../graph-v2.schema.json' with { type: 'json' };
+import { checkBehaviors } from './behaviors.js';
 import { formatAjvError, validateGraph, type ValidationIssue } from './validate.js';
 import {
   parseItemRef,
@@ -244,6 +245,15 @@ function checkGraph(g: GraphV2): { errors: ValidationIssue[]; warnings: Validati
       }
     });
   });
+
+  // 部品と挙動（Phase 10。docs/26 §5）。誤りにした線は、挙動からは「無い線」として扱う
+  const badWires = new Set<number>();
+  for (const e of errors) {
+    const m = /^\/wires\/(\d+)/.exec(e.path);
+    if (m) badWires.add(Number(m[1]));
+  }
+  for (const issue of checkBehaviors(g, badWires))
+    (issue.level === 'error' ? errors : warnings).push(issue);
 
   // views
   const viewIds = new Set<string>();

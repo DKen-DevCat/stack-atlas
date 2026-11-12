@@ -3,7 +3,7 @@
  * 契約は v0。10-1 の試し（エージェントに書かせて正解表と比べる）のあとで固める。
  * 道具は、ここに書かれたものを確かめるだけで、対象のコードの意味は読まない（言語に依る処理を持たない。docs/24）
  */
-import type { NamedType, NodeV2, WireV2 } from '@stack-atlas/schema';
+import type { BehaviorV2, NamedType, NodeV2, PartV2, WireV2 } from '@stack-atlas/schema';
 import { HARNESS_DIR } from '../local-files.js';
 
 /** 図の置き場（対象の repo の中か、複数の repo を束ねるディレクトリの下。docs/25 Q37） */
@@ -31,63 +31,17 @@ export const ATLAS_LIMITS = {
   steps: 64,
 } as const;
 
-/** 挙動の始まりの操作。ブラウザの出来事の名前で、対象の作り方に依らない */
-export const TRIGGER_ACTIONS = ['open', 'click', 'submit', 'input', 'change'] as const;
-export type TriggerAction = (typeof TRIGGER_ACTIONS)[number];
-
-/** 線の名指し。線に id は無いので、両端の組で指す（graph/ にある線と同じ参照） */
-export interface WireRef {
-  from: string;
-  to: string;
-}
-
-/** 挙動の 1 段: 送る線の列と、返る線の列。1 回の呼び出しが引数ごとに線に分かれるので、どちらも列 */
-export interface BehaviorStep {
-  send: WireRef[];
-  back?: WireRef[];
-  /** 任意の補足の文 */
-  say?: string;
-  /** この段が通るときの分岐。キーは `<箱 id>#<分岐 id>` */
-  when?: Record<string, boolean>;
-}
-
-/** 同時に呼ぶ所: 並んだ列（列ごとに段の列） */
-export interface BehaviorParallel {
-  parallel: BehaviorStep[][];
-}
-
-export type BehaviorEntry = BehaviorStep | BehaviorParallel;
-
-export interface BehaviorTrigger {
-  action: TriggerAction;
-  /** 画面の部品の id（parts.yaml）。action が open のときは書かない */
-  part?: string;
-}
-
-/** 挙動: 「どの画面の、どの部品を、どうすると」「どの線を順に通って」「何が返り、画面がどう変わるか」 */
-export interface Behavior {
-  id: string;
-  name: string;
-  /** 画面の箱 id */
-  screen: string;
-  trigger: BehaviorTrigger;
-  steps: BehaviorEntry[];
-  result?: { say?: string; part?: string };
-  /** この挙動が起こせるときの分岐（例: ログインしているとき）。キーは `<箱 id>#<分岐 id>` */
-  when?: Record<string, boolean>;
-}
-
-/** 画面の部品: 画面の中の要素（セレクタ）を、図の箱に結ぶ */
-export interface Part {
-  id: string;
-  name?: string;
-  /** この部品を表す箱 id */
-  box: string;
-  /** この部品が出る画面の箱 id */
-  screen: string;
-  /** 画面の中で、この部品に当たる要素のセレクタ */
-  selector: string;
-}
+// 挙動と部品の形は、graph.json の契約（@stack-atlas/schema）にある。ここでは、短い名前で使う
+export { TRIGGER_ACTIONS } from '@stack-atlas/schema';
+export type {
+  TriggerAction,
+  WireRef,
+  BehaviorStepV2 as BehaviorStep,
+  BehaviorParallelV2 as BehaviorParallel,
+  BehaviorEntryV2 as BehaviorEntry,
+  BehaviorV2 as Behavior,
+  PartV2 as Part,
+} from '@stack-atlas/schema';
 
 export type AtlasCheckKind = 'form' | 'ref' | 'behavior';
 
@@ -112,8 +66,8 @@ export interface LoadedAtlas {
   nodes: NodeV2[];
   wires: WireV2[];
   types: NamedType[];
-  behaviors: Behavior[];
-  parts: Part[];
+  behaviors: BehaviorV2[];
+  parts: PartV2[];
   /** 読んだファイル（root からの相対） */
   files: string[];
   /** nodes[i]・wires[i]・types[i] を書いたファイル（指摘にファイル名を出すため） */
