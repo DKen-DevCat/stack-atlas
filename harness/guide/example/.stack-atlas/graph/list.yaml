@@ -1,0 +1,133 @@
+# 手順書（../../GUIDE.md）の例を、全部そろえたもの。架空の「買い物の一覧」の画面。
+# `stack-atlas check harness/guide/example` が、エラー 0・警告 0 で通る（テストで確かめている）。
+nodes:
+  - id: "screen:/list"
+    kind: screen
+    name: "買い物の一覧"
+    runtime: browser
+    file: web/list.html
+    line: 1
+    ports:
+      - id: out
+        dir: out
+        items:
+          - { id: open, name: "開く", type: void }
+          - { id: items, name: items, type: "Item[]" }
+      - id: in
+        dir: in
+        items:
+          - { id: items, name: items, type: "Item[]" }
+
+  - id: "part:add-form"
+    kind: component
+    name: "品物を足す欄"
+    runtime: browser
+    file: web/list.html
+    line: 12
+    ports:
+      - id: out
+        dir: out
+        items:
+          - id: item
+            name: item
+            type: object
+            children:
+              - { id: name, name: name, type: string }
+          - { id: added, name: item, type: object }
+      - id: in
+        dir: in
+        items:
+          - { id: saved, name: item, type: object }
+
+  - id: "part:item-list"
+    kind: component
+    name: "品物の一覧"
+    runtime: browser
+    file: web/list.html
+    line: 20
+    ports:
+      - id: in
+        dir: in
+        items:
+          - { id: item, name: item, type: object }
+          - { id: items, name: items, type: "Item[]" }
+
+  - id: "endpoint:GET /items"
+    kind: endpoint
+    name: "GET /items"
+    runtime: server
+    file: server/items.txt
+    line: 3
+    meta: { route: "GET /items" }
+    ports:
+      - { id: in, dir: in, items: [{ id: request, name: "入力なし", type: void }] }
+      - { id: req, dir: out, items: [{ id: all, name: "全部を読む", type: void }] }
+      - { id: res, dir: in, items: [{ id: rows, name: rows, type: "Item[]" }] }
+      - id: out
+        dir: out
+        items:
+          - id: body
+            name: body
+            type: object
+            children:
+              - { id: items, name: items, type: "Item[]" }
+
+  - id: "endpoint:POST /items"
+    kind: endpoint
+    name: "POST /items"
+    runtime: server
+    file: server/items.txt
+    line: 9
+    meta: { route: "POST /items" }
+    ports:
+      - id: in
+        dir: in
+        items:
+          - id: body
+            name: body
+            type: object
+            children:
+              - id: item
+                name: item
+                type: object
+                children:
+                  - { id: name, name: name, type: string }
+      - { id: req, dir: out, items: [{ id: row, name: row, type: object }] }
+      - { id: res, dir: in, items: [{ id: row, name: row, type: object }] }
+      - id: out
+        dir: out
+        items:
+          - id: body
+            name: body
+            type: object
+            children:
+              - { id: item, name: item, type: object }
+
+  - id: "table:items"
+    kind: table
+    name: items
+    runtime: data
+    file: server/items.txt
+    line: 1
+    ports:
+      - { id: key, dir: in, items: [{ id: all, name: "全部", type: void }] }
+      - { id: write, dir: in, items: [{ id: row, name: row, type: object }] }
+      - id: read
+        dir: out
+        items:
+          - { id: row, name: row, type: object }
+          - { id: rows, name: rows, type: "Item[]" }
+
+wires:
+  # 開いたとき
+  - { from: "screen:/list#out/open", to: "endpoint:GET /items#in/request", via: http }
+  - { from: "endpoint:GET /items#out/body.items", to: "screen:/list#in/items", via: http, reply: true }
+  - { from: "endpoint:GET /items#req/all", to: "table:items#key/all", via: call }
+  - { from: "table:items#read/rows", to: "endpoint:GET /items#res/rows", via: call, reply: true }
+  - { from: "screen:/list#out/items", to: "part:item-list#in/items", via: render }
+  # 品物を足す
+  - { from: "part:add-form#out/item", to: "endpoint:POST /items#in/body.item", via: http }
+  - { from: "endpoint:POST /items#out/body.item", to: "part:add-form#in/saved", via: http, reply: true }
+  - { from: "endpoint:POST /items#req/row", to: "table:items#write/row", via: call }
+  - { from: "table:items#read/row", to: "endpoint:POST /items#res/row", via: call, reply: true }
+  - { from: "part:add-form#out/added", to: "part:item-list#in/item", via: render }

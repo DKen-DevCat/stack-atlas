@@ -1,0 +1,312 @@
+# 記事とコメントの画面（app/index.html）と、/api/* の受け口（app/sw.js の Service Worker）。
+nodes:
+  # ---- 画面の側（app/index.html） ----
+  - id: "screen:/"
+    kind: screen
+    name: "記事とコメントの画面"
+    runtime: browser
+    file: app/index.html
+    line: 1
+    ports:
+      - id: out
+        dir: out
+        items:
+          - { id: open, name: "開く", type: void }
+
+  - id: "fn:load"
+    kind: fn
+    name: "load（コメントを読みこむ）"
+    runtime: browser
+    file: app/index.html
+    line: 78
+    ports:
+      - id: in
+        dir: in
+        items:
+          - { id: call, name: "呼ぶ", type: void }
+          - id: comments
+            name: comments
+            type: "object[]"
+            children:
+              - { id: id, name: id, type: number }
+              - { id: body, name: body, type: string }
+              - { id: author, name: author, type: string }
+      - id: out
+        dir: out
+        items:
+          - { id: request, name: "入力なし", type: void }
+          - id: comments
+            name: comments
+            type: "object[]"
+            children:
+              - { id: id, name: id, type: number }
+              - { id: body, name: body, type: string }
+              - { id: author, name: author, type: string }
+    links:
+      - { from: in/call, to: out/request }
+      - { from: in/comments, to: out/comments }
+
+  - id: "fn:render"
+    kind: fn
+    name: "render（件数と一覧を描く）"
+    runtime: browser
+    file: app/index.html
+    line: 51
+    ports:
+      - id: in
+        dir: in
+        items:
+          - id: comments
+            name: comments
+            type: "object[]"
+            children:
+              - { id: id, name: id, type: number }
+              - { id: body, name: body, type: string }
+              - { id: author, name: author, type: string }
+      - id: out
+        dir: out
+        items:
+          - { id: count, name: "comments.length", type: number }
+          - id: comments
+            name: comments
+            type: "object[]"
+            children:
+              - { id: id, name: id, type: number }
+              - { id: body, name: body, type: string }
+              - { id: author, name: author, type: string }
+
+  - id: "part:comment-form"
+    kind: component
+    name: "コメントを書く欄（Post Comment）"
+    runtime: browser
+    file: app/index.html
+    line: 33
+    variants: [{ id: filled, name: "入力が空でない（前後の空白を除いて）" }]
+    ports:
+      - id: out
+        dir: out
+        items:
+          - id: comment
+            name: comment
+            type: object
+            children:
+              - { id: body, name: body, type: string }
+          - { id: reload, name: "読み直しを呼ぶ", type: void }
+      - id: in
+        dir: in
+        items:
+          - id: saved
+            name: comment
+            type: object
+            children:
+              - { id: id, name: id, type: number }
+              - { id: body, name: body, type: string }
+              - { id: author, name: author, type: string }
+
+  - id: "part:status"
+    kind: component
+    name: "コメントの件数の行"
+    runtime: browser
+    file: app/index.html
+    line: 37
+    ports:
+      - id: in
+        dir: in
+        items:
+          - { id: count, name: "件数", type: number }
+
+  - id: "part:comment-list"
+    kind: component
+    name: "コメントの一覧"
+    runtime: browser
+    file: app/index.html
+    line: 38
+    ports:
+      - id: in
+        dir: in
+        items:
+          - id: comments
+            name: comments
+            type: "object[]"
+            children:
+              - { id: id, name: id, type: number }
+              - { id: body, name: body, type: string }
+              - { id: author, name: author, type: string }
+
+  - id: "part:delete-button"
+    kind: component
+    name: "削除ボタン（author が me のコメントの行にだけ出る）"
+    runtime: browser
+    file: app/index.html
+    line: 66
+    ports:
+      - id: out
+        dir: out
+        items:
+          - { id: id, name: "id（ボタンの data-id）", type: string }
+          - { id: reload, name: "読み直しを呼ぶ", type: void }
+      - id: in
+        dir: in
+        items:
+          - { id: done, name: "204（中身なし）", type: void }
+
+  # ---- 受け口の側（app/sw.js。Service Worker が /api/* の返事を作る） ----
+  - id: "endpoint:GET /api/comments"
+    kind: endpoint
+    name: "GET /api/comments"
+    runtime: server
+    file: app/sw.js
+    line: 28
+    meta: { route: "GET /api/comments" }
+    ports:
+      - { id: in, dir: in, items: [{ id: request, name: "入力なし", type: void }] }
+      - { id: req, dir: out, items: [{ id: all, name: "全部を読む", type: void }] }
+      - id: res
+        dir: in
+        items:
+          - id: rows
+            name: comments
+            type: "object[]"
+            children:
+              - { id: id, name: id, type: number }
+              - { id: body, name: body, type: string }
+              - { id: author, name: author, type: string }
+      - id: out
+        dir: out
+        items:
+          - id: body
+            name: body
+            type: object
+            children:
+              - id: comments
+                name: comments
+                type: "object[]"
+                children:
+                  - { id: id, name: id, type: number }
+                  - { id: body, name: body, type: string }
+                  - { id: author, name: author, type: string }
+    links:
+      - { from: in/request, to: req/all }
+      - { from: res/rows, to: out/body.comments }
+
+  - id: "endpoint:POST /api/comments"
+    kind: endpoint
+    name: "POST /api/comments"
+    runtime: server
+    file: app/sw.js
+    line: 31
+    meta: { route: "POST /api/comments" }
+    ports:
+      - id: in
+        dir: in
+        items:
+          - id: body
+            name: body
+            type: object
+            children:
+              - id: comment
+                name: comment
+                type: object
+                children:
+                  - { id: body, name: body, type: string }
+      - id: req
+        dir: out
+        items:
+          - id: row
+            name: row
+            type: object
+            children:
+              - { id: id, name: id, type: number }
+              - { id: body, name: body, type: string }
+              - { id: author, name: author, type: string }
+      - id: out
+        dir: out
+        items:
+          - id: body
+            name: body
+            type: object
+            children:
+              - id: comment
+                name: comment
+                type: object
+                children:
+                  - { id: id, name: id, type: number }
+                  - { id: body, name: body, type: string }
+                  - { id: author, name: author, type: string }
+    links:
+      - { from: in/body.comment, to: req/row }
+      - { from: in/body.comment, to: out/body.comment }
+
+  - id: "endpoint:DELETE /api/comments/{id}"
+    kind: endpoint
+    name: "DELETE /api/comments/{id}"
+    runtime: server
+    file: app/sw.js
+    line: 37
+    meta: { route: "DELETE /api/comments/{id}" }
+    ports:
+      - { id: in, dir: in, items: [{ id: id, name: "id（パスの {id}。数字だけ）", type: string }] }
+      - id: req
+        dir: out
+        items:
+          - { id: id, name: id, type: number }
+          - { id: remove, name: "その行を消す", type: void }
+      - { id: out, dir: out, items: [{ id: done, name: "204（中身なし）", type: void }] }
+    links:
+      - { from: in/id, to: req/id }
+
+  - id: "table:comments"
+    kind: table
+    name: "comments（Service Worker のメモリの中の配列）"
+    runtime: data
+    file: app/sw.js
+    line: 5
+    ports:
+      - id: key
+        dir: in
+        items:
+          - { id: all, name: "全部", type: void }
+          - { id: id, name: "id の合う行", type: number }
+      - id: write
+        dir: in
+        items:
+          - id: row
+            name: row
+            type: object
+            children:
+              - { id: id, name: id, type: number }
+              - { id: body, name: body, type: string }
+              - { id: author, name: author, type: string }
+          - { id: remove, name: "消す", type: void }
+      - id: read
+        dir: out
+        items:
+          - id: rows
+            name: comments
+            type: "object[]"
+            children:
+              - { id: id, name: id, type: number }
+              - { id: body, name: body, type: string }
+              - { id: author, name: author, type: string }
+
+wires:
+  # 開いたとき（読みこみと、描き直し。投稿・削除のあとの読み直しでも通る）
+  - { from: "screen:/#out/open", to: "fn:load#in/call", via: call }
+  - { from: "fn:load#out/request", to: "endpoint:GET /api/comments#in/request", via: http }
+  - { from: "endpoint:GET /api/comments#out/body.comments", to: "fn:load#in/comments", via: http, reply: true }
+  - { from: "endpoint:GET /api/comments#req/all", to: "table:comments#key/all", via: call }
+  - { from: "table:comments#read/rows", to: "endpoint:GET /api/comments#res/rows", via: call, reply: true }
+  - { from: "fn:load#out/comments", to: "fn:render#in/comments", via: call }
+  - { from: "fn:render#out/count", to: "part:status#in/count", via: render }
+  - { from: "fn:render#out/comments", to: "part:comment-list#in/comments", via: render }
+  # コメントを投稿する
+  - { from: "part:comment-form#out/comment", to: "endpoint:POST /api/comments#in/body.comment", via: http }
+  - { from: "endpoint:POST /api/comments#out/body.comment", to: "part:comment-form#in/saved", via: http, reply: true }
+  - { from: "endpoint:POST /api/comments#req/row", to: "table:comments#write/row", via: call }
+  - { from: "part:comment-form#out/reload", to: "fn:load#in/call", via: call }
+  # コメントを削除する
+  - { from: "part:delete-button#out/id", to: "endpoint:DELETE /api/comments/{id}#in/id", via: http }
+  - { from: "endpoint:DELETE /api/comments/{id}#out/done", to: "part:delete-button#in/done", via: http, reply: true }
+  - { from: "endpoint:DELETE /api/comments/{id}#req/id", to: "table:comments#key/id", via: call }
+  - { from: "endpoint:DELETE /api/comments/{id}#req/remove", to: "table:comments#write/remove", via: call }
+  - { from: "part:delete-button#out/reload", to: "fn:load#in/call", via: call }
