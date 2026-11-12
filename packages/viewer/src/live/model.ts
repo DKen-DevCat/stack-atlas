@@ -58,6 +58,8 @@ export class LiveModel {
   rects = new Map<string, LiveRect>();
   private recorder = new OperationRecorder();
   private n = 0;
+  /** 道具から、どこまで渡し終えたかの印（upTo）が届いたか。届いていれば、区切りの「いま」に、その時刻を使う */
+  watermarked = false;
 
   /** 知らせを入れる。閉じて、見せることになった操作を返す */
   receive(msg: LiveMessage): Played[] {
@@ -69,6 +71,8 @@ export class LiveModel {
         return [];
       case 'status':
         this.status = msg.status;
+        // 「値を見る」を切ったら、持っている値を消す（入れ直せば、道具がメモリから渡し直す。§5.3）
+        if (!msg.status.reveal) this.forgetValues();
         return [];
       case 'values':
         for (const v of msg.values) this.values.set(v.id, v);
@@ -88,6 +92,10 @@ export class LiveModel {
           }
           closed.push(...this.recorder.push(ev));
         }
+        if (msg.upTo !== undefined) {
+          this.watermarked = true;
+          closed.push(...this.recorder.tick(msg.upTo));
+        }
         return this.settle(closed);
       }
     }
@@ -96,6 +104,21 @@ export class LiveModel {
   /** 時間が進んだ。静かになった操作を閉じて、見せることになったものを返す */
   tick(now: number): Played[] {
     return this.settle(this.recorder.tick(now));
+  }
+
+  /** 持っている値を消す（伏せていないパス・中身の値・メモリから届いた値） */
+  forgetValues(): void {
+    this.values.clear();
+    const ops = [
+      ...this.played.map((p) => p.op),
+      ...(this.recorder.current ? [this.recorder.current] : []),
+    ];
+    for (const op of ops)
+      for (const r of op.requests) {
+        delete r.raw;
+        if (r.sent) delete r.sent.value;
+        if (r.received) delete r.received.value;
+      }
   }
 
   /** いま記録している操作（まだ閉じていない） */

@@ -53,9 +53,10 @@ function shapeText(s: LiveShape, depth = 0): string {
     }
   }
 }
-function bodyText(b: MaskedBody | undefined): string {
+/** 中身を文字にする。値は、「値を見る」を入れているときだけ */
+function bodyText(b: MaskedBody | undefined, reveal: boolean): string {
   if (!b) return '';
-  if (b.value !== undefined) return b.value;
+  if (reveal && b.value !== undefined) return b.value;
   if (b.kind === 'tree') return shapeText(b.shape);
   if (b.kind === 'form') return `欄: ${b.keys.join(', ')}`;
   return `${b.type}（${b.bytes} バイト）`;
@@ -78,18 +79,19 @@ export class LiveView {
       this.signal({ t: 'hold', on: !this.model.status?.hold }),
     );
     $('reload').addEventListener('click', () => this.signal({ t: 'reload' }));
-    $('copy').addEventListener('click', () => {
-      void navigator.clipboard?.writeText($('lines').textContent ?? '').catch(() => {});
-    });
+    $('copy').addEventListener('click', () => this.copy());
     $<HTMLSelectElement>('screen').addEventListener('change', (e) => {
       const v = (e.target as HTMLSelectElement).value;
       this.model.chosenScreen = v || undefined;
       this.renderChips();
     });
     const seek = $<HTMLInputElement>('p-seek');
+    // 再生バーを動かしても、再生していれば、そこから続ける（了承済みの試しと同じ）
     seek.addEventListener('input', () => {
-      this.stop();
+      const prev = this.play.pos;
       this.play.pos = Number(seek.value);
+      this.play.last = performance.now();
+      if (this.play.pos < prev) $('overlay').replaceChildren();
       this.paint();
     });
     const speed = $<HTMLInputElement>('p-speed');
@@ -124,6 +126,7 @@ export class LiveView {
       this.note('');
     } else {
       frame?.remove();
+      $('overlay').replaceChildren();
       this.note('アプリは、別の窓で開いています。その窓で操作してください。');
     }
     if (this.selected) this.renderReqs(this.selected);
@@ -131,14 +134,13 @@ export class LiveView {
 
   /** 図が届いた */
   graph(): void {
-    const screens = this.model.screens();
     const select = $<HTMLSelectElement>('screen');
     select.replaceChildren(h('option', { attrs: { value: '' } }, '（すべて）'));
-    for (const id of screens) select.append(h('option', { attrs: { value: id } }, id));
-    this.renderChips();
+    for (const id of this.model.screens()) select.append(h('option', { attrs: { value: id } }, id));
+    this.screenChanged();
   }
 
-  /** 開いた画面が変わった（道具が画面を決められないときは、選ぶ欄を出す） */
+  /** 画面を開いた。道具が画面を決められず、画面が 2 つ以上あれば、選ぶ欄を出す（§4.6） */
   screenChanged(): void {
     $('screens').hidden = this.model.screen !== undefined || this.model.screens().length < 2;
     this.renderChips();
@@ -157,12 +159,30 @@ export class LiveView {
   /** 操作が閉じた。いちばん新しいものを、始めから再生する */
   played(list: Played[]): void {
     const last = list[list.length - 1];
-    this.renderHistory();
     if (last) this.select(last, true);
+    else this.renderHistory();
+  }
+
+  private inWindow() {
+    return this.model.status?.mode === 'window';
   }
 
   private note(text: string) {
     $('note').textContent = text;
+  }
+
+  /** 写す。写せない（安全な文脈でない名前で開いた、など）ときは、文を選んだ状態にして、手で写せるようにする */
+  private copy() {
+    const pre = $('lines');
+    const select = () => {
+      const range = document.createRange();
+      range.selectNodeContents(pre);
+      const sel = getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    };
+    if (!navigator.clipboard) return select();
+    navigator.clipboard.writeText(pre.textContent ?? '').catch(select);
   }
 
   private renderChips() {
@@ -194,7 +214,7 @@ export class LiveView {
     }
   }
 
-  /** 一覧から挙動を選ぶ: 操作していなくても、経路と、始まりの部品の場所を出す */
+  /** 一覧から挙動を選ぶ: 操作していなくても、経路を光らせ、始まりの部品の場所を出す（docs/24 の核） */
   private pick(id: string) {
     this.stop();
     this.selected = undefined;
@@ -202,22 +222,29 @@ export class LiveView {
     const view = this.model.view(id);
     $('player').hidden = true;
     this.head(view?.name ?? id, '図のまま', undefined);
+    const part = view?.trigger.part;
+    $('f-part').textContent = part ? `始まりの部品: ${part.name ?? part.id}` : '';
     this.renderPath(view, undefined);
-    for (const sid of ['sec-lines']) $(sid).hidden = true;
+    // 経路の全部を、図に書かれただけの見た目で光らせる（了承済みの試しと同じ）
+    const path = $('path');
+    for (const n of path.querySelectorAll('.pnode')) n.classList.add('lit', 'drawn');
+    for (const hop of path.querySelectorAll('.hop')) hop.classList.add('go-on', 'back-on');
+    $('sec-lines').hidden = true;
     $('s-times').replaceChildren(
       h('div', { class: 'empty' }, 'この挙動を、左のアプリで操作すると、ここに出ます。'),
     );
     $('s-dom').replaceChildren(h('div', { class: 'empty' }, 'まだありません。'));
     $('s-reqs').replaceChildren(h('div', { class: 'empty' }, 'まだありません。'));
     this.renderChips();
+    this.renderHistory();
     this.showPicked();
   }
 
   private showPicked() {
     const overlay = $('overlay');
     overlay.replaceChildren();
-    const view = this.picked ? this.model.view(this.picked) : undefined;
-    const part = view?.trigger.part;
+    if (this.inWindow()) return; // アプリが別の窓のときは、囲まない（名前で出す）
+    const part = (this.picked ? this.model.view(this.picked) : undefined)?.trigger.part;
     const rect = part ? this.model.rects.get(part.id) : undefined;
     if (rect) overlay.append(this.box('part stay', rect));
   }
@@ -232,8 +259,15 @@ export class LiveView {
       p.op.closed === 'limit' ? '上限で打ち切り' : undefined,
       v ? (v.ok ? '図と合っている' : '図と食い違い') : p.view ? undefined : '図に無い',
     );
+    const pressed = this.model.part(p.choice.part) ?? this.model.part(p.op.gestures[0]?.parts[0]);
+    $('f-part').textContent = pressed
+      ? `押した部品: ${pressed.name ?? pressed.id}`
+      : p.op.open
+        ? '画面を開いた'
+        : '';
     $('player').hidden = false;
     $<HTMLInputElement>('p-seek').max = String(Math.max(p.timeline.total, 1));
+    $('overlay').replaceChildren();
     this.renderPath(p.view, p);
     this.renderSegs(p);
     this.renderTimes(p);
@@ -243,6 +277,7 @@ export class LiveView {
     $('lines').textContent = p.lines.join('\n');
     this.renderChips();
     this.renderHistory();
+    this.play.pos = 0;
     if (autoplay) this.start(0);
     else this.paint();
   }
@@ -338,11 +373,13 @@ export class LiveView {
     });
   }
 
+  private requestLabel(p: Played, id: string | undefined) {
+    const r = p.op.requests.find((x) => x.id === id);
+    return r ? `${r.method} ${r.path}` : '通信';
+  }
+
   private sliceLabel(p: Played, kind: string, request?: string) {
-    if (kind === 'wait') {
-      const r = p.op.requests.find((x) => x.id === request);
-      return r ? `${r.method} ${r.path} の返事を待つ` : '返事を待つ';
-    }
+    if (kind === 'wait') return `${this.requestLabel(p, request)} の返事を待つ`;
     return (
       {
         before: '押してから、送るまで',
@@ -356,29 +393,51 @@ export class LiveView {
   private renderTimes(p: Played) {
     const box = $('s-times');
     box.replaceChildren();
-    const { slices, longest, total } = p.timeline;
+    const { slices, longest, total, requests } = p.timeline;
     if (!slices.length) {
       box.append(h('div', { class: 'empty' }, '時間のかかる所は、ありませんでした。'));
       return;
     }
     const max = Math.max(...slices.map((s) => s.to - s.from), 1);
-    slices.forEach((s, i) => {
+    const row = (label: string, value: number, cls: string, i?: number) => {
       const bar = h('i');
-      bar.style.width = `${((s.to - s.from) / max) * 100}%`;
+      bar.style.width = `${(value / max) * 100}%`;
+      return h(
+        'div',
+        { class: `trow ${cls}`, attrs: i === undefined ? {} : { 'data-i': String(i) } },
+        h('span', { class: 'lbl' }, label),
+        h('span', { class: 'bar' }, bar),
+        h('span', { class: 'ms' }, ms(value)),
+      );
+    };
+    slices.forEach((s, i) =>
+      box.append(
+        row(
+          this.sliceLabel(p, s.kind, s.request),
+          s.to - s.from,
+          `${s.kind === 'after' || s.kind === 'local' ? 'dom' : s.kind === 'wait' ? '' : 'gap'} ${i === longest ? 'max' : ''}`,
+          i,
+        ),
+      ),
+    );
+    box.append(h('div', { class: 'total' }, `合計 ${ms(total)}`));
+    // 同時に出た通信があれば、通信ごとの「送ってから返るまで」も出す（重なるので、合計は合わない。§4.3）
+    const overlapped = requests.some((a, i) =>
+      requests.some((b, j) => i < j && a.from < b.to && b.from < a.to),
+    );
+    if (overlapped) {
       box.append(
         h(
           'div',
-          {
-            class: `trow ${s.kind === 'after' || s.kind === 'local' ? 'dom' : s.kind === 'wait' ? '' : 'gap'} ${i === longest ? 'max' : ''}`,
-            attrs: { 'data-i': String(i) },
-          },
-          h('span', { class: 'lbl' }, this.sliceLabel(p, s.kind, s.request)),
-          h('span', { class: 'bar' }, bar),
-          h('span', { class: 'ms' }, ms(s.to - s.from)),
+          { class: 'small' },
+          '通信ごとの、送ってから返るまで（重なるので、合計は合いません）',
         ),
       );
-    });
-    box.append(h('div', { class: 'total' }, `合計 ${ms(total)}`));
+      for (const r of requests)
+        box.append(
+          row(`${this.requestLabel(p, r.id)}${r.pending ? '（返らず）' : ''}`, r.ms, 'req'),
+        );
+    }
   }
 
   private renderDom(p: Played) {
@@ -411,6 +470,7 @@ export class LiveView {
       box.append(h('div', { class: 'empty' }, '通信はありませんでした。'));
       return;
     }
+    // 値は、「値を見る」を入れているときだけ出す（出来事に付いて届いた値も、メモリから届いた値も。§5.3）
     const reveal = this.model.status?.reveal === true;
     for (const r of p.op.requests) {
       const v = reveal ? this.model.values.get(r.id) : undefined;
@@ -431,13 +491,13 @@ export class LiveView {
           'div',
           { class: 'line' },
           h('b', {}, r.method),
-          h('span', {}, v?.raw ?? r.raw ?? r.path),
+          h('span', {}, reveal ? (v?.raw ?? r.raw ?? r.path) : r.path),
           h('span', { class: 'small' }, state),
           r.end !== undefined ? h('span', { class: 'small' }, ms(r.end - r.start)) : null,
         ),
       );
-      const sent = v?.sent ?? bodyText(r.sent);
-      const got = v?.received ?? bodyText(r.received);
+      const sent = v?.sent ?? bodyText(r.sent, reveal);
+      const got = v?.received ?? bodyText(r.received, reveal);
       if (sent) row.append(h('span', { class: 'small' }, '送ったもの'), h('pre', {}, sent));
       if (got) row.append(h('span', { class: 'small' }, '返ったもの'), h('pre', {}, got));
       box.append(row);
@@ -459,6 +519,8 @@ export class LiveView {
     el.style.top = `${y}px`;
     el.style.width = `${Math.max(0, Math.min(r.w, pane.width - x))}px`;
     el.style.height = `${Math.max(0, Math.min(r.h, pane.height - y))}px`;
+    // 光らせ終わったら、取り除く（再生し直すたびに、増えないように）
+    if (kind.includes(' on')) el.addEventListener('animationend', () => el.remove());
     return el;
   }
 
@@ -468,12 +530,11 @@ export class LiveView {
     const pos = this.play.pos;
     const at = progressAt(p.timeline, pos);
     $<HTMLInputElement>('p-seek').value = String(pos);
-    const segs = [...$('p-segs').children];
-    segs.forEach((s, i) => {
+    [...$('p-segs').children].forEach((s, i) => {
       s.classList.toggle('past', i < at.slice);
       s.classList.toggle('now', i === at.slice);
     });
-    for (const row of $('s-times').querySelectorAll<HTMLElement>('.trow')) {
+    for (const row of $('s-times').querySelectorAll<HTMLElement>('.trow[data-i]')) {
       const i = Number(row.dataset.i);
       row.classList.toggle('done', i < at.slice);
       row.classList.toggle('now', i === at.slice);
@@ -489,15 +550,15 @@ export class LiveView {
       hop?.classList.toggle('back-on', back);
       to?.classList.toggle('lit', sent);
       to?.classList.toggle('drawn', !t.observed);
-      to?.classList.toggle('wait', t.observed && sent && !back);
+      to?.classList.toggle('wait', t.observed && sent && t.backAt !== undefined && !back);
       from?.classList.toggle('lit', sent || pos > 0);
     }
   }
 
   private flash(p: Played, from: number, to: number) {
+    if (this.inWindow()) return; // アプリが別の窓のときは、囲まない（押した部品は、名前で出している）
     const overlay = $('overlay');
-    if (from <= 0 && to >= 0) {
-      overlay.replaceChildren();
+    if (from < 0 && to >= 0) {
       const rect = p.op.gestures.find((g) => g.rect)?.rect;
       if (rect) overlay.append(this.box('part on', rect));
     }
@@ -514,6 +575,7 @@ export class LiveView {
     this.play.running = true;
     this.play.last = performance.now();
     $('p-play').classList.add('playing');
+    if (pos <= 0) $('overlay').replaceChildren();
     this.flash(p, pos - 1, pos);
     const step = (now: number) => {
       if (!this.play.running) return;
@@ -524,9 +586,8 @@ export class LiveView {
       this.paint();
       if (this.play.pos >= p.timeline.total) {
         this.stop();
-        (window as unknown as { __stackAtlasLiveReplayed?: number }).__stackAtlasLiveReplayed =
-          ((window as unknown as { __stackAtlasLiveReplayed?: number }).__stackAtlasLiveReplayed ??
-            0) + 1;
+        const w = window as unknown as { __stackAtlasLiveReplayed?: number };
+        w.__stackAtlasLiveReplayed = (w.__stackAtlasLiveReplayed ?? 0) + 1;
         return;
       }
       this.play.raf = requestAnimationFrame(step);

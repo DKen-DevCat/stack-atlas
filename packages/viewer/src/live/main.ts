@@ -4,7 +4,7 @@
  * 送る: window.__stackAtlasLive（道具は、この画面のいちばん上の枠からの合図だけを受ける）
  * 画面の状態は、アドレスの引数では変えない（アプリの URL も、道具が口で渡す）
  */
-import type { LiveMessage } from '@stack-atlas/wiring';
+import { LIVE_PROTOCOL, type LiveMessage } from '@stack-atlas/wiring';
 import './live.css';
 import { LiveModel } from './model';
 import { LiveView } from './view';
@@ -34,23 +34,43 @@ w.__stackAtlasLivePlayed = () =>
     return row;
   });
 
+/** 「値を見る」を切ったら、確かめの置き場からも、値を消す */
+const scrubDelivered = () => {
+  for (let i = delivered.length - 1; i >= 0; i--) {
+    const m = delivered[i]!;
+    if (m.t === 'values') delivered.splice(i, 1);
+    else if (m.t === 'events')
+      for (const ev of m.events) {
+        if (ev.t === 'request') delete ev.raw;
+        if ((ev.t === 'request' || ev.t === 'response') && ev.body) delete ev.body.value;
+      }
+  }
+};
+
 w.__stackAtlasLiveReceive = (msg) => {
-  delivered.push(msg);
+  if (!(msg.t === 'events' && msg.events.length === 0)) delivered.push(msg);
   if (delivered.length > 2000) delivered.splice(0, delivered.length - 2000);
-  const screen = model.screen;
   const played = model.receive(msg);
   if (msg.t === 'graph') view.graph();
-  else if (msg.t === 'status') view.status();
-  else if (msg.t === 'values') view.valuesArrived();
+  else if (msg.t === 'status') {
+    if (!msg.status.reveal) scrubDelivered();
+    if (msg.status.protocol !== LIVE_PROTOCOL)
+      document.getElementById('note')!.textContent =
+        '道具と、この画面の版が合いません。pnpm build で組み立て直してください。';
+    view.status();
+  } else if (msg.t === 'values') view.valuesArrived();
   else if (msg.t === 'events') {
     if (msg.events.some((e) => e.t === 'parts')) view.rects();
-    if (model.screen !== screen) view.screenChanged();
+    if (msg.events.some((e) => e.t === 'open')) view.screenChanged();
   }
   if (played.length) view.played(played);
 };
 
+// 道具が「どこまで渡し終えたか」を渡さないとき（古い道具）だけ、今の時刻から、道具がためる時間を引いて区切る
+const FALLBACK_LAG_MS = 400;
 setInterval(() => {
-  const played = model.tick(Date.now());
+  if (model.watermarked) return;
+  const played = model.tick(Date.now() - FALLBACK_LAG_MS);
   if (played.length) view.played(played);
 }, 100);
 

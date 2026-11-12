@@ -2,7 +2,7 @@
 // 図は、試しでエージェントが書いたもの（部品が重なっている: 削除のボタンが、一覧の中にある）
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { GraphV2, NodeV2 } from '@stack-atlas/schema';
+import type { BehaviorStepV2, GraphV2, NodeV2 } from '@stack-atlas/schema';
 import { describe, expect, it } from 'vitest';
 import { behaviorView } from '../behavior-view.js';
 import {
@@ -687,5 +687,69 @@ describe('stepTimings: 経路の段が、時間の軸のどこで光るか', () 
     expect(t[0]!.backAt).toBeUndefined();
     expect(t.find((x) => x.index === 3)).toMatchObject({ observed: false, missing: true });
     expect(t.find((x) => x.index === 3)!.sendAt).toBeUndefined();
+  });
+});
+
+// PR を作る前のコードレビュー（10-2c）で見つかったことを、事実のまま固定する
+describe('stepTimings（レビューで見つかったこと）', () => {
+  const view = behaviorView(graph, 'post-comment')!;
+  const timingsOf = (events: LiveEvent[]) => {
+    const op = record(events, 60_000).closed[0]!;
+    return stepTimings(view, matchRequests(view, op.requests), timelineOf(op));
+  };
+  const lit = (ts: ReturnType<typeof timingsOf>) =>
+    ts.filter((t) => t.sendAt !== undefined).map((t) => t.index);
+
+  it('返らなかった通信: 奥の段も、そのあとの段も光らせない（起きたと言えない）', () => {
+    const t = timingsOf([part(0, 'submit', 'comment-form'), req(5, 'r1', 'POST /api/comments')]);
+    expect(lit(t)).toEqual([0]);
+    expect(t[0]!.backAt).toBeUndefined();
+  });
+
+  it('止めた通信・手元の外の通信も同じ（返事が無かった）', () => {
+    for (const why of ['held', 'outside', 'error'] as const) {
+      const t = timingsOf([
+        part(0, 'submit', 'comment-form'),
+        req(5, 'r1', 'POST /api/comments'),
+        { t: 'failed', at: T0 + 6, id: 'r1', why },
+      ]);
+      expect(lit(t), why).toEqual([0]);
+    }
+  });
+
+  it('出なかった通信: その奥の段と、次に見えた通信までの段を光らせない。次の通信からは、また光る', () => {
+    const t = timingsOf([
+      part(0, 'submit', 'comment-form'),
+      req(5, 'r1', 'POST /api/comments'),
+      res(505, 'r1', 201),
+    ]);
+    // 段 3（GET）が出なかった: 段 4〜7 は光らない。段 0〜2 は光る
+    expect(lit(t)).toEqual([0, 1, 2]);
+    expect(t.find((x) => x.index === 3)).toMatchObject({ missing: true });
+  });
+
+  it('同時に呼ぶ所: どの列も分かれる前の時刻から始まり、済んだら、いちばん遅い列の時刻に進む', () => {
+    const g = structuredClone(graph);
+    const open = g.behaviors!.find((b) => b.id === 'open')!;
+    const [first, second, third, ...rest] = open.steps as BehaviorStepV2[];
+    // 列 A: GET（読みこみ）とその奥、列 B: 描く段。分かれたあとに、もう 1 段
+    open.steps = [first!, { parallel: [[second!, third!], [rest[0]!]] }, ...rest.slice(1)];
+    const v = behaviorView(g, 'open')!;
+    const op = record(
+      [
+        { t: 'open', at: T0, path: '/', screen: 'screen:/' },
+        req(10, 'a', 'GET /api/comments'),
+        res(900, 'a'),
+        dom(910, '+x'),
+      ],
+      60_000,
+    ).closed[0]!;
+    const t = stepTimings(v, matchRequests(v, op.requests), timelineOf(op));
+    const at = (i: number) => t.find((x) => x.index === i)!.sendAt;
+    expect(at(0)).toBe(0);
+    expect(at(1)).toBe(10); // 列 A の GET
+    expect(at(3)).toBe(0); // 列 B の先頭は、分かれる前の時刻（列 A の返事を待たない）
+    // 分かれたあとの段は、いちばん遅い列（GET の返事 900ms）のあと
+    for (const i of [4, 5]) expect(at(i)).toBe(900);
   });
 });

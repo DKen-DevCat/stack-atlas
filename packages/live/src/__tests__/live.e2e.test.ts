@@ -555,10 +555,10 @@ self.addEventListener('fetch', (e) => { if (new URL(e.request.url).pathname === 
   );
 });
 
-// ビューアのライブの画面（10-2c。docs/27 §4.4）。組み立てていなければ、初めに組み立てる
+// ビューアのライブの画面（10-2c。docs/27 §4.4）。いまのコードで確かめるため、毎回、初めに組み立てる
+// （2026-11-13 変更（レビュー 10）: 前は、組み立てたものがあれば使っていたので、直したあとも古い画面で確かめていた）
 describe('ビューアのライブの画面（実際のブラウザ）', () => {
   beforeAll(() => {
-    if (existsSync(join(VIEWER_LIVE_DIR, 'index.html'))) return;
     execFileSync('pnpm', ['--filter', '@stack-atlas/viewer', 'build:live'], {
       cwd: fileURLToPath(new URL('../../../../', import.meta.url)),
       stdio: 'ignore',
@@ -619,8 +619,32 @@ describe('ビューアのライブの画面（実際のブラウザ）', () => {
     await live.locator('#reveal').click();
     await expect.poll(() => live.locator('#s-reqs').textContent()).toContain(TEXT);
     expect(await live.locator('#reveal').getAttribute('aria-pressed')).toBe('true');
+    // 2026-11-13 追加（セキュリティのレビュー 1）: 切ると、入れていたあいだの値も消える（選び直しても出ない）
+    await live.locator('#reveal').click();
+    await expect.poll(() => live.locator('#reveal').getAttribute('aria-pressed')).toBe('false');
+    await expect.poll(() => live.locator('#s-reqs').textContent()).not.toContain(TEXT);
+    await live.locator('#history button').last().click();
+    await live.locator('#history button').first().click();
+    expect(await live.locator('#s-reqs').textContent()).not.toContain(TEXT);
+    expect(
+      JSON.stringify(
+        await live.evaluate(() =>
+          (
+            window as unknown as { __stackAtlasLiveDelivered: unknown[] }
+          ).__stackAtlasLiveDelivered.filter((m) => (m as { t: string }).t !== 'events'),
+        ),
+      ),
+    ).not.toContain(TEXT);
 
-    // 削除（重なった部品）: 削除の挙動が選ばれる
+    // 削除（重なった部品）: 削除の挙動が選ばれる。押した部品の名前が出る
+    const replayed = () =>
+      live.evaluate(
+        () =>
+          (window as unknown as { __stackAtlasLiveReplayed?: number }).__stackAtlasLiveReplayed ??
+          0,
+      );
+    await live.locator('#p-speed').fill('1');
+    const before = await replayed();
     await frame.locator('.card', { hasText: TEXT }).locator('button.del').click();
     await until(
       () => played(live),
@@ -629,17 +653,11 @@ describe('ビューアのライブの画面（実際のブラウザ）', () => {
     expect((await played(live)).find((p) => p.behavior === 'delete-comment')).toMatchObject({
       ok: true,
     });
-    // 再生は、最後まで進む（見せる速さを 1 倍にして待つ）
-    await live.locator('#p-speed').fill('1');
     await expect
-      .poll(() =>
-        live.evaluate(
-          () =>
-            (window as unknown as { __stackAtlasLiveReplayed?: number }).__stackAtlasLiveReplayed ??
-            0,
-        ),
-      )
-      .toBeGreaterThan(0);
+      .poll(() => live.locator('#f-part').textContent())
+      .toContain('押した部品: 削除ボタン');
+    // 2026-11-13 変更（レビュー 8）: 削除の操作の再生が、最後まで進む（前は、それより前の再生の回数で通っていた）
+    await expect.poll(replayed).toBeGreaterThan(before);
     expect(await live.locator('#history li').count()).toBeGreaterThanOrEqual(3);
   }, 60_000);
 
@@ -657,6 +675,10 @@ describe('ビューアのライブの画面（実際のブラウザ）', () => {
     expect(await live.locator('#f-name').textContent()).toBe('コメントを投稿する');
     expect(await live.locator('#f-state').textContent()).toBe('図のまま');
     expect(await live.locator('#path .hop.drawn').count()).toBe(8);
+    // 2026-11-13 追加（レビュー 3）: 選んだ経路は、全部光る（docs/24 の核「挙動を選ぶと、経路が光る」）
+    expect(await live.locator('#path .hop.go-on').count()).toBe(8);
+    expect(await live.locator('#path .pnode:not(.lit)').count()).toBe(0);
+    expect(await live.locator('#f-part').textContent()).toContain('始まりの部品');
     await expect.poll(() => live.locator('#overlay .box.part.stay').count()).toBe(1);
     expect(await live.locator('#player').isVisible()).toBe(false);
   }, 60_000);
@@ -676,7 +698,7 @@ describe('ビューアのライブの画面（実際のブラウザ）', () => {
       res
         .writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
         .end(
-          '<!doctype html><p id="x">app</p><script>document.getElementById("x").textContent = "<img src=y onerror=top.__pwned2=1>";</script>',
+          '<!doctype html><p id="x">app</p><script>setTimeout(() => { document.getElementById("x").textContent = "<img src=y onerror=top.__pwned2=1>"; }, 300);</script>',
         );
       return true;
     });
@@ -690,7 +712,29 @@ describe('ビューアのライブの画面（実際のブラウザ）', () => {
     expect(
       await live.evaluate(() => (window as unknown as { __pwned?: number }).__pwned),
     ).toBeUndefined();
-    expect(await live.locator('#s-dom img, #path img').count()).toBe(0);
+    // 2026-11-13 変更（レビュー 12）: アプリの側の文字も、画面に反映されたものとして、文字のまま出る
+    await expect.poll(() => live.locator('#s-dom').textContent()).toContain('<img src=y onerror');
+    expect(await live.locator('#s-dom img, #path img, #behaviors img').count()).toBe(0);
+  }, 60_000);
+
+  it('道具が画面を決められないとき（画面が 2 つ以上・アドレスの書き無し）、画面を選ぶ欄が出る', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'stack-atlas-live-screens-'));
+    cpSync(ATLAS, root, { recursive: true });
+    const file = join(root, '.stack-atlas/graph/comments.yaml');
+    writeFileSync(
+      file,
+      readFileSync(file, 'utf8').replace(
+        'nodes:\n',
+        'nodes:\n  - { id: "screen:/other", kind: screen, name: "別の画面", runtime: browser, ports: [] }\n',
+      ),
+    );
+    const app = await serve(APP_DIR);
+    servers.push(app.server);
+    const { session } = await open(app.url, { root, pageDir: VIEWER_LIVE_DIR });
+    const live = session.livePage;
+    await expect.poll(() => live.locator('#screens').isVisible()).toBe(true);
+    await live.locator('#screen').selectOption('screen:/');
+    expect(await live.locator('#behaviors button').count()).toBe(3);
   }, 60_000);
 });
 

@@ -192,7 +192,7 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
       hold: opts.holdWrites === true,
       holdLocked: opts.holdWrites === true,
     };
-    let livePage: Page;
+    let livePage = undefined as unknown as Page;
     let appPage: Page | undefined;
     /** 終わりかけ（ライブの画面か、ブラウザが閉じた）。このあとは、窓を開かない */
     let closing = false;
@@ -203,7 +203,8 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
     // --- ライブの画面へ渡す（渡す先の出所を、ページの中でも確かめる。アプリの文書に渡さない） ---
     const queue: LiveEvent[] = [];
     const deliver = async (msg: LiveMessage) => {
-      if (swapping || livePage.isClosed()) return;
+      // ライブの画面を開く前（時計は先に動く）・入れ替えのあいだ・閉じたあとは、渡さない
+      if (swapping || livePage === undefined || livePage.isClosed()) return;
       await livePage
         .evaluate(
           ([m, origin]) => {
@@ -224,7 +225,8 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
       queue.sort((a, b) => a.at - b.at);
       const ready: LiveEvent[] = [];
       while (queue.length && (all || queue[0]!.at <= limit)) ready.push(queue.shift()!);
-      if (ready.length) await deliver({ t: 'events', events: ready });
+      // 出来事が無くても、どこまで渡し終えたか（upTo）を渡す。ライブの画面は、この時刻で「静かになった」を判定する
+      await deliver({ t: 'events', events: ready, upTo: all ? Date.now() : limit });
     };
     timer = setInterval(() => void flush(), SESSION_LIMITS.flushMs);
     const sendStatus = () => deliver({ t: 'status', status: { ...state } });

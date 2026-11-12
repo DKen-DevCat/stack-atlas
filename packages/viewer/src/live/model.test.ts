@@ -136,3 +136,81 @@ describe('LiveModel', () => {
     expect(m.tick(T0 + 30_000)).toEqual([]);
   });
 });
+
+// PR を作る前のレビュー（10-2c）で見つかったこと
+describe('LiveModel（レビューで見つかったこと）', () => {
+  it('「値を見る」を切ったら、持っている値を消す（出来事に付いて届いた値も、メモリから届いた値も）', () => {
+    const m = model();
+    m.receive({
+      t: 'status',
+      status: {
+        protocol: 1,
+        app: 'http://localhost/',
+        mode: 'frame',
+        reveal: true,
+        hold: false,
+        holdLocked: false,
+      },
+    });
+    m.receive({
+      t: 'events',
+      events: [
+        { t: 'part', at: T0, how: 'submit', parts: ['comment-form'] },
+        {
+          ...req(5, 'r1', 'POST /api/comments'),
+          raw: '/api/comments?token=SECRET',
+          body: { kind: 'tree', shape: { t: 'string' }, value: 'SECRET' },
+        } as LiveEvent,
+        {
+          ...res(500, 'r1', 201),
+          body: { kind: 'other', type: 'text/plain', bytes: 6, value: 'SECRET' },
+        } as LiveEvent,
+      ],
+    });
+    m.receive({
+      t: 'values',
+      values: [{ id: 'r1', raw: '/api/comments?token=SECRET', sent: 'SECRET' }],
+    });
+    const [p] = m.tick(T0 + 3_000);
+    expect(JSON.stringify(p!.op)).toContain('SECRET');
+    m.receive({
+      t: 'status',
+      status: {
+        protocol: 1,
+        app: 'http://localhost/',
+        mode: 'frame',
+        reveal: false,
+        hold: false,
+        holdLocked: false,
+      },
+    });
+    expect(JSON.stringify(p!.op)).not.toContain('SECRET');
+    expect(m.values.size).toBe(0);
+  });
+
+  it('道具の「どこまで渡し終えたか」で区切る（今の時刻ではなく。遅れて届く出来事を、別の操作にしない）', () => {
+    const m = model();
+    // 投稿の返事のあと 250ms で読み直しの GET を出すアプリ。道具は、出来事を少しためてから渡す
+    m.receive({
+      t: 'events',
+      events: [
+        { t: 'part', at: T0, how: 'submit', parts: ['comment-form'] },
+        req(5, 'r1', 'POST /api/comments'),
+        res(505, 'r1', 201),
+      ],
+      upTo: T0 + 600,
+    });
+    expect(m.watermarked).toBe(true);
+    expect(m.played).toEqual([]);
+    const played = m.receive({
+      t: 'events',
+      events: [req(755, 'r2', 'GET /api/comments'), res(900, 'r2')],
+      upTo: T0 + 1_400,
+    });
+    expect(played).toHaveLength(1);
+    expect(played[0]).toMatchObject({
+      choice: { behavior: 'post-comment' },
+      verdict: { ok: true },
+    });
+  });
+});
