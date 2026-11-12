@@ -1,0 +1,215 @@
+# 正解の図の写しに、根拠を足したもの（docs/28 の確かめ用）。根拠の行は、prototype/live/app を見て手で書いた
+# サンプルのアプリ（prototype/live/app）の図。箱と線。
+# 手で書いた正解（10-1 で、エージェントが書いたものと比べる相手）。対象の中には置かない。
+nodes:
+  - id: "screen:/"
+    kind: screen
+    name: "記事の画面"
+    runtime: browser
+    file: app/index.html
+    line: 31
+    evidence: [{ file: app/index.html, lines: [31, 39], text: "地図は、土地そのものではありません" }]
+    ports:
+      - id: out
+        dir: out
+        items:
+          - { id: open, name: "開く", type: void }
+
+  - id: "fn:load"
+    kind: fn
+    name: load
+    runtime: browser
+    file: app/index.html
+    line: 78
+    evidence: [{ file: app/index.html, lines: [78, 81], text: "async function load()" }]
+    ports:
+      - id: in
+        dir: in
+        items:
+          - { id: call, name: "呼ぶ", type: void }
+          - id: comments
+            name: comments
+            type: "Comment[]"
+            wireType: array
+      - id: out
+        dir: out
+        items:
+          - { id: request, name: "入力なし", type: void }
+          - id: render
+            name: comments
+            type: "Comment[]"
+            wireType: array
+    links:
+      - { from: in/call, to: out/request }
+      - { from: in/comments, to: out/render }
+
+  - id: "part:comment-form"
+    kind: component
+    name: "コメント欄 ＋ Post Comment"
+    runtime: browser
+    file: app/index.html
+    line: 33
+    evidence: [{ file: app/index.html, lines: [33, 36], text: "<form id=\"comment-form\">" }]
+    ports:
+      - id: out
+        dir: out
+        items:
+          - id: comment
+            name: comment
+            type: object
+            wireType: object
+            children:
+              - { id: body, name: body, type: string, wireType: string }
+          - { id: reload, name: "読み直す", type: void }
+      - id: in
+        dir: in
+        items:
+          - { id: created, name: comment, type: Comment, wireType: object }
+    links:
+      - { from: in/created, to: out/reload }
+
+  - id: "part:comment-delete"
+    kind: component
+    name: "コメントの削除ボタン"
+    runtime: browser
+    file: app/index.html
+    line: 68
+    evidence: [{ file: app/index.html, lines: [65, 72], text: "del.className = 'del';" }]
+    ports:
+      - id: out
+        dir: out
+        items:
+          - { id: id, name: id, type: number, wireType: integer }
+          - { id: reload, name: "読み直す", type: void }
+      - id: in
+        dir: in
+        items:
+          - { id: done, name: "204", type: void }
+    links:
+      - { from: in/done, to: out/reload }
+
+  - id: "part:comment-list"
+    kind: component
+    name: "コメントの一覧"
+    runtime: browser
+    file: app/index.html
+    line: 38
+    evidence: [{ file: app/index.html, lines: [38, 38], text: "<ul id=\"comments\"></ul>" }]
+    ports:
+      - id: in
+        dir: in
+        items:
+          - id: comments
+            name: comments
+            type: "Comment[]"
+            wireType: array
+
+  - id: "endpoint:GET /api/comments"
+    kind: endpoint
+    name: "GET /api/comments"
+    runtime: server
+    file: app/sw.js
+    line: 28
+    evidence: [{ file: app/sw.js, lines: [28, 30], text: "url.pathname === '/api/comments' && req.method === 'GET'" }]
+    meta: { route: "GET /api/comments" }
+    ports:
+      - { id: in, dir: in, items: [{ id: request, name: "入力なし", type: void }] }
+      - { id: req, dir: out, items: [{ id: all, name: "全部を読む", type: void }] }
+      - { id: res, dir: in, items: [{ id: rows, name: rows, type: "Comment[]", wireType: array }] }
+      - id: out
+        dir: out
+        items:
+          - id: body
+            name: body
+            type: object
+            wireType: object
+            children:
+              - { id: comments, name: comments, type: "Comment[]", wireType: array }
+
+  - id: "endpoint:POST /api/comments"
+    kind: endpoint
+    name: "POST /api/comments"
+    runtime: server
+    file: app/sw.js
+    line: 31
+    evidence: [{ file: app/sw.js, lines: [31, 36], text: "req.method === 'POST'" }]
+    meta: { route: "POST /api/comments" }
+    ports:
+      - id: in
+        dir: in
+        items:
+          - id: body
+            name: body
+            type: object
+            wireType: object
+            children:
+              - id: comment
+                name: comment
+                type: object
+                wireType: object
+                children:
+                  - { id: body, name: body, type: string, wireType: string }
+      - { id: req, dir: out, items: [{ id: row, name: row, type: Comment, wireType: object }] }
+      - { id: res, dir: in, items: [{ id: row, name: row, type: Comment, wireType: object }] }
+      - id: out
+        dir: out
+        items:
+          - id: body
+            name: body
+            type: object
+            wireType: object
+            children:
+              - { id: comment, name: comment, type: Comment, wireType: object }
+
+  - id: "endpoint:DELETE /api/comments/{id}"
+    kind: endpoint
+    name: "DELETE /api/comments/{id}"
+    runtime: server
+    file: app/sw.js
+    line: 38
+    evidence: [{ file: app/sw.js, lines: [37, 41], text: "m && req.method === 'DELETE'" }]
+    meta: { route: "DELETE /api/comments/{id}" }
+    ports:
+      - { id: in, dir: in, items: [{ id: id, name: id, type: number, wireType: integer }] }
+      - { id: req, dir: out, items: [{ id: id, name: id, type: number, wireType: integer }] }
+      - { id: out, dir: out, items: [{ id: status, name: "204", type: void }] }
+
+  - id: "table:comments"
+    kind: table
+    name: comments
+    runtime: data
+    file: app/sw.js
+    line: 5
+    evidence: [{ file: app/sw.js, lines: [5, 8], text: "let comments = [" }]
+    ports:
+      - id: key
+        dir: in
+        items:
+          - { id: all, name: "全部", type: void }
+          - { id: id, name: id, type: number, wireType: integer }
+      - { id: write, dir: in, items: [{ id: row, name: row, type: Comment, wireType: object }] }
+      - id: read
+        dir: out
+        items:
+          - { id: row, name: row, type: Comment, wireType: object }
+          - { id: rows, name: rows, type: "Comment[]", wireType: array }
+
+wires:
+  # 読みこみ（開いたとき・投稿のあと・削除のあと）
+  - { from: "screen:/#out/open", to: "fn:load#in/call", via: call, evidence: [{ file: app/index.html, lines: [103, 110], text: "await navigator.serviceWorker.ready" }] }
+  - { from: "fn:load#out/request", to: "endpoint:GET /api/comments#in/request", via: http, evidence: [{ file: app/index.html, lines: [78, 81], text: "await api('/comments')" }] }
+  - { from: "endpoint:GET /api/comments#req/all", to: "table:comments#key/all", via: call, evidence: [{ file: app/sw.js, lines: [28, 30], text: "return json({ comments });" }] }
+  - { from: "table:comments#read/rows", to: "endpoint:GET /api/comments#res/rows", via: call, reply: true, evidence: [{ file: app/sw.js, lines: [28, 30], text: "return json({ comments });" }] }
+  - { from: "endpoint:GET /api/comments#out/body.comments", to: "fn:load#in/comments", via: http, reply: true, evidence: [{ file: app/index.html, lines: [79, 79], text: "const { comments } = await api" }] }
+  - { from: "fn:load#out/render", to: "part:comment-list#in/comments", via: render, evidence: [{ file: app/index.html, lines: [80, 80], text: "render(comments);" }] }
+  # 投稿
+  - { from: "part:comment-form#out/comment", to: "endpoint:POST /api/comments#in/body.comment", via: http, evidence: [{ file: app/index.html, lines: [87, 91], text: "body: JSON.stringify({ comment: { body } })" }] }
+  - { from: "endpoint:POST /api/comments#req/row", to: "table:comments#write/row", via: call, evidence: [{ file: app/sw.js, lines: [33, 34], text: "comments = [row, ...comments];" }] }
+  - { from: "table:comments#read/row", to: "endpoint:POST /api/comments#res/row", via: call, reply: true, evidence: [{ file: app/sw.js, lines: [33, 33], text: "const row = { id: nextId++" }] }
+  - { from: "endpoint:POST /api/comments#out/body.comment", to: "part:comment-form#in/created", via: http, reply: true, evidence: [{ file: app/sw.js, lines: [35, 35], text: "return json({ comment: row }, 201);" }] }
+  - { from: "part:comment-form#out/reload", to: "fn:load#in/call", via: call, evidence: [{ file: app/index.html, lines: [92, 93], text: "form.comment.value = '';" }] }
+  # 削除
+  - { from: "part:comment-delete#out/id", to: "endpoint:DELETE /api/comments/{id}#in/id", via: http, evidence: [{ file: app/index.html, lines: [99, 99], text: "await api('/comments/' + del.dataset.id" }] }
+  - { from: "endpoint:DELETE /api/comments/{id}#req/id", to: "table:comments#key/id", via: call, evidence: [{ file: app/sw.js, lines: [39, 39], text: "comments.filter((c) => c.id !== Number(m[1]))" }] }
+  - { from: "endpoint:DELETE /api/comments/{id}#out/status", to: "part:comment-delete#in/done", via: http, reply: true, evidence: [{ file: app/sw.js, lines: [40, 40], text: "new Response(null, { status: 204 })" }] }
+  - { from: "part:comment-delete#out/reload", to: "fn:load#in/call", via: call, evidence: [{ file: app/index.html, lines: [96, 101], text: "list.addEventListener('click'" }] }

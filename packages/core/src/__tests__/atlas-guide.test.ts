@@ -8,9 +8,16 @@ import { checkAtlas, loadAtlas } from '../atlas/index.js';
 
 const GUIDE_DIR = fileURLToPath(new URL('../../../../harness/guide/', import.meta.url));
 const guide = readFileSync(GUIDE_DIR + 'GUIDE.md', 'utf8');
-const exampleFiles = ['graph/list.yaml', 'parts.yaml', 'behaviors.yaml'].map((f) =>
-  readFileSync(`${GUIDE_DIR}example/.stack-atlas/${f}`, 'utf8'),
-);
+// 2026-11-13 変更（手順書 0.4）: reading.yaml と、根拠が指す架空の元のファイルも、例に入った
+const exampleFiles = [
+  '.stack-atlas/graph/list.yaml',
+  '.stack-atlas/parts.yaml',
+  '.stack-atlas/behaviors.yaml',
+  '.stack-atlas/reading.yaml',
+  'web/list.html',
+  'web/style.txt',
+  'server/items.txt',
+].map((f) => readFileSync(`${GUIDE_DIR}example/${f}`, 'utf8'));
 
 describe('試しでエージェントが書いた図（fixtures/atlas-live-agent）', () => {
   // 手順書と例だけを渡したエージェントが書いたもの（docs/26 §8）。手を入れていない。契約を変えたら、ここが落ちる
@@ -62,8 +69,12 @@ describe('手順書（harness/guide）', () => {
   it('手順書の中の線・部品・挙動の例は、example/ にそのままある（手順書と例がずれない）', () => {
     const all = exampleFiles.join('\n');
     for (const line of [
-      '{ from: "part:add-form#out/item", to: "endpoint:POST /items#in/body.item", via: http }',
-      '{ from: "endpoint:POST /items#out/body.item", to: "part:add-form#in/saved", via: http, reply: true }',
+      // 2026-11-13 変更（手順書 0.4。docs/28）: 例の線に根拠が付いたので、線は根拠の前までで確かめ、根拠の書き方は別に確かめる
+      '{ from: "part:add-form#out/item", to: "endpoint:POST /items#in/body.item", via: http',
+      '{ from: "endpoint:POST /items#out/body.item", to: "part:add-form#in/saved", via: http, reply: true',
+      `via: http, evidence: [{ file: web/list.html, lines: [17, 17], text: "await post('/items', { item })" }] }`,
+      'evidence: [{ file: web/list.html, lines: [12, 18], text: "<form class=\\"add\\">" }]',
+      '{ path: web/style.txt, why: "見た目の決まりだけ。経路の上に無い" }',
       'trigger: { action: submit, part: add-form }',
       'send: [{ from: "endpoint:POST /items#req/row", to: "table:items#write/row" }]',
       'send: [{ from: "part:add-form#out/added", to: "part:item-list#in/item" }]',

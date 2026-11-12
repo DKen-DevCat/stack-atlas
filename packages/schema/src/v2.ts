@@ -269,6 +269,8 @@ export interface NodeV2 {
   runtime: Runtime;
   file?: string;
   line?: number;
+  /** 根拠（docs/28）。どのファイルの、どの行の範囲に、どんな文字列がそのまま書いてあるか */
+  evidence?: EvidenceV2[];
   code?: string;
   /** この箱を動かしているインフラの箱（kind infra）の id */
   host?: NodeIdV2;
@@ -305,6 +307,8 @@ export interface WireV2 {
   label?: string;
   /** 配線図の経路（build 時に埋める任意フィールド） */
   route?: Point[];
+  /** 根拠（docs/28）。呼んでいる所 */
+  evidence?: EvidenceV2[];
   meta?: Record<string, unknown>;
 }
 
@@ -330,6 +334,13 @@ export type TriggerAction = (typeof TRIGGER_ACTIONS)[number];
  */
 export const isLocalId = (id: string): boolean =>
   id.length > 0 && !id.includes('#') && ![...id].some((c) => c.charCodeAt(0) < 0x20);
+
+/** 根拠（docs/28）: ファイル（図の置き場・repo からの相対）・行の範囲（1 から、両端を含む。探す目安）・そこにそのまま書いてある文字列 */
+export interface EvidenceV2 {
+  file: string;
+  lines: [number, number];
+  text: string;
+}
 
 /** 線の名指し。線に id は無いので、両端の組で指す（wires にある線と同じ参照） */
 export interface WireRef {

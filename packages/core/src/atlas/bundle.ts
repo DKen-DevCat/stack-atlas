@@ -16,7 +16,8 @@ export interface BundleResult {
 }
 
 export function bundleAtlas(root: string, options: { name?: string } = {}): BundleResult {
-  const { atlas, report } = inspectAtlas(root);
+  // 根拠と未読は見ない（docs/28 D261: コードを直すと根拠がずれ、ライブが開かなくなる）
+  const { atlas, report } = inspectAtlas(root, { evidence: false });
   if (report.counts.errors > 0) return { report };
   const graph = toGraph(atlas);
   graph.project = { generator: { v2: ATLAS_GENERATOR } };
