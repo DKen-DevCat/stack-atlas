@@ -62,18 +62,31 @@ button:focus-visible { outline: 2px solid var(--go); outline-offset: 2px; }
 .tag.ok { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
 .tag.ng { background: color-mix(in srgb, var(--ng) 16%, transparent); color: var(--ng); }
 
-/* 再生の操作 */
-.player { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-.btn { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 2px 10px; font-size: 13px; }
-.btn:hover:not(:disabled) { background: var(--surface-2); }
-.btn:disabled { opacity: 0.45; cursor: default; }
-.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
-.seg button { border: 0; background: var(--surface); padding: 2px 9px; font-size: 12px; }
-.seg button + button { border-left: 1px solid var(--line); }
-.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
-.player label { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
-.nowline { font-size: 13px; min-height: 1.6em; }
-.nowline b { font-weight: 600; }
+/* 再生の操作: 再生・一時停止、再生バー（段の長さがそのまま時間の内訳）、見せる速さ。文字は出さない */
+.player { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.pbtn { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); display: grid; place-items: center; padding: 0; }
+.pbtn:hover { background: var(--surface-2); }
+.pbtn svg { width: 14px; height: 14px; fill: var(--fg); }
+.pbtn .i-pause { display: none; }
+.pbtn.playing .i-play { display: none; }
+.pbtn.playing .i-pause { display: block; }
+.seek { position: relative; height: 26px; }
+.segs { position: absolute; inset: 8px 0; display: flex; gap: 2px; border-radius: 5px; overflow: hidden; }
+.segs i { display: block; min-width: 2px; background: var(--muted); opacity: 0.4; }
+.segs i.req { background: var(--go); }
+.segs i.dom { background: var(--ok); }
+.segs i.max { background: var(--back); }
+.segs i.past, .segs i.now { opacity: 1; }
+input[type="range"] { -webkit-appearance: none; appearance: none; background: transparent; margin: 0; cursor: pointer; }
+input[type="range"]:focus-visible { outline: 2px solid var(--go); outline-offset: 2px; border-radius: 4px; }
+#p-seek { position: absolute; inset: 0; width: 100%; height: 100%; }
+#p-seek::-webkit-slider-runnable-track { background: transparent; height: 26px; }
+#p-seek::-webkit-slider-thumb { -webkit-appearance: none; width: 4px; height: 26px; border-radius: 2px; background: var(--fg); box-shadow: 0 0 0 2px var(--surface); }
+.speed { display: flex; align-items: center; gap: 6px; }
+.speed svg { height: 11px; fill: var(--muted); flex: none; }
+#p-speed { width: 110px; height: 26px; }
+#p-speed::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--line); }
+#p-speed::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px; border-radius: 50%; background: var(--fg); box-shadow: 0 0 0 2px var(--surface); }
 
 .path { display: flex; flex-direction: column; min-width: 0; }
 .pnode { border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px 6px; display: flex; flex-direction: column; opacity: 0.5; transition: opacity 0.2s, border-color 0.2s, box-shadow 0.2s; }
@@ -114,6 +127,8 @@ button:focus-visible { outline: 2px solid var(--go); outline-offset: 2px; }
 .trow.done .lbl, .trow.now .lbl { color: var(--fg); }
 .trow.now { background: var(--go-soft); }
 .trow.max .ms { color: var(--back); font-weight: 600; }
+.trow.dom .bar i { background: var(--ok); }
+.trow.gap .bar i { background: var(--muted); }
 .trow.max .bar i { background: var(--back); }
 .total { font-size: 12.5px; color: var(--muted); }
 .row { display: flex; flex-direction: column; gap: 2px; }
@@ -131,7 +146,7 @@ details summary { cursor: pointer; font-size: 13px; font-weight: 600; }
   <header class="top">
     <h1>Stack Atlas — ライブの試し</h1>
     <span class="badge">試し</span>
-    <p>左のアプリを、ふつうに操作してください。操作を記録して、右で、ゆっくり再生します。</p>
+    <p>左のアプリを、ふつうに操作してください。操作を記録して、右で再生します。</p>
   </header>
 
   <div class="stage">
@@ -153,20 +168,20 @@ details summary { cursor: pointer; font-size: 13px; font-weight: 600; }
       </div>
 
       <div class="player" id="player" hidden>
-        <button class="btn" id="p-restart" type="button" title="最初から">⏮</button>
-        <button class="btn" id="p-prev" type="button" title="前の段">◀ 前の段</button>
-        <button class="btn" id="p-play" type="button">⏸ 止める</button>
-        <button class="btn" id="p-next" type="button" title="次の段">次の段 ▶</button>
-        <label>見せる速さ
-          <span class="seg" id="p-speed">
-            <button type="button" data-s="slow">ゆっくり</button>
-            <button type="button" data-s="normal">ふつう</button>
-            <button type="button" data-s="fast">はやい</button>
-          </span>
-        </label>
-        <label><input type="checkbox" id="p-auto" checked> 操作のたびに再生する</label>
+        <button class="pbtn" id="p-play" type="button" aria-label="再生・一時停止" title="再生・一時停止">
+          <svg class="i-play" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg>
+          <svg class="i-pause" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 2.5h3v11h-3zM9.5 2.5h3v11h-3z"/></svg>
+        </button>
+        <div class="seek">
+          <div class="segs" id="p-segs"></div>
+          <input id="p-seek" type="range" min="0" max="1" step="any" value="0" aria-label="再生位置" title="再生位置">
+        </div>
+        <div class="speed" title="見せる速さ（左が 0.1 倍、右が 1 倍）">
+          <svg viewBox="0 0 8 12" aria-hidden="true"><path d="M1 1l6 5-6 5z"/></svg>
+          <input id="p-speed" type="range" min="0.1" max="1" step="0.1" value="0.2" aria-label="見せる速さ（0.1 倍から 1 倍）">
+          <svg viewBox="0 0 22 12" aria-hidden="true"><path d="M1 1l6 5-6 5zM8 1l6 5-6 5zM15 1l6 5-6 5z"/></svg>
+        </div>
       </div>
-      <div class="nowline" id="nowline"></div>
 
       <div class="path" id="path"></div>
       <div class="key">
@@ -193,8 +208,6 @@ details summary { cursor: pointer; font-size: 13px; font-weight: 600; }
 <script>
 (async () => {
   const KIND = { part: '画面の部品', api: '受け口', store: 'データの置き場' };
-  const TOTAL = { slow: 12000, normal: 6000, fast: 3000 };   // 再生の全体にかける時間（ミリ秒）の目安
-  const MIN_STEP = 700;                                       // どんなに短い段も、これだけは見せる
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const NOT_TOOL_WINDOW = 'この画面は、道具が開いた窓の中でだけ動きます。`node prototype/live/run.mjs` を実行すると、別のブラウザの窓が開きます。その窓で操作してください。';
@@ -211,7 +224,9 @@ details summary { cursor: pointer; font-size: 13px; font-weight: 600; }
   let rec = null;            // 記録中の操作
   let cur = null;            // 再生している操作
   let shown = null;          // 経路を出している挙動の id
-  const play = { k: 0, timer: null, running: false, speed: 'slow' };
+  // 再生は、実際の時間の軸の上を進む。pos は操作の始まりからのミリ秒、speed は実際の何倍か（0.1〜1）
+  const play = { pos: 0, speed: 0.2, running: false, raf: 0, last: 0, shownEnd: false };
+  window.__player = () => ({ pos: play.pos, speed: play.speed, running: play.running, total: cur ? cur.total : 0, k: cur ? locate(cur, play.pos).k : -1, done: !!cur && play.pos >= cur.total });
 
   const fmt = (ms) => (ms >= 100 ? Math.round(ms) : ms >= 10 ? ms.toFixed(1) : ms.toFixed(2)) + ' ms';
   const pretty = (text) => {
@@ -280,12 +295,12 @@ details summary { cursor: pointer; font-size: 13px; font-weight: 600; }
     rec = { behavior: b.id, startedAt: ev.at, rect: ev.rect || null, reqs: new Map(), changes: [], domAt: null, verdict: null, steps: null, quiet: null };
     window.__ops.push(rec);
     cur = null;
+    $('overlay').replaceChildren();   // 前の操作の枠を残さない
     setHead(b, '記録中…', 'live');
     renderPath(b);
     node(0).classList.add('lit');
     $('f-verdict').hidden = true;
     $('player').hidden = true;
-    $('nowline').textContent = '';
     $('s-times').innerHTML = '<div class="empty">記録しています…</div>';
     $('s-dom').innerHTML = $('s-reqs').innerHTML = '<div class="empty">記録しています…</div>';
     if (ev.rect) box('part', ev.rect);
@@ -342,9 +357,9 @@ details summary { cursor: pointer; font-size: 13px; font-weight: 600; }
     }
     renderTimes();
     renderSeen();
-    $('player').hidden = false;
-    if ($('p-auto').checked && steps.length) start(0);
-    else paint(steps.length - 1, true);
+    renderSegs();
+    $('player').hidden = !(o.total > 0);
+    if (o.total > 0) start(0);
   }
 
   /* ---- 時間の内訳と、記録の中身 ---- */
@@ -353,7 +368,7 @@ details summary { cursor: pointer; font-size: 13px; font-weight: 600; }
     if (!o || !o.steps.length) { $('s-times').innerHTML = '<div class="empty">通信はありませんでした。</div>'; return; }
     const max = Math.max(...o.steps.map((s) => s.ms));
     $('s-times').innerHTML = '<div class="times">' + o.steps.map((s, i) =>
-      '<div class="trow' + (s.ms === max && max > 0 ? ' max' : '') + '" data-i="' + i + '"><span class="lbl">' + esc(s.label) + '</span>' +
+      '<div class="trow ' + s.kind + (s.ms === max && max > 0 ? ' max' : '') + '" data-i="' + i + '"><span class="lbl">' + esc(s.label) + '</span>' +
       '<span class="bar"><i data-w="' + (max > 0 ? Math.max(2, (s.ms / max) * 100) : 2).toFixed(1) + '"></i></span><span class="ms">' + fmt(s.ms) + '</span></div>').join('') +
       '</div><div class="total">合わせて ' + fmt(o.total) + '。色の違う行が、いちばん長くかかった段です。</div>';
   }
@@ -371,12 +386,31 @@ details summary { cursor: pointer; font-size: 13px; font-weight: 600; }
   }
 
   /* ---- 再生 ---- */
-  // k 番めの段を「いま」として描く。done なら、最後まで済んだ姿を描く
-  function paint(k, done) {
+  // 再生バーの段。幅は実際の時間に比例するので、バーそのものが時間の内訳になる
+  function renderSegs() {
+    const o = cur;
+    const max = Math.max(...o.steps.map((s) => s.ms));
+    $('p-segs').innerHTML = o.steps.map((s, i) =>
+      '<i class="' + s.kind + (s.ms === max && max > 0 ? ' max' : '') + '" data-i="' + i + '" style="flex: ' + Math.max(s.ms, 0.0001) + ' 1 0" title="' + esc(s.label + '（' + fmt(s.ms) + '）') + '"></i>').join('');
+    $('p-seek').max = String(o.total);
+  }
+  // pos のとき、どの段の、どこまで進んでいるか
+  function locate(o, pos) {
+    let acc = 0;
+    for (let i = 0; i < o.steps.length; i++) {
+      const ms = o.steps[i].ms;
+      if (pos < acc + ms || i === o.steps.length - 1) return { k: i, p: ms > 0 ? Math.max(0, Math.min(1, (pos - acc) / ms)) : 1 };
+      acc += ms;
+    }
+    return { k: 0, p: 0 };
+  }
+  // いまの pos の姿を描く
+  function paint() {
     const o = cur;
     if (!o) return;
-    const steps = o.steps;
-    const main = steps.findIndex((s) => s.kind === 'req' && s.main);
+    const done = play.pos >= o.total;
+    const { k, p } = locate(o, play.pos);
+    const main = o.steps.findIndex((s) => s.kind === 'req' && s.main);
     const path = $('path');
     path.querySelectorAll('.pnode, .hop').forEach((el) => el.classList.remove('lit', 'drawn', 'wait', 'go-on', 'back-on'));
     path.querySelectorAll('.hop').forEach((h, i) => { if (i > 0) h.classList.add('drawn'); });
@@ -395,55 +429,42 @@ details summary { cursor: pointer; font-size: 13px; font-weight: 600; }
       const past = done || i < k;
       row.classList.toggle('done', past);
       row.classList.toggle('now', !done && i === k);
-      bar.style.transition = 'none';
-      bar.style.width = past ? bar.dataset.w + '%' : '0';
+      bar.style.width = (past ? 1 : i === k ? p : 0) * Number(bar.dataset.w) + '%';
     });
-    const s = steps[k];
-    $('nowline').innerHTML = done ? '<b>最後まで再生しました。</b>' : s ? '<b>いま:</b> ' + esc(s.label) + '（実際は ' + fmt(s.ms) + '）' : '';
-    $('p-prev').disabled = k <= 0 && !done;
-    $('p-next').disabled = done;
+    $('p-segs').querySelectorAll('i').forEach((el, i) => {
+      el.classList.toggle('past', done || i < k);
+      el.classList.toggle('now', !done && i === k);
+    });
+    $('p-seek').value = String(play.pos);
+    $('p-play').classList.toggle('playing', play.running);
+    if (done && !play.shownEnd) {            // 最後まで来たら、画面で変わった所を左に出す
+      play.shownEnd = true;
+      o.net.filter((c) => c.kind === 'added').slice(0, 3).forEach((c) => box('dom', c.rect));
+    }
+    if (!done) play.shownEnd = false;
   }
-  const visMs = (o, s) => Math.max(MIN_STEP, o.total > 0 ? (TOTAL[play.speed] * s.ms) / o.total : MIN_STEP);
-  function stopTimer() { clearTimeout(play.timer); play.timer = null; play.running = false; $('p-play').textContent = '▶ 再生'; }
-  function start(k) {
-    const o = cur;
-    if (!o || !o.steps.length) return;
+  function stopTimer() { cancelAnimationFrame(play.raf); play.running = false; $('p-play').classList.remove('playing'); }
+  function tick(ts) {
+    if (!play.running || !cur) return;
+    play.pos = Math.min(cur.total, play.pos + Math.max(0, ts - play.last) * play.speed);
+    play.last = ts;
+    if (play.pos >= cur.total) { play.running = false; paint(); window.__replayed++; return; }
+    paint();
+    play.raf = requestAnimationFrame(tick);
+  }
+  function start(pos) {
+    if (!cur || !(cur.total > 0)) return;
     stopTimer();
-    play.k = k; play.running = true;
-    $('p-play').textContent = '⏸ 止める';
-    paint(k, false);
-    if (k === 0 && o.rect) box('part', o.rect);
-    const s = o.steps[k];
-    const ms = visMs(o, s);
-    const bar = document.querySelector('.trow[data-i="' + k + '"] .bar i');
-    if (bar) { void bar.offsetWidth; bar.style.transition = 'width ' + ms + 'ms linear'; bar.style.width = bar.dataset.w + '%'; }
-    play.timer = setTimeout(() => {
-      if (o !== cur) return;
-      if (s.kind === 'dom' || k === o.steps.length - 1) o.net.filter((c) => c.kind === 'added').slice(0, 3).forEach((c) => box('dom', c.rect));
-      if (k + 1 < o.steps.length) start(k + 1);
-      else { stopTimer(); play.k = o.steps.length - 1; paint(play.k, true); window.__replayed++; }
-    }, ms);
+    play.pos = pos >= cur.total ? 0 : pos;   // 最後で押したら、最初から
+    if (play.pos === 0 && cur.rect) box('part', cur.rect);
+    play.running = true;
+    play.last = performance.now();
+    paint();
+    play.raf = requestAnimationFrame(tick);
   }
-  function stepTo(k) {   // 1 段ずつ見る
-    const o = cur;
-    if (!o) return;
-    stopTimer();
-    play.k = Math.max(0, Math.min(o.steps.length - 1, k));
-    paint(play.k, false);
-    const bar = document.querySelector('.trow[data-i="' + play.k + '"] .bar i');
-    if (bar) bar.style.width = bar.dataset.w + '%';
-    if (o.steps[play.k].kind === 'dom') o.net.filter((c) => c.kind === 'added').slice(0, 3).forEach((c) => box('dom', c.rect));
-  }
-  function syncSpeed() { $('p-speed').querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.s === play.speed))); }
-  $('p-speed').addEventListener('click', (e) => {
-    const b = e.target.closest('button[data-s]'); if (!b) return;
-    play.speed = b.dataset.s; syncSpeed();
-    if (play.running) start(play.k);
-  });
-  $('p-play').addEventListener('click', () => { if (play.running) stopTimer(); else start($('p-next').disabled ? 0 : play.k); });
-  $('p-restart').addEventListener('click', () => start(0));
-  $('p-prev').addEventListener('click', () => stepTo($('p-next').disabled ? play.k : play.k - 1));
-  $('p-next').addEventListener('click', () => { if (cur && play.k >= cur.steps.length - 1) { stopTimer(); paint(play.k, true); } else stepTo(play.k + 1); });
+  $('p-play').addEventListener('click', () => { if (play.running) { stopTimer(); paint(); } else start(play.pos); });
+  $('p-seek').addEventListener('input', (e) => { if (!cur) return; play.pos = Number(e.target.value); play.last = performance.now(); paint(); });
+  $('p-speed').addEventListener('input', (e) => { play.speed = Number(e.target.value); });
 
   /* ---- 受け取る ---- */
   window.addEventListener('message', (e) => {
@@ -460,12 +481,11 @@ details summary { cursor: pointer; font-size: 13px; font-weight: 600; }
     renderPath(b);
     $('path').querySelectorAll('.pnode').forEach((n, i) => { n.classList.add('lit'); if (i > 1) n.classList.add('drawn'); });
     $('path').querySelectorAll('.hop').forEach((h) => h.classList.add('go-on', 'back-on'));
-    $('f-verdict').hidden = true; $('player').hidden = true; $('nowline').textContent = '';
+    $('f-verdict').hidden = true; $('player').hidden = true;
     $('s-times').innerHTML = '<div class="empty">操作すると、ここに出ます。</div>';
     $('s-dom').innerHTML = $('s-reqs').innerHTML = '<div class="empty">まだありません。</div>';
   });
 
-  syncSpeed();
   renderChips();
   frame.src = appUrl;
   // 道具が開いた窓なら、アプリの枠から「開いた」の知らせがすぐ来る。来なければ、ふだんのブラウザで開かれている

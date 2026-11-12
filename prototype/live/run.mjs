@@ -88,18 +88,30 @@ if (!check) {
   const inApp = page.frameLocator('#app');
   const replayed = (n) => page.waitForFunction((want) => window.__replayed >= want, n, { timeout: 30000 });
   await inApp.locator('.card').first().waitFor({ timeout: 15000 });   // 開いたときの読みこみ
-  await page.locator('#p-speed [data-s="fast"]').click({ timeout: 15000 });   // 記録が済むと、再生の操作が出る
+  const setRange = (id, value) => page.evaluate(([i, v]) => { const el = document.getElementById(i); el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); }, [id, value]);
+  await page.locator('#p-play').waitFor({ timeout: 15000 });         // 記録が済むと、再生の操作が出る
+  await setRange('p-speed', 1);                                      // 見せる速さを 1 倍に
   await replayed(1);
   await inApp.locator('textarea').fill(text);
   await inApp.locator('#comment-form button').click();               // 人の代わりに押す（--check のときだけ）
   await inApp.locator('.card', { hasText: text }).waitFor({ timeout: 15000 });
   await replayed(2);
-  const afterPost = await page.evaluate(() => ({ verdict: document.getElementById('f-verdict').textContent, now: document.getElementById('nowline').textContent }));
-  await page.locator('#p-prev').click();                             // 1 段ずつ見る操作が効くか
-  const stepped = await page.evaluate(() => document.getElementById('nowline').textContent);
+  const afterPost = await page.evaluate(() => ({ verdict: document.getElementById('f-verdict').textContent, player: window.__player() }));
+  await setRange('p-seek', afterPost.player.total * 0.5);            // 再生バーを、まん中へ動かす
+  const seeked = await page.evaluate(() => window.__player());
+  await page.locator('#p-play').click();                             // go: そこから再生
+  await page.waitForTimeout(60);
+  const going = await page.evaluate(() => window.__player());
+  await page.locator('#p-play').click();                             // stop: 止める
+  const stopped = await page.evaluate(() => window.__player());
+  await page.waitForTimeout(200);
+  const still = await page.evaluate(() => window.__player());
+  await page.locator('#p-play').click();                             // go: 続きから最後まで
+  await replayed(3);
+  const texts = await page.locator('#player').innerText();           // 再生の操作に、文字が出ていないこと
   await inApp.locator('button.del').first().click();
   await inApp.locator('.card', { hasText: text }).waitFor({ state: 'detached', timeout: 15000 });
-  await replayed(3);
+  await replayed(4);
   const shotAt = process.argv.indexOf('--shot');
   if (shotAt > 0 && process.argv[shotAt + 1]) await page.screenshot({ path: path.resolve(process.argv[shotAt + 1]), fullPage: true });
 
@@ -121,8 +133,10 @@ if (!check) {
     '7. 差し替えられた通信が、枠の中から見えた': seen.filter((e) => e.t === 'req').length >= 4,
     '8. 差し替えられた通信が、ブラウザの外から見えた': outside.some((x) => x.method === 'POST'),
     '9. 時間の内訳が出た（投稿の通信が、いちばん長い）': !!postReq && postReq.ms >= 400 && postOp.steps.every((s) => s.ms <= postReq.ms),
-    '10. 記録した操作を、見せる速さを変えて最後まで再生できた': afterPost.now === '最後まで再生しました。',
-    '11. 1 段ずつ戻して見られた': stepped.startsWith('いま:'),
+    '10. 見せる速さを変えて、最後まで再生できた': afterPost.player.done && afterPost.player.speed === 1,
+    '11. 再生バーで、好きな所へ動かせた': Math.abs(seeked.pos - afterPost.player.total * 0.5) < 1 && seeked.k === 1 && !seeked.running,
+    '12. 止める・進めるが効いた': going.running && going.pos > seeked.pos && !stopped.running && Math.abs(still.pos - stopped.pos) < 0.001,
+    '13. 再生の操作は、部品だけ（文字なし）': texts.trim() === '',
     '投稿の時間の内訳': postOp?.steps.map((s) => `${s.label}: ${s.ms.toFixed(1)} ms`),
     '外から見えた通信': outside.map((x) => `${x.method} ${x.path}（差し替え: ${x.viaServiceWorker}）`),
   };
