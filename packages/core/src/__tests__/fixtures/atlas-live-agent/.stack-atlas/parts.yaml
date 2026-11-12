@@ -1,0 +1,21 @@
+parts:
+  - id: comment-form
+    name: "コメントを書く欄（Post Comment）"
+    box: "part:comment-form"
+    screen: "screen:/"
+    selector: "#comment-form"
+  - id: status
+    name: "コメントの件数の行"
+    box: "part:status"
+    screen: "screen:/"
+    selector: "#status"
+  - id: comment-list
+    name: "コメントの一覧"
+    box: "part:comment-list"
+    screen: "screen:/"
+    selector: "#comments"
+  - id: delete-button
+    name: "削除ボタン（自分のコメントの行ごと）"
+    box: "part:delete-button"
+    screen: "screen:/"
+    selector: "#comments button.del"
