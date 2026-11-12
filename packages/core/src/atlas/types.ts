@@ -5,6 +5,7 @@
  */
 import type { BehaviorV2, NamedType, NodeV2, PartV2, WireV2 } from '@stack-atlas/schema';
 import { HARNESS_DIR } from '../local-files.js';
+import type { EvidenceSummary, UnreadRepo } from './evidence.js';
 
 /** 図の置き場（対象の repo の中か、複数の repo を束ねるディレクトリの下。docs/25 Q37） */
 export const ATLAS_DIR = HARNESS_DIR;
@@ -43,7 +44,8 @@ export type {
   PartV2 as Part,
 } from '@stack-atlas/schema';
 
-export type AtlasCheckKind = 'form' | 'ref' | 'behavior';
+/** form（形）・ref（参照）・behavior（挙動）・evidence（根拠）・unread（未読の申告。docs/28） */
+export type AtlasCheckKind = 'form' | 'ref' | 'behavior' | 'evidence' | 'unread';
 
 export interface AtlasIssue {
   level: 'error' | 'warning';
@@ -92,4 +94,10 @@ export interface AtlasReport {
     warnings: number;
   };
   issues: AtlasIssue[];
+  /** atlas.yaml で宣言した repo の、解いた場所（人が、思っていない場所を指していないか気づけるように出す） */
+  repos?: Array<{ name?: string; dir: string }>;
+  /** 根拠の数（check だけが見る。docs/28 D260・D261） */
+  evidence?: EvidenceSummary;
+  /** 未読の要約（知らせ。関門にしない。D204・D264） */
+  unread?: UnreadRepo[];
 }

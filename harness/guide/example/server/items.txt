@@ -1,0 +1,12 @@
+table items: id, name, done
+
+GET /items
+  rows = read all from items
+  reply { items: rows }
+
+
+
+POST /items
+  row = { id: next id, name: body.item.name, done: false }
+  write row into items
+  reply { item: row } with 201

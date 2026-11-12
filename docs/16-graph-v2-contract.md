@@ -224,6 +224,10 @@ body の無い応答（`out/status`）から呼び出し元の `ret_n` への線
 - 部品と挙動の中の名指し（`box`・`screen`・`trigger.part`・`result.part`・段の線の `from` / `to`・`when` のキー）は、スキーマでは空でない文字列（`when` は真偽の値）とだけ決める。形と、解けるかどうかは、検証が確かめる（解けない名指しに、何が無いかを名指しした指摘を出すため。docs/26 D223）
 - 検証（`validateGraphV2`）は、部品と挙動の参照と、段のつながりも確かめる（`packages/schema/src/behaviors.ts` の `checkBehaviors`。指摘に `rule: "ref" | "behavior"` が付く）。検証器が誤りにした線は、挙動からは「無い線」として扱う
 
+### 8.4 根拠（`evidence`。2026-11-13 Phase 10-1b）
+
+箱と線に、任意で `evidence: [{ file, lines: [始め, 終わり], text }]`。どのファイルの、どの行の範囲に、どんな文字列がそのまま書いてあるか。形だけを契約で決め、本当にそこにあるかは `stack-atlas check` が確かめる（docs/28）。ビューアは、まだ使わない
+
 ## 9. 検証（validateGraph v2）
 
 エラー（止める）:

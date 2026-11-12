@@ -1,0 +1,20 @@
+<!doctype html>
+<title>買い物の一覧</title>
+<h1>買い物の一覧</h1>
+<script>
+  async function open() {
+    const res = await fetch('/items');
+    const { items } = await res.json();
+    showItems(items);
+  }
+</script>
+
+<form class="add">
+  <input name="name" placeholder="品物の名前">
+  <button>足す</button>
+</form>
+<script>
+  addForm.onsubmit = async () => { const saved = await post('/items', { item }); addToList(saved); };
+</script>
+
+<ul class="items"></ul>

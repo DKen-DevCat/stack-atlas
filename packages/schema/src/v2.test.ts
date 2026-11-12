@@ -80,6 +80,8 @@ describe('v2.ts と graph-v2.schema.json の一致', () => {
         'runtime',
         'file',
         'line',
+        // 2026-11-13 追加（Phase 10-1b。docs/28）: 根拠
+        'evidence',
         'code',
         'host',
         'group',
@@ -117,7 +119,19 @@ describe('v2.ts と graph-v2.schema.json の一致', () => {
     );
     expect(sorted(schema.$defs.item!.required!)).toEqual(['id', 'name', 'type']);
     expect(keys(schema.$defs.wire!)).toEqual(
-      sorted(['from', 'to', 'via', 'reply', 'when', 'broken', 'label', 'route', 'meta']),
+      // 2026-11-13 変更（Phase 10-1b。docs/28）: 根拠（evidence）を足した
+      sorted([
+        'from',
+        'to',
+        'via',
+        'reply',
+        'when',
+        'broken',
+        'label',
+        'route',
+        'evidence',
+        'meta',
+      ]),
     );
     expect(sorted(schema.$defs.wire!.required!)).toEqual(['from', 'to', 'via']);
     // 2026-11-09 変更（8-4）: links に meta（補いの出どころ by・reason。docs/19 §3.1）

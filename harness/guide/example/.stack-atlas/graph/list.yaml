@@ -7,6 +7,7 @@ nodes:
     runtime: browser
     file: web/list.html
     line: 1
+    evidence: [{ file: web/list.html, lines: [1, 10], text: "<title>買い物の一覧</title>" }]
     meta: { path: "/list" }
     ports:
       - id: out
@@ -25,6 +26,7 @@ nodes:
     runtime: browser
     file: web/list.html
     line: 12
+    evidence: [{ file: web/list.html, lines: [12, 18], text: "<form class=\"add\">" }]
     ports:
       - id: out
         dir: out
@@ -46,6 +48,7 @@ nodes:
     runtime: browser
     file: web/list.html
     line: 20
+    evidence: [{ file: web/list.html, lines: [20, 20], text: "<ul class=\"items\"></ul>" }]
     ports:
       - id: in
         dir: in
@@ -59,6 +62,7 @@ nodes:
     runtime: server
     file: server/items.txt
     line: 3
+    evidence: [{ file: server/items.txt, lines: [3, 5], text: "GET /items" }]
     meta: { route: "GET /items" }
     ports:
       - { id: in, dir: in, items: [{ id: request, name: "入力なし", type: void }] }
@@ -79,6 +83,7 @@ nodes:
     runtime: server
     file: server/items.txt
     line: 9
+    evidence: [{ file: server/items.txt, lines: [9, 12], text: "POST /items" }]
     meta: { route: "POST /items" }
     ports:
       - id: in
@@ -110,6 +115,7 @@ nodes:
     runtime: data
     file: server/items.txt
     line: 1
+    evidence: [{ file: server/items.txt, lines: [1, 1], text: "table items: id, name, done" }]
     ports:
       - { id: key, dir: in, items: [{ id: all, name: "全部", type: void }] }
       - { id: write, dir: in, items: [{ id: row, name: row, type: object }] }
@@ -121,14 +127,14 @@ nodes:
 
 wires:
   # 開いたとき
-  - { from: "screen:/list#out/open", to: "endpoint:GET /items#in/request", via: http }
-  - { from: "endpoint:GET /items#out/body.items", to: "screen:/list#in/items", via: http, reply: true }
-  - { from: "endpoint:GET /items#req/all", to: "table:items#key/all", via: call }
-  - { from: "table:items#read/rows", to: "endpoint:GET /items#res/rows", via: call, reply: true }
-  - { from: "screen:/list#out/items", to: "part:item-list#in/items", via: render }
+  - { from: "screen:/list#out/open", to: "endpoint:GET /items#in/request", via: http, evidence: [{ file: web/list.html, lines: [5, 6], text: "await fetch('/items')" }] }
+  - { from: "endpoint:GET /items#out/body.items", to: "screen:/list#in/items", via: http, reply: true, evidence: [{ file: web/list.html, lines: [7, 7], text: "const { items } = await res.json()" }] }
+  - { from: "endpoint:GET /items#req/all", to: "table:items#key/all", via: call, evidence: [{ file: server/items.txt, lines: [4, 4], text: "rows = read all from items" }] }
+  - { from: "table:items#read/rows", to: "endpoint:GET /items#res/rows", via: call, reply: true, evidence: [{ file: server/items.txt, lines: [4, 5], text: "reply { items: rows }" }] }
+  - { from: "screen:/list#out/items", to: "part:item-list#in/items", via: render, evidence: [{ file: web/list.html, lines: [8, 8], text: "showItems(items);" }] }
   # 品物を足す
-  - { from: "part:add-form#out/item", to: "endpoint:POST /items#in/body.item", via: http }
-  - { from: "endpoint:POST /items#out/body.item", to: "part:add-form#in/saved", via: http, reply: true }
-  - { from: "endpoint:POST /items#req/row", to: "table:items#write/row", via: call }
-  - { from: "table:items#read/row", to: "endpoint:POST /items#res/row", via: call, reply: true }
-  - { from: "part:add-form#out/added", to: "part:item-list#in/item", via: render }
+  - { from: "part:add-form#out/item", to: "endpoint:POST /items#in/body.item", via: http, evidence: [{ file: web/list.html, lines: [17, 17], text: "await post('/items', { item })" }] }
+  - { from: "endpoint:POST /items#out/body.item", to: "part:add-form#in/saved", via: http, reply: true, evidence: [{ file: server/items.txt, lines: [12, 12], text: "reply { item: row } with 201" }] }
+  - { from: "endpoint:POST /items#req/row", to: "table:items#write/row", via: call, evidence: [{ file: server/items.txt, lines: [11, 11], text: "write row into items" }] }
+  - { from: "table:items#read/row", to: "endpoint:POST /items#res/row", via: call, reply: true, evidence: [{ file: server/items.txt, lines: [10, 10], text: "row = { id: next id" }] }
+  - { from: "part:add-form#out/added", to: "part:item-list#in/item", via: render, evidence: [{ file: web/list.html, lines: [17, 17], text: "addToList(saved);" }] }

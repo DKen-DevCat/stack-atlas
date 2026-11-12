@@ -69,7 +69,17 @@ export {
   type WireRef,
   type WireChange,
 } from './diff.js';
-export { checkGitRepo, gitCommit, gitEnv, gitRemote, runGit, GIT_SAFE_CONFIG } from './git.js';
+export {
+  checkGitRepo,
+  gitCommit,
+  gitEnv,
+  gitExecutable,
+  gitRemote,
+  runGit,
+  trackedRegularFiles,
+  GIT_SAFE_CONFIG,
+  type TrackedFiles,
+} from './git.js';
 // data-component の名前 → 箱 id（screenshots・screens 抽出器とビューアが同じ規則を使う。正本は wiring。docs/18 §3.3）
 export { resolveRegionRef } from '@stack-atlas/wiring';
 export {

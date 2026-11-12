@@ -8,6 +8,7 @@
  *   ここでは、検証器の指摘の場所（`/behaviors/1/steps/2` など）を、「どのファイルの、どの箱・線・挙動の段か」に直す
  */
 import { validateGraphV2, type GraphV2, type ValidationIssue } from '@stack-atlas/schema';
+import { inspectEvidence } from './evidence.js';
 import { loadAtlas } from './load.js';
 import { ATLAS_PATHS, type AtlasIssue, type AtlasReport, type LoadedAtlas } from './types.js';
 
@@ -86,7 +87,14 @@ function locate(atlas: LoadedAtlas, path: string): { file: string; path: string 
 const nth = (at: readonly number[], i: number) => `${(at[i] ?? i) + 1} 番め`;
 
 /** 図を読んで検査する。読みこんだ図（形の合った分）も返す（bundle が使う） */
-export function inspectAtlas(root: string): { atlas: LoadedAtlas; report: AtlasReport } {
+/**
+ * @param opts.evidence 根拠と未読も見るか（既定は見る。bundle・live は見ない。docs/28 D261: コードを直すと根拠がずれ、
+ *   ライブが開かなくなるため。git も動かさない）
+ */
+export function inspectAtlas(
+  root: string,
+  opts: { evidence?: boolean } = {},
+): { atlas: LoadedAtlas; report: AtlasReport } {
   const { atlas, issues } = loadAtlas(root);
   const add = (
     level: AtlasIssue['level'],
@@ -132,6 +140,9 @@ export function inspectAtlas(root: string): { atlas: LoadedAtlas; report: AtlasR
       `${PARTS} がありません（画面の部品を書くと、挙動の始まりを指せます）`,
     );
 
+  // 根拠と未読（docs/28）
+  const ev = opts.evidence === false ? undefined : inspectEvidence(atlas, root, add);
+
   const order = { error: 0, warning: 1 } as const;
   issues.sort((a, b) => order[a.level] - order[b.level] || a.file.localeCompare(b.file));
   const errors = issues.filter((i) => i.level === 'error').length;
@@ -148,12 +159,26 @@ export function inspectAtlas(root: string): { atlas: LoadedAtlas; report: AtlasR
     },
     issues,
   };
+  if (ev) {
+    const declared = ev.repos.filter((r) => r.declared);
+    if (declared.length)
+      report.repos = declared.map((r) => (r.name ? { name: r.name, dir: r.dir } : { dir: r.dir }));
+    report.evidence = ev.evidence;
+    report.unread = ev.unread;
+  }
   return { atlas, report };
 }
 
 export const checkAtlas = (root: string): AtlasReport => inspectAtlas(root).report;
 
-const CHECK_NAME = { form: '形', ref: '参照', behavior: '挙動' } as const;
+const CHECK_NAME = {
+  form: '形',
+  ref: '参照',
+  behavior: '挙動',
+  evidence: '根拠',
+  unread: '未読',
+} as const;
+const pct = (n: number, total: number) => (total ? `${((n / total) * 100).toFixed(1)}%` : '—');
 
 /** 人が読む形 */
 export function formatAtlasReport(r: AtlasReport): string {
@@ -165,5 +190,28 @@ export function formatAtlasReport(r: AtlasReport): string {
     lines.push(
       `  [${i.level === 'error' ? 'エラー' : '警告'}・${CHECK_NAME[i.check]}] ${i.file}${i.path ? `（${i.path}）` : ''}: ${i.message}`,
     );
+  for (const repo of r.repos ?? [])
+    lines.push(`repo${repo.name ? ` "${repo.name}"` : ''}: ${repo.dir}`);
+  if (r.evidence) {
+    const e = r.evidence;
+    lines.push(
+      `根拠: 根拠のある箱 ${e.nodes.with} / ${e.nodes.total}・線 ${e.wires.with} / ${e.wires.total}（根拠 ${e.entries} 件のうち、書いた範囲で見つかったもの ${e.found} 件）`,
+    );
+  }
+  for (const u of r.unread ?? []) {
+    const name = u.name ? `repo "${u.name}" ` : '';
+    if (!u.git) {
+      lines.push(`未読: ${name}数えられません（${u.why ?? 'git の repo ではない'}）`);
+      continue;
+    }
+    const dirs = u.dirs
+      .filter((d) => d.unread > 0)
+      .slice(0, 8)
+      .map((d) => `${d.dir} ${d.unread} / ${d.total}`)
+      .join('、');
+    lines.push(
+      `未読: ${name}${u.unread} / ${u.total}（${pct(u.unread, u.total)}。根拠に出てくる ${u.evidenced}・申告で除いた ${u.declared}・秘密らしいので読まない ${u.secret}）${dirs ? ` — ${dirs}` : ''}`,
+    );
+  }
   return lines.join('\n');
 }
