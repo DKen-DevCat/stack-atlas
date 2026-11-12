@@ -12,9 +12,11 @@
 export function atlasInject({ parts }) {
   if (window.top === window) return; // ビューア自身では何もしない
 
+  // 時刻は、この枠の時計で測る（1 ミリ秒より細かい）。ビューアは、知らせどうしの差だけを使う
+  const now = () => performance.timeOrigin + performance.now();
   const post = (ev) => {
     try {
-      window.top.postMessage({ __atlasLive: 1, at: Date.now(), ...ev }, '*');
+      window.top.postMessage({ __atlasLive: 1, at: now(), ...ev }, '*');
     } catch {
       // 渡せなくても、アプリの動きは止めない
     }
@@ -22,6 +24,16 @@ export function atlasInject({ parts }) {
   const rectOf = (el) => {
     const r = el.getBoundingClientRect();
     return { x: r.x, y: r.y, w: r.width, h: r.height };
+  };
+  // 要素の中の文字を、区切りを入れてつなぐ（「本文」「書いた人」「ボタン」がくっついて読めなくならないように）
+  const textOf = (el) => {
+    const parts = [];
+    const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      const t = n.nodeValue.trim();
+      if (t) parts.push(t);
+    }
+    return parts.join(' ・ ').slice(0, 120);
   };
   const partOf = (target) => {
     if (!(target instanceof Element)) return null;
@@ -55,11 +67,12 @@ export function atlasInject({ parts }) {
     const body = init && typeof init.body === 'string' ? init.body.slice(0, 4000) : null;
     post({ t: 'req', id, method, path: u.pathname + u.search, sameOrigin: u.origin === location.origin, body });
     const res = await origFetch(input, init);
+    const at = now(); // 返事が届いた時刻（本文を読み終える前に取る）
     res
       .clone()
       .text()
-      .then((text) => post({ t: 'res', id, status: res.status, body: text.slice(0, 4000) }))
-      .catch(() => post({ t: 'res', id, status: res.status, body: null }));
+      .then((text) => post({ t: 'res', id, at, status: res.status, body: text.slice(0, 4000) }))
+      .catch(() => post({ t: 'res', id, at, status: res.status, body: null }));
     return res;
   };
 
@@ -70,10 +83,10 @@ export function atlasInject({ parts }) {
       const changes = [];
       for (const m of muts) {
         for (const n of m.addedNodes) {
-          if (n.nodeType === 1) changes.push({ kind: 'added', text: (n.textContent || '').trim().slice(0, 80), rect: rectOf(n) });
+          if (n.nodeType === 1) changes.push({ kind: 'added', text: textOf(n), rect: rectOf(n) });
         }
         for (const n of m.removedNodes) {
-          if (n.nodeType === 1) changes.push({ kind: 'removed', text: (n.textContent || '').trim().slice(0, 80) });
+          if (n.nodeType === 1) changes.push({ kind: 'removed', text: textOf(n) });
         }
       }
       if (changes.length) post({ t: 'dom', changes: changes.slice(0, 20) });

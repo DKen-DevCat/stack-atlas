@@ -7,6 +7,10 @@ let comments = [
   { id: 1, body: '地図があると、歩き方が変わりますね。', author: 'ken' },
 ];
 
+// 返事を遅らせる時間（ミリ秒）。本物のバックエンドの「かかる時間」の代わり。試しで、時間の内訳が見えるようにするため
+const LATENCY = { GET: 120, POST: 450, DELETE: 260 };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 
@@ -20,6 +24,7 @@ self.addEventListener('fetch', (event) => {
 });
 
 async function handle(req, url) {
+  await sleep(LATENCY[req.method] ?? 0);
   if (url.pathname === '/api/comments' && req.method === 'GET') {
     return json({ comments });
   }

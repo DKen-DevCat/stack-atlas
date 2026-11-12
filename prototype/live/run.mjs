@@ -86,27 +86,32 @@ if (!check) {
 } else {
   const text = 'ライブの試しのコメント';
   const inApp = page.frameLocator('#app');
+  const replayed = (n) => page.waitForFunction((want) => window.__replayed >= want, n, { timeout: 30000 });
   await inApp.locator('.card').first().waitFor({ timeout: 15000 });   // 開いたときの読みこみ
-  await page.waitForTimeout(600);
+  await page.locator('#p-speed [data-s="fast"]').click({ timeout: 15000 });   // 記録が済むと、再生の操作が出る
+  await replayed(1);
   await inApp.locator('textarea').fill(text);
   await inApp.locator('#comment-form button').click();               // 人の代わりに押す（--check のときだけ）
   await inApp.locator('.card', { hasText: text }).waitFor({ timeout: 15000 });
-  await page.waitForTimeout(900);
-  const afterPost = await page.evaluate(() => ({ verdict: document.getElementById('f-verdict').textContent, name: document.getElementById('f-name').textContent }));
+  await replayed(2);
+  const afterPost = await page.evaluate(() => ({ verdict: document.getElementById('f-verdict').textContent, now: document.getElementById('nowline').textContent }));
+  await page.locator('#p-prev').click();                             // 1 段ずつ見る操作が効くか
+  const stepped = await page.evaluate(() => document.getElementById('nowline').textContent);
   await inApp.locator('button.del').first().click();
   await inApp.locator('.card', { hasText: text }).waitFor({ state: 'detached', timeout: 15000 });
-  await page.waitForTimeout(900);
+  await replayed(3);
   const shotAt = process.argv.indexOf('--shot');
-  if (shotAt > 0 && process.argv[shotAt + 1]) await page.screenshot({ path: path.resolve(process.argv[shotAt + 1]) });
+  if (shotAt > 0 && process.argv[shotAt + 1]) await page.screenshot({ path: path.resolve(process.argv[shotAt + 1]), fullPage: true });
 
   const { seen, ops } = await page.evaluate(() => ({
     seen: window.__seen,
-    ops: window.__ops.map((o) => ({ behavior: o.behavior, verdict: o.verdict, reqs: [...o.reqs.values()], changes: o.changes, net: window.__net(o.changes) })),
+    ops: window.__ops.map((o) => ({ behavior: o.behavior, verdict: o.verdict, reqs: [...o.reqs.values()], net: o.net ?? [], steps: o.steps ?? [], total: o.total })),
   }));
   const postOp = ops.find((o) => o.behavior === 'post-comment');
   const delOp = ops.find((o) => o.behavior === 'delete-comment');
+  const postReq = postOp?.steps.find((s) => s.kind === 'req' && s.main);
   const result = {
-    '1. アプリを左の枠に入れて動かせた': ops.some((o) => o.behavior === 'open' && o.changes.some((c) => c.kind === 'added')),
+    '1. アプリを左の枠に入れて動かせた': ops.some((o) => o.behavior === 'open' && o.net.some((c) => c.kind === 'added')),
     '2. 押した部品が分かった': seen.some((e) => e.t === 'part' && e.part === 'comment-form' && e.how === 'submit'),
     '3. 送った中身が見えた': !!postOp && postOp.reqs.some((r) => r.method === 'POST' && (r.body ?? '').includes(text)),
     '4. 返ってきた中身が見えた': !!postOp && postOp.reqs.some((r) => r.status === 201 && (r.resBody ?? '').includes(text)),
@@ -115,10 +120,13 @@ if (!check) {
     '6. 図と実際の通信を照らし合わせた': afterPost.verdict === '図と合っている' && postOp?.verdict === true && delOp?.verdict === true,
     '7. 差し替えられた通信が、枠の中から見えた': seen.filter((e) => e.t === 'req').length >= 4,
     '8. 差し替えられた通信が、ブラウザの外から見えた': outside.some((x) => x.method === 'POST'),
-    '外から見えた通信': outside,
-    '操作ごとの通信': ops.map((o) => `${o.behavior}: ${o.reqs.map((r) => `${r.method} ${r.path} → ${r.status}`).join(', ')}`),
+    '9. 時間の内訳が出た（投稿の通信が、いちばん長い）': !!postReq && postReq.ms >= 400 && postOp.steps.every((s) => s.ms <= postReq.ms),
+    '10. 記録した操作を、見せる速さを変えて最後まで再生できた': afterPost.now === '最後まで再生しました。',
+    '11. 1 段ずつ戻して見られた': stepped.startsWith('いま:'),
+    '投稿の時間の内訳': postOp?.steps.map((s) => `${s.label}: ${s.ms.toFixed(1)} ms`),
+    '外から見えた通信': outside.map((x) => `${x.method} ${x.path}（差し替え: ${x.viaServiceWorker}）`),
   };
   console.log(JSON.stringify(result, null, 2));
-  const ok = Object.entries(result).filter(([k]) => /^[1-7]\./.test(k)).every(([, v]) => v === true);
+  const ok = Object.entries(result).filter(([k]) => /^\d+\./.test(k)).every(([, v]) => v === true);
   await stop(ok ? 0 : 1);
 }

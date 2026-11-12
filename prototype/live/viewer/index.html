@@ -2,7 +2,9 @@
 <html lang="ja">
 <!-- ライブの試しのビューア。左の枠に本物のアプリ（ここではサンプル）、右に挙動の一覧と経路。
      アプリの枠の中で起きたこと（押した部品・通信・画面の変化）は、道具が入れたスクリプト（../inject.js）が
-     postMessage で知らせてくる。ビューアは、アプリの枠の中を直接は見ない・触らない。 -->
+     postMessage で知らせてくる。ビューアは、アプリの枠の中を直接は見ない・触らない。
+     見せ方: 操作を「記録」してから、「再生」する。実際の通信は速すぎて目で追えないので、見せる速さを実際の速さから切り離す。
+     再生では、どの段に実際どれだけ時間がかかったか（時間の内訳）を、段ごとに出す。 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Stack Atlas ライブの試し</title>
@@ -25,12 +27,15 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 body { margin: 0; padding: 14px 16px 28px; background: var(--bg); color: var(--fg); font: 14px/1.6 var(--font); }
-.wrap { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+button, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--go); outline-offset: 2px; }
+.wrap { max-width: 1280px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
 .top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
 .top h1 { margin: 0; font-size: 18px; font-weight: 600; }
 .top p { margin: 0; color: var(--muted); }
 .badge { border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; font-size: 12px; color: var(--muted); background: var(--surface); }
-.stage { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, 1fr); gap: 14px; align-items: start; }
+.stage { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(340px, 1fr); gap: 14px; align-items: start; }
 @media (max-width: 760px) { .stage { grid-template-columns: minmax(0, 1fr); } }
 
 .shot { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; min-width: 0; }
@@ -48,7 +53,7 @@ body { margin: 0; padding: 14px 16px 28px; background: var(--bg); color: var(--f
 .flow { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .cap { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.08em; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chips button { font: inherit; color: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 2px 11px; font-size: 13px; }
+.chips button { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 2px 11px; font-size: 13px; }
 .chips button[aria-pressed="true"] { background: var(--go); border-color: var(--go); color: var(--surface); font-weight: 600; }
 .flow-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; border-top: 1px solid var(--line); padding-top: 10px; }
 .flow-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
@@ -57,8 +62,21 @@ body { margin: 0; padding: 14px 16px 28px; background: var(--bg); color: var(--f
 .tag.ok { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
 .tag.ng { background: color-mix(in srgb, var(--ng) 16%, transparent); color: var(--ng); }
 
+/* 再生の操作 */
+.player { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.btn { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 2px 10px; font-size: 13px; }
+.btn:hover:not(:disabled) { background: var(--surface-2); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; background: var(--surface); padding: 2px 9px; font-size: 12px; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.player label { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.nowline { font-size: 13px; min-height: 1.6em; }
+.nowline b { font-weight: 600; }
+
 .path { display: flex; flex-direction: column; min-width: 0; }
-.pnode { border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px 6px; display: flex; flex-direction: column; opacity: 0.55; transition: opacity 0.2s, border-color 0.2s, box-shadow 0.2s; }
+.pnode { border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px 6px; display: flex; flex-direction: column; opacity: 0.5; transition: opacity 0.2s, border-color 0.2s, box-shadow 0.2s; }
 .pnode .kind { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; }
 .pnode .nm { font-family: var(--mono); font-size: 12.5px; font-weight: 500; overflow-wrap: anywhere; }
 .pnode .src, .pnode .nt { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
@@ -66,7 +84,9 @@ body { margin: 0; padding: 14px 16px 28px; background: var(--bg); color: var(--f
 .pnode[data-k="part"] .kind { color: var(--k-part); } .pnode[data-k="api"] .kind { color: var(--k-api); } .pnode[data-k="store"] .kind { color: var(--k-store); }
 .pnode.lit { opacity: 1; border-color: var(--go); box-shadow: 0 0 0 3px var(--go-soft); }
 .pnode.lit.drawn { border-style: dashed; box-shadow: none; }
-.hop { display: grid; grid-template-columns: 26px minmax(0, 1fr); column-gap: 8px; min-height: 42px; margin-left: 12px; padding: 3px 0; }
+@keyframes waiting { 0%, 100% { box-shadow: 0 0 0 3px var(--go-soft); } 50% { box-shadow: 0 0 0 7px var(--go-soft); } }
+.pnode.wait { animation: waiting 0.9s ease-in-out infinite; }
+.hop { display: grid; grid-template-columns: 26px minmax(0, 1fr); column-gap: 8px; min-height: 40px; margin-left: 12px; padding: 3px 0; }
 .rails { display: flex; justify-content: center; gap: 10px; }
 .rail { position: relative; width: 0; border-left: 2px solid var(--line); }
 .hop.drawn .rail { border-left-style: dashed; }
@@ -78,26 +98,40 @@ body { margin: 0; padding: 14px 16px 28px; background: var(--bg); color: var(--f
 .hop.go-on .rail.go { border-left-color: var(--go); } .hop.go-on .rail.go::after { border-top-color: var(--go); } .hop.go-on .lb.go { color: var(--go); opacity: 1; }
 .hop.back-on .rail.back { border-left-color: var(--back); } .hop.back-on .rail.back::after { border-bottom-color: var(--back); } .hop.back-on .lb.back { color: var(--back); opacity: 1; }
 .how { font-size: 11px; color: var(--muted); }
-
-.seen { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
-.seen h3 { margin: 0; font-size: 13px; font-weight: 600; }
-.row { display: flex; flex-direction: column; gap: 2px; }
-.row .line { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: baseline; font-family: var(--mono); font-size: 12.5px; }
-pre { margin: 0; padding: 6px 8px; background: var(--surface-2); border-radius: 6px; font: 12px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 132px; overflow: auto; }
-.lbl { font-size: 11px; color: var(--muted); }
-.changes { margin: 0; padding-left: 18px; font-size: 13px; }
-.changes .added { color: var(--back); } .changes .removed { color: var(--muted); text-decoration: line-through; }
-.empty { color: var(--muted); font-size: 13px; }
 .key { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--muted); }
 .key i { display: inline-block; width: 22px; vertical-align: middle; margin-right: 5px; border-top: 2px solid var(--muted); }
 .key .d i { border-top-style: dashed; }
+
+/* 時間の内訳 */
+.sec { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.sec h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.times { display: flex; flex-direction: column; gap: 4px; }
+.trow { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(60px, 1fr) 64px; gap: 8px; align-items: center; font-size: 12.5px; padding: 1px 4px; border-radius: 4px; }
+.trow .lbl { overflow-wrap: anywhere; color: var(--muted); }
+.trow .bar { height: 10px; background: var(--surface-2); border-radius: 5px; overflow: hidden; }
+.trow .bar i { display: block; height: 100%; width: 0; background: var(--go); border-radius: 5px; }
+.trow .ms { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.trow.done .lbl, .trow.now .lbl { color: var(--fg); }
+.trow.now { background: var(--go-soft); }
+.trow.max .ms { color: var(--back); font-weight: 600; }
+.trow.max .bar i { background: var(--back); }
+.total { font-size: 12.5px; color: var(--muted); }
+.row { display: flex; flex-direction: column; gap: 2px; }
+.row .line { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: baseline; font-family: var(--mono); font-size: 12.5px; }
+pre { margin: 0; padding: 6px 8px; background: var(--surface-2); border-radius: 6px; font: 12px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 132px; overflow: auto; }
+.small { font-size: 11px; color: var(--muted); }
+.changes { margin: 0; padding-left: 18px; font-size: 13px; }
+.changes .added { color: var(--back); } .changes .removed { color: var(--muted); text-decoration: line-through; }
+.empty { color: var(--muted); font-size: 13px; }
+details summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { .pnode.wait { animation: none; } }
 </style>
 
 <div class="wrap">
   <header class="top">
     <h1>Stack Atlas — ライブの試し</h1>
     <span class="badge">試し</span>
-    <p>左のアプリを、ふつうに操作してください。右に、その操作の流れと、画面に反映されたものが出ます。</p>
+    <p>左のアプリを、ふつうに操作してください。操作を記録して、右で、ゆっくり再生します。</p>
   </header>
 
   <div class="stage">
@@ -117,17 +151,41 @@ pre { margin: 0; padding: 6px 8px; background: var(--surface-2); border-radius: 
         <span class="tag" id="f-state" hidden></span>
         <span class="tag" id="f-verdict" hidden></span>
       </div>
+
+      <div class="player" id="player" hidden>
+        <button class="btn" id="p-restart" type="button" title="最初から">⏮</button>
+        <button class="btn" id="p-prev" type="button" title="前の段">◀ 前の段</button>
+        <button class="btn" id="p-play" type="button">⏸ 止める</button>
+        <button class="btn" id="p-next" type="button" title="次の段">次の段 ▶</button>
+        <label>見せる速さ
+          <span class="seg" id="p-speed">
+            <button type="button" data-s="slow">ゆっくり</button>
+            <button type="button" data-s="normal">ふつう</button>
+            <button type="button" data-s="fast">はやい</button>
+          </span>
+        </label>
+        <label><input type="checkbox" id="p-auto" checked> 操作のたびに再生する</label>
+      </div>
+      <div class="nowline" id="nowline"></div>
+
       <div class="path" id="path"></div>
       <div class="key">
         <span class="s"><i></i>実際に見えたもの（ブラウザから出た通信まで）</span>
         <span class="d"><i></i>図に書かれているもの（その先は、見えない）</span>
       </div>
-      <div class="seen">
+
+      <div class="sec">
+        <h3>時間の内訳（実際にかかった時間）</h3>
+        <div id="s-times"><div class="empty">操作すると、ここに出ます。</div></div>
+      </div>
+      <div class="sec">
         <h3>画面に反映されたもの</h3>
         <div id="s-dom"><div class="empty">まだありません。</div></div>
-        <h3>実際の通信</h3>
-        <div id="s-reqs"><div class="empty">まだありません。</div></div>
       </div>
+      <details class="sec">
+        <summary>実際の通信の中身</summary>
+        <div id="s-reqs"><div class="empty">まだありません。</div></div>
+      </details>
     </section>
   </div>
 </div>
@@ -135,32 +193,50 @@ pre { margin: 0; padding: 6px 8px; background: var(--surface-2); border-radius: 
 <script>
 (async () => {
   const KIND = { part: '画面の部品', api: '受け口', store: 'データの置き場' };
+  const TOTAL = { slow: 12000, normal: 6000, fast: 3000 };   // 再生の全体にかける時間（ミリ秒）の目安
+  const MIN_STEP = 700;                                       // どんなに短い段も、これだけは見せる
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const appUrl = new URLSearchParams(location.search).get('app');
   const NOT_TOOL_WINDOW = 'この画面は、道具が開いた窓の中でだけ動きます。`node prototype/live/run.mjs` を実行すると、別のブラウザの窓が開きます。その窓で操作してください。';
+  const appUrl = new URLSearchParams(location.search).get('app');
   if (!appUrl) { $('f-name').textContent = NOT_TOOL_WINDOW; return; }
   const appOrigin = new URL(appUrl).origin;
   const data = await (await fetch('../data.json')).json();
   const frame = $('app');
   $('url').textContent = appUrl;
-  window.__seen = [];      // 受け取った知らせ（確かめ用）
-  window.__ops = [];       // 操作ごとのまとめ（確かめ用）
-  window.__net = (changes) => net(changes);
+  window.__seen = [];        // 受け取った知らせ（確かめ用）
+  window.__ops = [];         // 操作ごとの記録（確かめ用）
+  window.__replayed = 0;     // 再生が最後まで行った回数（確かめ用）
 
-  let op = null;           // いま追っている操作
-  let shown = null;        // いま経路を出している挙動
+  let rec = null;            // 記録中の操作
+  let cur = null;            // 再生している操作
+  let shown = null;          // 経路を出している挙動の id
+  const play = { k: 0, timer: null, running: false, speed: 'slow' };
 
+  const fmt = (ms) => (ms >= 100 ? Math.round(ms) : ms >= 10 ? ms.toFixed(1) : ms.toFixed(2)) + ' ms';
   const pretty = (text) => {
     if (text == null || text === '') return '（本文なし）';
     try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return String(text); }
   };
   const matches = (expect, req) => {
-    if (!expect) return null;
     const re = new RegExp('^' + expect.path.replace(/[.*+?^$()|[\]\\]/g, '\\$&').replace(/\{[^}]+\}/g, '[^/]+') + '(\\?.*)?$');
     return expect.method === req.method && re.test(req.path);
   };
+  // アプリが一覧を丸ごと描き直すと、全部が「消えて、増えた」に見える。同じ中身の「消えた」と「増えた」は打ち消して、差だけを残す
+  function net(changes) {
+    const removed = changes.filter((c) => c.kind === 'removed').map((c) => c.text);
+    const out = [];
+    for (const c of changes) {
+      if (c.kind !== 'added') continue;
+      const i = removed.indexOf(c.text);
+      if (i >= 0) removed.splice(i, 1);
+      else out.push(c);
+    }
+    return out.concat(removed.map((text) => ({ kind: 'removed', text })));
+  }
+  window.__net = net;
 
+  /* ---- 経路 ---- */
   function renderChips() {
     $('behaviors').innerHTML = data.behaviors.map((b) =>
       '<button type="button" data-b="' + b.id + '" aria-pressed="' + (shown === b.id) + '">' + esc(b.name) + '</button>').join('');
@@ -180,49 +256,13 @@ pre { margin: 0; padding: 6px 8px; background: var(--surface-2); border-radius: 
   }
   const node = (c) => $('path').querySelector('.pnode[data-c="' + c + '"]');
   const hop = (c) => $('path').querySelector('.hop[data-c="' + c + '"]');
-
-  function show(b, live) {
+  function setHead(b, text, cls) {
     shown = b.id;
     renderChips();
-    renderPath(b);
     $('f-name').textContent = b.name;
     const st = $('f-state');
-    st.hidden = false;
-    st.className = 'tag' + (live ? ' live' : '');
-    st.textContent = live ? 'いまの操作' : '図（操作はしていない）';
-    $('f-verdict').hidden = true;
-    if (!live) {
-      $('path').querySelectorAll('.pnode').forEach((n, i) => { n.classList.add('lit'); if (i > 1) n.classList.add('drawn'); });
-      $('path').querySelectorAll('.hop').forEach((h) => h.classList.add('go-on', 'back-on'));
-    }
+    st.hidden = false; st.className = 'tag ' + cls; st.textContent = text;
   }
-
-  function renderSeen() {
-    const reqs = op ? [...op.reqs.values()] : [];
-    $('s-reqs').innerHTML = reqs.length ? reqs.map((r) =>
-      '<div class="row"><div class="line"><b>' + esc(r.method) + '</b><span>' + esc(r.path) + '</span><span>→ ' + (r.status == null ? '待っている…' : esc(r.status)) + '</span></div>' +
-      '<span class="lbl">送った中身</span><pre>' + esc(pretty(r.body)) + '</pre>' +
-      (r.status == null ? '' : '<span class="lbl">返ってきた中身</span><pre>' + esc(pretty(r.resBody)) + '</pre>') + '</div>').join('')
-      : '<div class="empty">まだありません。</div>';
-    const ch = op ? net(op.changes) : [];
-    $('s-dom').innerHTML = ch.length ? '<ul class="changes">' + ch.map((c) =>
-      '<li class="' + c.kind + '">' + (c.kind === 'added' ? '＋ 増えた: ' : '－ 消えた: ') + esc(c.text || '（文字なし）') + '</li>').join('') + '</ul>'
-      : '<div class="empty">まだありません。</div>';
-  }
-
-  // アプリが一覧を丸ごと描き直すと、全部が「消えて、増えた」に見える。同じ中身の「消えた」と「増えた」は打ち消して、差だけを残す
-  function net(changes) {
-    const removed = changes.filter((c) => c.kind === 'removed').map((c) => c.text);
-    const out = [];
-    for (const c of changes) {
-      if (c.kind !== 'added') continue;
-      const i = removed.indexOf(c.text);
-      if (i >= 0) removed.splice(i, 1);
-      else out.push(c);
-    }
-    return out.concat(removed.map((text) => ({ kind: 'removed', text })));
-  }
-
   function box(kind, rect) {
     if (!rect || rect.w < 2 || rect.h < 2) return;
     const el = document.createElement('div');
@@ -234,15 +274,22 @@ pre { margin: 0; padding: 6px 8px; background: var(--surface-2); border-radius: 
     setTimeout(() => el.remove(), 2000);
   }
 
+  /* ---- 記録 ---- */
   function begin(b, ev) {
-    op = { behavior: b.id, startedAt: ev.at, reqs: new Map(), changes: [], verdict: null };
-    window.__ops.push(op);
-    show(b, true);
+    stopTimer();
+    rec = { behavior: b.id, startedAt: ev.at, rect: ev.rect || null, reqs: new Map(), changes: [], domAt: null, verdict: null, steps: null, quiet: null };
+    window.__ops.push(rec);
+    cur = null;
+    setHead(b, '記録中…', 'live');
+    renderPath(b);
     node(0).classList.add('lit');
-    renderSeen();
+    $('f-verdict').hidden = true;
+    $('player').hidden = true;
+    $('nowline').textContent = '';
+    $('s-times').innerHTML = '<div class="empty">記録しています…</div>';
+    $('s-dom').innerHTML = $('s-reqs').innerHTML = '<div class="empty">記録しています…</div>';
     if (ev.rect) box('part', ev.rect);
   }
-
   function onEvent(ev) {
     window.__seen.push(ev);
     if (ev.t === 'open') { const b = data.behaviors.find((x) => x.trigger.how === 'open'); if (b) begin(b, ev); return; }
@@ -251,31 +298,154 @@ pre { margin: 0; padding: 6px 8px; background: var(--surface-2); border-radius: 
       if (b) begin(b, ev);
       return;
     }
-    if (!op || ev.at - op.startedAt > 8000) return;   // どの操作にも結べない知らせは、出さない
-    const b = data.behaviors.find((x) => x.id === op.behavior);
+    if (!rec || rec.steps) return;   // どの操作にも結べない知らせ（記録が済んだあとの通信など）は、出さない
+    const b = data.behaviors.find((x) => x.id === rec.behavior);
     if (ev.t === 'req') {
-      op.reqs.set(ev.id, { method: ev.method, path: ev.path, body: ev.body, status: null, resBody: null });
-      if (op.verdict == null) {
-        op.verdict = matches(b.expect, ev);
-        const v = $('f-verdict');
-        v.hidden = false;
-        v.className = 'tag ' + (op.verdict ? 'ok' : 'ng');
-        v.textContent = op.verdict ? '図と合っている' : '図と違う（図: ' + b.expect.method + ' ' + b.expect.path + '）';
-        hop(0).classList.add('go-on');
-        node(1).classList.add('lit');
-        setTimeout(() => { if (shown === b.id) { hop(1).classList.add('go-on'); node(2).classList.add('lit', 'drawn'); } }, 350);
-      }
+      rec.reqs.set(ev.id, { id: ev.id, method: ev.method, path: ev.path, body: ev.body, sentAt: ev.at, resAt: null, status: null, resBody: null });
+      if (rec.verdict == null) rec.verdict = matches(b.expect, ev);
     } else if (ev.t === 'res') {
-      const r = op.reqs.get(ev.id);
-      if (r) { r.status = ev.status; r.resBody = ev.body; }
-      if (shown === b.id) { hop(1).classList.add('back-on'); setTimeout(() => { if (shown === b.id) hop(0).classList.add('back-on'); }, 350); }
+      const r = rec.reqs.get(ev.id);
+      if (r) { r.resAt = ev.at; r.status = ev.status; r.resBody = ev.body; }
     } else if (ev.t === 'dom') {
-      op.changes.push(...ev.changes);
-      net(ev.changes).filter((c) => c.kind === 'added').slice(0, 3).forEach((c) => box('dom', c.rect));
+      rec.changes.push(...ev.changes);
+      rec.domAt = ev.at;
     }
-    renderSeen();
+    clearTimeout(rec.quiet);
+    const o = rec;
+    rec.quiet = setTimeout(() => settle(o), 500);   // しばらく何も起きなければ、操作が済んだとみなす
   }
 
+  /** 記録を、段の列にする: 押してから送るまで → 送ってから返るまで →（次の通信…）→ 返ってから画面に反映されるまで */
+  function settle(o) {
+    if (o !== rec) return;
+    const reqs = [...o.reqs.values()].sort((a, b) => a.sentAt - b.sentAt);
+    if (reqs.some((r) => r.resAt == null)) { o.quiet = setTimeout(() => settle(o), 300); return; }   // 返事を待っている
+    const steps = [];
+    let prev = o.startedAt;
+    reqs.forEach((r, i) => {
+      steps.push({ kind: 'gap', label: i === 0 ? '押してから、通信を送るまで' : '返ってから、次の通信を送るまで', ms: Math.max(0, r.sentAt - prev) });
+      steps.push({ kind: 'req', main: i === 0, req: r, label: r.method + ' ' + r.path + ' を送ってから、返るまで', ms: Math.max(0, r.resAt - r.sentAt) });
+      prev = r.resAt;
+    });
+    if (o.domAt != null) steps.push({ kind: 'dom', label: '返ってから、画面に反映されるまで', ms: Math.max(0, o.domAt - prev) });
+    o.steps = steps;
+    o.total = steps.reduce((a, s) => a + s.ms, 0);
+    o.net = net(o.changes);
+    cur = o;
+    const b = data.behaviors.find((x) => x.id === o.behavior);
+    setHead(b, '記録した操作を再生', 'live');
+    const v = $('f-verdict');
+    if (o.verdict != null) {
+      v.hidden = false;
+      v.className = 'tag ' + (o.verdict ? 'ok' : 'ng');
+      v.textContent = o.verdict ? '図と合っている' : '図と違う（図: ' + b.expect.method + ' ' + b.expect.path + '）';
+    }
+    renderTimes();
+    renderSeen();
+    $('player').hidden = false;
+    if ($('p-auto').checked && steps.length) start(0);
+    else paint(steps.length - 1, true);
+  }
+
+  /* ---- 時間の内訳と、記録の中身 ---- */
+  function renderTimes() {
+    const o = cur;
+    if (!o || !o.steps.length) { $('s-times').innerHTML = '<div class="empty">通信はありませんでした。</div>'; return; }
+    const max = Math.max(...o.steps.map((s) => s.ms));
+    $('s-times').innerHTML = '<div class="times">' + o.steps.map((s, i) =>
+      '<div class="trow' + (s.ms === max && max > 0 ? ' max' : '') + '" data-i="' + i + '"><span class="lbl">' + esc(s.label) + '</span>' +
+      '<span class="bar"><i data-w="' + (max > 0 ? Math.max(2, (s.ms / max) * 100) : 2).toFixed(1) + '"></i></span><span class="ms">' + fmt(s.ms) + '</span></div>').join('') +
+      '</div><div class="total">合わせて ' + fmt(o.total) + '。色の違う行が、いちばん長くかかった段です。</div>';
+  }
+  function renderSeen() {
+    const o = cur;
+    const reqs = o ? [...o.reqs.values()].sort((a, b) => a.sentAt - b.sentAt) : [];
+    $('s-reqs').innerHTML = reqs.length ? reqs.map((r) =>
+      '<div class="row"><div class="line"><b>' + esc(r.method) + '</b><span>' + esc(r.path) + '</span><span>→ ' + esc(r.status) + '</span><span>' + fmt(r.resAt - r.sentAt) + '</span></div>' +
+      '<span class="small">送った中身</span><pre>' + esc(pretty(r.body)) + '</pre><span class="small">返ってきた中身</span><pre>' + esc(pretty(r.resBody)) + '</pre></div>').join('')
+      : '<div class="empty">通信はありませんでした。</div>';
+    const ch = o ? o.net : [];
+    $('s-dom').innerHTML = ch.length ? '<ul class="changes">' + ch.map((c) =>
+      '<li class="' + c.kind + '">' + (c.kind === 'added' ? '＋ 増えた: ' : '－ 消えた: ') + esc(c.text || '（文字なし）') + '</li>').join('') + '</ul>'
+      : '<div class="empty">画面は変わりませんでした。</div>';
+  }
+
+  /* ---- 再生 ---- */
+  // k 番めの段を「いま」として描く。done なら、最後まで済んだ姿を描く
+  function paint(k, done) {
+    const o = cur;
+    if (!o) return;
+    const steps = o.steps;
+    const main = steps.findIndex((s) => s.kind === 'req' && s.main);
+    const path = $('path');
+    path.querySelectorAll('.pnode, .hop').forEach((el) => el.classList.remove('lit', 'drawn', 'wait', 'go-on', 'back-on'));
+    path.querySelectorAll('.hop').forEach((h, i) => { if (i > 0) h.classList.add('drawn'); });
+    node(0).classList.add('lit');
+    if (main >= 0 && k >= main) {            // 通信を送った
+      hop(0).classList.add('go-on'); node(1).classList.add('lit');
+      if (hop(1)) { hop(1).classList.add('go-on'); node(2).classList.add('lit', 'drawn'); }
+      if (k === main && !done) node(1).classList.add('wait');   // 返事を待っている
+    }
+    if (main >= 0 && (k > main || done)) {   // 返事が返った
+      if (hop(1)) hop(1).classList.add('back-on');
+      hop(0).classList.add('back-on');
+    }
+    document.querySelectorAll('.trow').forEach((row, i) => {
+      const bar = row.querySelector('.bar i');
+      const past = done || i < k;
+      row.classList.toggle('done', past);
+      row.classList.toggle('now', !done && i === k);
+      bar.style.transition = 'none';
+      bar.style.width = past ? bar.dataset.w + '%' : '0';
+    });
+    const s = steps[k];
+    $('nowline').innerHTML = done ? '<b>最後まで再生しました。</b>' : s ? '<b>いま:</b> ' + esc(s.label) + '（実際は ' + fmt(s.ms) + '）' : '';
+    $('p-prev').disabled = k <= 0 && !done;
+    $('p-next').disabled = done;
+  }
+  const visMs = (o, s) => Math.max(MIN_STEP, o.total > 0 ? (TOTAL[play.speed] * s.ms) / o.total : MIN_STEP);
+  function stopTimer() { clearTimeout(play.timer); play.timer = null; play.running = false; $('p-play').textContent = '▶ 再生'; }
+  function start(k) {
+    const o = cur;
+    if (!o || !o.steps.length) return;
+    stopTimer();
+    play.k = k; play.running = true;
+    $('p-play').textContent = '⏸ 止める';
+    paint(k, false);
+    if (k === 0 && o.rect) box('part', o.rect);
+    const s = o.steps[k];
+    const ms = visMs(o, s);
+    const bar = document.querySelector('.trow[data-i="' + k + '"] .bar i');
+    if (bar) { void bar.offsetWidth; bar.style.transition = 'width ' + ms + 'ms linear'; bar.style.width = bar.dataset.w + '%'; }
+    play.timer = setTimeout(() => {
+      if (o !== cur) return;
+      if (s.kind === 'dom' || k === o.steps.length - 1) o.net.filter((c) => c.kind === 'added').slice(0, 3).forEach((c) => box('dom', c.rect));
+      if (k + 1 < o.steps.length) start(k + 1);
+      else { stopTimer(); play.k = o.steps.length - 1; paint(play.k, true); window.__replayed++; }
+    }, ms);
+  }
+  function stepTo(k) {   // 1 段ずつ見る
+    const o = cur;
+    if (!o) return;
+    stopTimer();
+    play.k = Math.max(0, Math.min(o.steps.length - 1, k));
+    paint(play.k, false);
+    const bar = document.querySelector('.trow[data-i="' + play.k + '"] .bar i');
+    if (bar) bar.style.width = bar.dataset.w + '%';
+    if (o.steps[play.k].kind === 'dom') o.net.filter((c) => c.kind === 'added').slice(0, 3).forEach((c) => box('dom', c.rect));
+  }
+  function syncSpeed() { $('p-speed').querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.s === play.speed))); }
+  $('p-speed').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-s]'); if (!b) return;
+    play.speed = b.dataset.s; syncSpeed();
+    if (play.running) start(play.k);
+  });
+  $('p-play').addEventListener('click', () => { if (play.running) stopTimer(); else start($('p-next').disabled ? 0 : play.k); });
+  $('p-restart').addEventListener('click', () => start(0));
+  $('p-prev').addEventListener('click', () => stepTo($('p-next').disabled ? play.k : play.k - 1));
+  $('p-next').addEventListener('click', () => { if (cur && play.k >= cur.steps.length - 1) { stopTimer(); paint(play.k, true); } else stepTo(play.k + 1); });
+
+  /* ---- 受け取る ---- */
   window.addEventListener('message', (e) => {
     if (e.origin !== appOrigin || e.source !== frame.contentWindow) return;   // アプリの枠からの知らせだけを受ける
     if (!e.data || e.data.__atlasLive !== 1) return;
@@ -284,11 +454,18 @@ pre { margin: 0; padding: 6px 8px; background: var(--surface-2); border-radius: 
   $('behaviors').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-b]');
     if (!btn) return;
-    op = null;
-    renderSeen();
-    show(data.behaviors.find((x) => x.id === btn.dataset.b), false);
+    stopTimer(); rec = null; cur = null;
+    const b = data.behaviors.find((x) => x.id === btn.dataset.b);
+    setHead(b, '図（操作はしていない）', '');
+    renderPath(b);
+    $('path').querySelectorAll('.pnode').forEach((n, i) => { n.classList.add('lit'); if (i > 1) n.classList.add('drawn'); });
+    $('path').querySelectorAll('.hop').forEach((h) => h.classList.add('go-on', 'back-on'));
+    $('f-verdict').hidden = true; $('player').hidden = true; $('nowline').textContent = '';
+    $('s-times').innerHTML = '<div class="empty">操作すると、ここに出ます。</div>';
+    $('s-dom').innerHTML = $('s-reqs').innerHTML = '<div class="empty">まだありません。</div>';
   });
 
+  syncSpeed();
   renderChips();
   frame.src = appUrl;
   // 道具が開いた窓なら、アプリの枠から「開いた」の知らせがすぐ来る。来なければ、ふだんのブラウザで開かれている

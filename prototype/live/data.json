@@ -11,7 +11,7 @@
       "trigger": { "how": "open" },
       "nodes": [
         { "k": "part", "n": "ページ全体", "src": "app/index.html:31" },
-        { "k": "api", "n": "GET /api/comments", "src": "app/index.html:78（呼ぶ所）・app/sw.js:23（受ける所）" },
+        { "k": "api", "n": "GET /api/comments", "src": "app/index.html:78（呼ぶ所）・app/sw.js:28（受ける所）" },
         { "k": "store", "n": "comments", "src": "app/sw.js:5", "nt": "読む" }
       ],
       "expect": { "method": "GET", "path": "/api/comments" },
@@ -25,7 +25,7 @@
       "trigger": { "how": "submit", "part": "comment-form" },
       "nodes": [
         { "k": "part", "n": "コメント欄 ＋ Post Comment", "src": "app/index.html:33" },
-        { "k": "api", "n": "POST /api/comments", "src": "app/index.html:83（呼ぶ所）・app/sw.js:26（受ける所）" },
+        { "k": "api", "n": "POST /api/comments", "src": "app/index.html:83（呼ぶ所）・app/sw.js:31（受ける所）" },
         { "k": "store", "n": "comments", "src": "app/sw.js:5", "nt": "1 行を書く" }
       ],
       "expect": { "method": "POST", "path": "/api/comments" },
@@ -39,7 +39,7 @@
       "trigger": { "how": "click", "part": "comment-delete" },
       "nodes": [
         { "k": "part", "n": "コメントの削除ボタン", "src": "app/index.html:68" },
-        { "k": "api", "n": "DELETE /api/comments/{id}", "src": "app/index.html:96（呼ぶ所）・app/sw.js:33（受ける所）" },
+        { "k": "api", "n": "DELETE /api/comments/{id}", "src": "app/index.html:96（呼ぶ所）・app/sw.js:38（受ける所）" },
         { "k": "store", "n": "comments", "src": "app/sw.js:5", "nt": "1 行を消す" }
       ],
       "expect": { "method": "DELETE", "path": "/api/comments/{id}" },
