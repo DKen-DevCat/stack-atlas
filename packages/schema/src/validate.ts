@@ -11,6 +11,11 @@ export interface ValidationIssue {
   /** JSON Pointer 風のパス。例 `/nodes/3/layer` */
   path: string;
   message: string;
+  /**
+   * どの検査の指摘か（部品と挙動の検査だけが付ける。docs/26 §5）: ref = 参照が解けない・重複、behavior = 段の線・向き・つながり・分岐。
+   * 付いていない指摘は、形（スキーマ）か、箱・線の参照
+   */
+  rule?: 'ref' | 'behavior';
 }
 
 export interface ValidationResult {

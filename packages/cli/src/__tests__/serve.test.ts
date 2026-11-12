@@ -236,6 +236,37 @@ describe('createAtlasServer', () => {
     }
   });
 
+  // 2026-11-12 追加（Phase 10-1c のセキュリティのレビュー）: 出力先は、対象の repo の中（<dir>/.stack-atlas/out）に置かれることがある。
+  // repo に仕込まれたリンクの先（repo の外のファイル）を配信していた。出力先の中を指すリンク（上の alias）は、今までどおり配信する
+  it('シンボリックリンクの先が出力先の外なら配信しない（ファイルのリンクも、ディレクトリのリンクも 404）', async () => {
+    const { url, out } = await start();
+    const outside = mkdtempSync(join(tmpdir(), 'stack-atlas-serve-outside-'));
+    writeFileSync(join(outside, 'secret.txt'), 'secret');
+    symlinkSync(join(outside, 'secret.txt'), join(out, 'k.txt'));
+    symlinkSync(outside, join(out, 'dir'));
+    symlinkSync(join(out, 'graph.json'), join(out, 'inside.json'));
+    for (const path of ['/k.txt', '/dir/secret.txt']) {
+      const r = await fetch(`${url}${path}`);
+      expect(r.status, path).toBe(404);
+      expect(await r.text(), path).not.toContain('secret');
+      expect((await fetch(`${url}${path}`, { method: 'HEAD' })).status, path).toBe(404);
+    }
+    const inside = await fetch(`${url}/inside.json`);
+    expect(inside.status).toBe(200);
+    expect(await inside.text()).toBe('{"version":1}');
+  });
+
+  it('screens/ の中を指すリンクが深い所にあっても、CSP を付ける（実体の場所でも見る）', async () => {
+    const { url, out } = await start();
+    mkdirSync(join(out, 'screens', 'index'), { recursive: true });
+    writeFileSync(join(out, 'screens', 'index', 'index.html'), '<!DOCTYPE html><p>screen</p>');
+    mkdirSync(join(out, 'a'));
+    symlinkSync(join(out, 'screens', 'index'), join(out, 'a', 'b'));
+    const r = await fetch(`${url}/a/b/index.html`);
+    expect(r.status).toBe(200);
+    expect(r.headers.get('content-security-policy')).toBe(SCREENS_CSP);
+  });
+
   it('isScreensPath は root からの相対パスの最初の段で見る', () => {
     expect(isScreensPath('/srv/out', '/srv/out/SCREENS/a/index.html')).toBe(true);
     expect(isScreensPath('/srv/out', '/srv/out/screens/a/index.html')).toBe(true);

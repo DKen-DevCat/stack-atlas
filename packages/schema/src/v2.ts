@@ -320,6 +320,69 @@ export interface ViewV2 {
   variants?: Record<string, boolean>;
 }
 
+/** 挙動の始まりの操作（Phase 10。docs/26 §4）。ブラウザの出来事の名前で、対象の作り方に依らない */
+export const TRIGGER_ACTIONS = ['open', 'click', 'submit', 'input', 'change'] as const;
+export type TriggerAction = (typeof TRIGGER_ACTIONS)[number];
+
+/**
+ * 部品・挙動の id に使える字か（スキーマの `localId` と同じ決まり: 空でなく、`#` と制御文字を含まない）。
+ * 図を読む側（packages/core の atlas）が、同じ決まりで、わかりやすい指摘を出すために使う
+ */
+export const isLocalId = (id: string): boolean =>
+  id.length > 0 && !id.includes('#') && ![...id].some((c) => c.charCodeAt(0) < 0x20);
+
+/** 線の名指し。線に id は無いので、両端の組で指す（wires にある線と同じ参照） */
+export interface WireRef {
+  from: ItemRef;
+  to: ItemRef;
+}
+
+/** 挙動の 1 段: 送る線の列と、返る線の列。1 回の呼び出しが引数ごとに線に分かれるので、どちらも列 */
+export interface BehaviorStepV2 {
+  send: WireRef[];
+  back?: WireRef[];
+  /** 任意の補足の文 */
+  say?: string;
+  /** この段が通るときの分岐。キーは `<nodeId>#<variantId>` */
+  when?: When;
+}
+
+/** 同時に呼ぶ所: 並んだ列（列ごとに段の列） */
+export interface BehaviorParallelV2 {
+  parallel: BehaviorStepV2[][];
+}
+
+export type BehaviorEntryV2 = BehaviorStepV2 | BehaviorParallelV2;
+
+/**
+ * 挙動: 「どの画面の、どの部品を、どうすると」「どの線を順に通って」「何が返り、画面がどう変わるか」（Phase 10。docs/26 §4）。
+ * 線は作らない。wires の線の上に、名前と順番を載せる
+ */
+export interface BehaviorV2 {
+  id: string;
+  name: string;
+  /** 画面の箱（kind: screen） */
+  screen: NodeIdV2;
+  /** 始まりの操作。action が open（画面を開く）のとき、part は書かない */
+  trigger: { action: TriggerAction; part?: string };
+  steps: BehaviorEntryV2[];
+  result?: { say?: string; part?: string };
+  /** この挙動が起こせるときの分岐。キーは `<nodeId>#<variantId>` */
+  when?: When;
+}
+
+/** 画面の部品: 画面の中の要素（セレクタ）を、箱に結ぶ（Phase 10。docs/26 §3） */
+export interface PartV2 {
+  id: string;
+  name?: string;
+  /** この部品を表す箱 */
+  box: NodeIdV2;
+  /** この部品が出る画面の箱（kind: screen） */
+  screen: NodeIdV2;
+  /** 画面の中で、この部品に当たる要素のセレクタ */
+  selector: string;
+}
+
 /**
  * group になった v1 の箱（関数の箱で置き換わり、箱としては消えたもの）の元の名前・kind・file（Phase 8-6。docs/20 §5.1 #3）。
  * id は箱の `group` の値。3D の地図（@stack-atlas/wiring の projectMap）が group のノードの名前と kind に使う
@@ -342,6 +405,10 @@ export interface GraphV2 {
   views?: ViewV2[];
   /** group になった v1 の箱（Phase 8-6） */
   groups?: GroupInfoV2[];
+  /** 画面の部品（Phase 10） */
+  parts?: PartV2[];
+  /** 挙動（Phase 10） */
+  behaviors?: BehaviorV2[];
 }
 
 /** 参照 `<nodeId>#<portId>/<a>.<b>` を切る。最初の `#` で箱、次の `/` で口、残りを `.` で項目（D36） */

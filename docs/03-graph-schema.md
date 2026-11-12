@@ -152,7 +152,7 @@ kind → 表示定義。ビューアは既定の kind 表（`packages/viewer/src
 ## v2（箱・口・項目・線）
 
 Phase 8 で、箱の単位の `nodes` / `edges` に代えて **箱（node）→ 口（port）→ 項目（item）** と、項目から項目への **線（wire）** を持つ v2 を追加した。
-契約の正本は `docs/16-graph-v2-contract.md`（ID と参照 §3、箱 §4、口と項目と合成項目 §5、線と links と broken §6、分岐 §7、型と views §8、検証 §9、v1 → v2 の変換 §10、決定 D36〜D44）。たどる規則・球の規則は `docs/15-design-dataflow-model.md` §3.4〜§3.5。
+契約の正本は `docs/16-graph-v2-contract.md`（ID と参照 §3、箱 §4、口と項目と合成項目 §5、線と links と broken §6、分岐 §7、型と views §8、画面の部品と挙動 §8.3（2026-11-12。形の細部は `docs/26-atlas-files.md`）、検証 §9、v1 → v2 の変換 §10、決定 D36〜D44）。たどる規則・球の規則は `docs/15-design-dataflow-model.md` §3.4〜§3.5。
 
 | もの | 場所 |
 |---|---|

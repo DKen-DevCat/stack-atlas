@@ -38,7 +38,7 @@
 
 ## 現在の状態と次のタスク
 
-テストは `pnpm test` で 1586 件（skip 2。`STACK_ATLAS_REQUIRE_GO=1` で go の側も）、viewer の e2e は 71 件（skip 4。3D の地図の spec は手元のヘッドレスで止まる・遅いことがある。CI で実行。配線図だけを確かめる spec は `&pane=wiring`）。`examples/fixture-poly/`（2 repo の合成）は 56 ノード / 95 エッジ / 2 フロー / エラー 0。
+テストは `pnpm test` で 1630 件（skip 2。`STACK_ATLAS_REQUIRE_GO=1` で go の側も）、viewer の e2e は 71 件（skip 4。3D の地図の spec は手元のヘッドレスで止まる・遅いことがある。CI で実行。配線図だけを確かめる spec は `&pane=wiring`）。`examples/fixture-poly/`（2 repo の合成）は 56 ノード / 95 エッジ / 2 フロー / エラー 0。
 実リポジトリでは設定を**この公開リポジトリの外**（兄弟ディレクトリ。`repos: { web: ../damage-web, platform: ../damage-platform }`）に置いて build し、149 / 330 / エラー 0 / 警告 0 を確認した（内訳は `HANDOFF.md` §0）。
 
 次にやること（2026-11-11 から）: **docs/24 の要件 v2 の設計**（エージェントの書きこみ口・検査・画面から始めるビューア。docs/24 §7）。以下はそれより前の記録で、Phase 6 の残りのうち抽出器に依るものは進めない。
@@ -111,4 +111,4 @@ prototype/                         ← 単一 HTML のプロトタイプ（three
 scripts/                           ← export-prototype-data / validate-graph（互換ラッパ）/ sync-samples
 ```
 
-主なコマンド: `pnpm atlas build examples/fixture-repo -o out --with-viewer --no-screenshots`（または `examples/fixture-poly`）→ `pnpm atlas serve out`、`pnpm validate <graph.json>`、`pnpm dev`（ビューア開発サーバ）。新しい道（docs/25・docs/26）: `pnpm atlas check <dir>`（`<dir>/.stack-atlas/` の図を検査する。`--json`）。ハーネス: `pnpm atlas build <repo> --dry-run --json`（止まったときも `{ error }` の JSON）/ `--strict --no-screenshots`、`pnpm atlas validate --strict <graph.json>`、`pnpm atlas init --skill <dir> [--update]`、`pnpm atlas init-views <repo>`（docs/13 §3.6b）。
+主なコマンド: `pnpm atlas build examples/fixture-repo -o out --with-viewer --no-screenshots`（または `examples/fixture-poly`）→ `pnpm atlas serve out`、`pnpm validate <graph.json>`、`pnpm dev`（ビューア開発サーバ）。新しい道（docs/25・docs/26）: `pnpm atlas check <dir>`（`<dir>/.stack-atlas/` の図を検査する。`--json`）、`pnpm atlas bundle <dir> [-o <outDir>]`（図を 1 つの graph.json にまとめる。`serve` で開ける）。ハーネス: `pnpm atlas build <repo> --dry-run --json`（止まったときも `{ error }` の JSON）/ `--strict --no-screenshots`、`pnpm atlas validate --strict <graph.json>`、`pnpm atlas init --skill <dir> [--update]`、`pnpm atlas init-views <repo>`（docs/13 §3.6b）。

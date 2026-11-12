@@ -12,17 +12,32 @@
  *   <repo>/.stack-atlas/memos.json と outDir/memos.json に書く。--repo が無ければ 405
  * - `/screens/` の下（screens 抽出器が書いた画面の HTML と資産。docs/18 §3.3）は `Content-Security-Policy`（`sandbox` 付き）を
  *   付けて返す。画面の HTML や SVG をタブで直接開いても script は動かず、外へも読みに行かない
+ * - 配信するのは、outDir（とビューア）の中の普通のファイルだけ。シンボリックリンクの先が outDir の外なら 404
+ *   （出力先は、対象の repo の中に置かれることがある。repo に仕込まれたリンクの先（repo の外のファイル）を配信しないため。
+ *   outDir の中を指すリンクは、今までどおり配信する）
  */
 import {
   SCREENS_DIR,
   isMemos,
+  pathWithin,
   saveMemos,
   serializeMemos,
   silentLogger,
   type Logger,
   type Memos,
 } from '@stack-atlas/core';
-import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  constants,
+  createReadStream,
+  existsSync,
+  fstatSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import { VIEWER_DIST } from '../paths.js';
@@ -97,6 +112,37 @@ export function resolveStaticPath(root: string, urlPath: string): string | null 
   if (rel === '' || rel.startsWith('..') || isAbsolute(rel) || rel.split(sep).includes('..'))
     return null;
   return target;
+}
+
+/**
+ * root の下の file を、配信のために開く。シンボリックリンクを解いた先が root の外のとき・普通のファイルでないとき・無いときは
+ * undefined。root の中を指すリンク（別名のディレクトリなど）は開く。root そのものがリンクかどうかは問わない（利用者が指定した場所）。
+ * realRoot と real は、リンクを解いたあとの root と file（`/screens/` の下かどうかを、実体の場所でも確かめるために返す）
+ */
+export function openStaticFile(
+  root: string,
+  file: string,
+): { fd: number; size: number; realRoot: string; real: string } | undefined {
+  let fd: number;
+  let realRoot: string;
+  let real: string;
+  try {
+    realRoot = realpathSync(root);
+    real = realpathSync(file);
+    if (!pathWithin(realRoot, real)) return undefined;
+    // 普通のファイルでないもの（ディレクトリ・名前付きパイプなど）は、開かない（パイプは、開くだけで待たされる）
+    if (!statSync(real).isFile()) return undefined;
+    // 解いたあとのパスを、O_NOFOLLOW で開く（確かめてから開くまでの間に、最後の段をリンクに差し替えられても辿らない）
+    fd = openSync(real, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  } catch {
+    return undefined;
+  }
+  const st = fstatSync(fd);
+  if (!st.isFile()) {
+    closeSync(fd);
+    return undefined;
+  }
+  return { fd, size: st.size, realRoot, real };
 }
 
 /**
@@ -242,22 +288,23 @@ export function createAtlasServer(opts: ServeOptions): Server {
     for (const root of roots) {
       const file = resolveStaticPath(root, url);
       if (file === null) return send(res, 400, 'Bad Request');
-      let st;
-      try {
-        st = statSync(file);
-      } catch {
-        continue;
-      }
-      if (!st.isFile()) continue;
+      const opened = openStaticFile(root, file);
+      if (!opened) continue;
       res.writeHead(200, {
         'Content-Type': contentType(file),
-        'Content-Length': st.size,
+        'Content-Length': opened.size,
         'Cache-Control': 'no-cache',
         'X-Content-Type-Options': 'nosniff',
-        ...(isScreensPath(root, file) ? { 'Content-Security-Policy': SCREENS_CSP } : {}),
+        // `/screens/` の下かどうかは、URL から解いたパスと、リンクを解いた実体の場所の、どちらでも見る
+        ...(isScreensPath(root, file) || isScreensPath(opened.realRoot, opened.real)
+          ? { 'Content-Security-Policy': SCREENS_CSP }
+          : {}),
       });
-      if (req.method === 'HEAD') return res.end();
-      createReadStream(file).pipe(res);
+      if (req.method === 'HEAD') {
+        closeSync(opened.fd);
+        return res.end();
+      }
+      createReadStream(file, { fd: opened.fd }).pipe(res);
       return;
     }
     send(res, 404, 'Not Found');

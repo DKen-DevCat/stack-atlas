@@ -3,10 +3,21 @@
  * 読むのは決まった名前のファイルだけ、シンボリックリンクは辿らない、大きさと数に上限、YAML の別名の展開に上限（local-files）。
  *
  * ここでは「形」を見る。形の違う要素は、その要素だけ捨てて指摘にする（ほかの要素の検査を止めない）。
- * 返す箱・線・型は、どれも契約のスキーマを通ったもの。参照（線の端が解けるか、など）と挙動の検査は check.ts。
+ * 返す箱・線・型・部品・挙動は、どれも契約のスキーマを通ったもの。参照（線の端が解けるか、など）と挙動の検査は check.ts。
  * 知らないキーは誤りにする（`back` を `bak` と打つと、返りの線が黙って消えるため）
+ *
+ * 形の決まりの正は、契約のスキーマ（@stack-atlas/schema）。部品と挙動は、その前に、ここの手書きの確かめ（parsePart・parseBehavior）を通す。
+ * 手書きの確かめの役目は、指摘の文を、書いた人が直せる言葉にすること（スキーマの指摘は、入れ子の深い所で読みにくい）。
+ * 手書きの確かめは、スキーマより緩くしない（緩い所があると、スキーマの読みにくい指摘が出る。atlas-check.test.ts が確かめる）。
+ * 名指し（部品の box・screen、挙動の screen・部品・線・分岐のキー）の形は、どちらも問わない。解けるかどうかを、検査が確かめる
  */
-import { validateGraphV2, type NamedType, type NodeV2, type WireV2 } from '@stack-atlas/schema';
+import {
+  isLocalId,
+  validateGraphV2,
+  type NamedType,
+  type NodeV2,
+  type WireV2,
+} from '@stack-atlas/schema';
 import { listLocalDir, parseLocalYaml, readLocalFile, whyText } from '../local-files.js';
 import { isPlainObject } from '../util.js';
 import {
@@ -29,8 +40,21 @@ import {
 } from './types.js';
 
 const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
-/** id に使えない字: 参照の区切り（`#`）と、制御文字 */
-const badId = (id: string) => id.includes('#') || [...id].some((c) => c.charCodeAt(0) < 0x20);
+const hasControl = (id: string) => [...id].some((c) => c.charCodeAt(0) < 0x20);
+
+/**
+ * JSON で表せる値だけか（文字列・有限の数・真偽・null・配列・ふつうのオブジェクト）。
+ * YAML は、日付や集合などの値も作れる（`%YAML 1.1` と書いたファイル）。それらは、契約の形（JSON）に写すと別の値に変わる
+ */
+function isJsonValue(v: unknown, depth = 0): boolean {
+  if (v === null || typeof v === 'string' || typeof v === 'boolean') return true;
+  if (typeof v === 'number') return Number.isFinite(v);
+  if (typeof v !== 'object' || depth > 100) return false;
+  if (Array.isArray(v)) return v.every((x) => isJsonValue(x, depth + 1));
+  const proto: unknown = Object.getPrototypeOf(v);
+  if (proto !== Object.prototype && proto !== null) return false;
+  return Object.values(v).every((x) => isJsonValue(x, depth + 1));
+}
 
 type Push = (issue: Omit<AtlasIssue, 'check' | 'level'> & { level?: AtlasIssue['level'] }) => void;
 
@@ -69,6 +93,15 @@ function readYaml(
   const parsed = parseLocalYaml(read.text);
   if ('error' in parsed) {
     push({ file, message: `YAML として読めません: ${parsed.error}` });
+    return { status: 'unreadable' };
+  }
+  if (!isJsonValue(parsed.value)) {
+    push({
+      file,
+      message:
+        '文字列・数・true / false・配列・{ キー: 値 } のほかの値（日付・集合・無限大など）があるので読みません。' +
+        '日付に見える値は引用符で囲み、先頭の %YAML の行は消してください',
+    });
     return { status: 'unreadable' };
   }
   return { status: 'ok', value: parsed.value };
@@ -238,7 +271,7 @@ function parseBehavior(v: unknown, file: string, path: string, push: Push): Beha
     }
   }
   const id = v.id as string;
-  if (badId(id)) {
+  if (!isLocalId(id)) {
     push({
       file,
       path: `${path}/id`,
@@ -319,7 +352,7 @@ function parsePart(v: unknown, file: string, path: string, push: Push): Part | u
       return undefined;
     }
   }
-  if (badId(v.id as string)) {
+  if (!isLocalId(v.id as string)) {
     push({
       file,
       path: `${path}/id`,
@@ -341,10 +374,16 @@ function parsePart(v: unknown, file: string, path: string, push: Push): Part | u
   return part;
 }
 
-type GraphKey = 'nodes' | 'wires' | 'types';
-const WHAT: Record<GraphKey, string> = { nodes: '箱', wires: '線', types: '型' };
+type GraphKey = 'nodes' | 'wires' | 'types' | 'parts' | 'behaviors';
+const WHAT: Record<GraphKey, string> = {
+  nodes: '箱',
+  wires: '線',
+  types: '型',
+  parts: '部品',
+  behaviors: '挙動',
+};
 
-/** 1 つの箱・線・型を、契約のスキーマに掛ける。合わなければ指摘して undefined（その要素だけ捨てる） */
+/** 1 つの箱・線・型・部品・挙動を、契約のスキーマに掛ける。合わなければ指摘して undefined（その要素だけ捨てる） */
 function validElement<T>(
   key: GraphKey,
   raw: unknown,
@@ -363,6 +402,8 @@ function validElement<T>(
     nodes: [],
     wires: [],
     types: [],
+    parts: [],
+    behaviors: [],
   };
   doc[key] = [raw];
   const v = validateGraphV2(doc);
@@ -375,7 +416,7 @@ function validElement<T>(
     return undefined;
   }
   // 箱 id の `#` は、契約のスキーマが断る（項目の参照と、分岐のキーで解けなくなるため）。ここでは、制御文字を足して断る
-  if (key === 'nodes' && badId((raw as { id: string }).id)) {
+  if (key === 'nodes' && hasControl((raw as { id: string }).id)) {
     push({ file, path: what, message: '箱 id に使えない字（制御文字）があります' });
     return undefined;
   }
@@ -399,6 +440,8 @@ export function loadAtlas(root: string): { atlas: LoadedAtlas; issues: AtlasIssu
     nodeFiles: [],
     wireFiles: [],
     typeFiles: [],
+    partAt: [],
+    behaviorAt: [],
     status: { parts: 'missing', behaviors: 'missing' },
   };
 
@@ -514,8 +557,13 @@ export function loadAtlas(root: string): { atlas: LoadedAtlas; issues: AtlasIssu
     atlas.files.push(ATLAS_PATHS.parts);
     const list = listOf(py.value, 'parts', ATLAS_PATHS.parts, push);
     for (const [i, v] of list.slice(0, ATLAS_LIMITS.parts).entries()) {
-      const part = parsePart(v, ATLAS_PATHS.parts, `/parts/${i}`, push);
-      if (part) atlas.parts.push(part);
+      // 手書きの確かめ（直せる言葉の指摘）のあと、契約のスキーマにも掛ける（形の決まりの正。ここで落ちるのは、手書きの側の漏れ）
+      const parsed = parsePart(v, ATLAS_PATHS.parts, `/parts/${i}`, push);
+      const part = parsed && validElement<Part>('parts', parsed, ATLAS_PATHS.parts, i, push);
+      if (part) {
+        atlas.parts.push(part);
+        atlas.partAt.push(i);
+      }
     }
     if (list.length > ATLAS_LIMITS.parts)
       push({
@@ -531,8 +579,13 @@ export function loadAtlas(root: string): { atlas: LoadedAtlas; issues: AtlasIssu
     atlas.files.push(ATLAS_PATHS.behaviors);
     const list = listOf(by.value, 'behaviors', ATLAS_PATHS.behaviors, push);
     for (const [i, v] of list.slice(0, ATLAS_LIMITS.behaviors).entries()) {
-      const b = parseBehavior(v, ATLAS_PATHS.behaviors, `/behaviors/${i}`, push);
-      if (b) atlas.behaviors.push(b);
+      const parsed = parseBehavior(v, ATLAS_PATHS.behaviors, `/behaviors/${i}`, push);
+      const b =
+        parsed && validElement<Behavior>('behaviors', parsed, ATLAS_PATHS.behaviors, i, push);
+      if (b) {
+        atlas.behaviors.push(b);
+        atlas.behaviorAt.push(i);
+      }
     }
     if (list.length > ATLAS_LIMITS.behaviors)
       push({

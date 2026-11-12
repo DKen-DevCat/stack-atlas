@@ -4,6 +4,7 @@
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 import schema from '../graph-v2.schema.json' with { type: 'json' };
+import { checkBehaviors, wireKey } from './behaviors.js';
 import { formatAjvError, validateGraph, type ValidationIssue } from './validate.js';
 import {
   parseItemRef,
@@ -222,7 +223,7 @@ function checkGraph(g: GraphV2): { errors: ValidationIssue[]; warnings: Validati
     if (!to) error(`${base}/to`, `線の終点 "${w.to}" がありません`);
     else if (to.port.dir !== 'in')
       error(`${base}/to`, `線の終点 "${w.to}" は dir in の口の項目ではありません`);
-    const key = `${w.from}\u0000${w.to}`;
+    const key = wireKey(w);
     if (seen.has(key)) error(base, `線 "${w.from}" → "${w.to}" が重複しています`);
     seen.add(key);
     if (from && to) {
@@ -244,6 +245,18 @@ function checkGraph(g: GraphV2): { errors: ValidationIssue[]; warnings: Validati
       }
     });
   });
+
+  // 部品と挙動（Phase 10。docs/26 §5）。どちらも無い graph では、何もしない（箱と線の索引を作らない）。
+  // 誤りにした線は、挙動からは「無い線」として扱う
+  if (g.parts?.length || g.behaviors?.length) {
+    const badWires = new Set<number>();
+    for (const e of errors) {
+      const m = /^\/wires\/(\d+)/.exec(e.path);
+      if (m) badWires.add(Number(m[1]));
+    }
+    for (const issue of checkBehaviors(g, badWires))
+      (issue.level === 'error' ? errors : warnings).push(issue);
+  }
 
   // views
   const viewIds = new Set<string>();
@@ -302,7 +315,9 @@ function checkGraph(g: GraphV2): { errors: ValidationIssue[]; warnings: Validati
 export function validateGraphV2(json: unknown): ValidationResultV2 {
   const validate = getSchemaValidator();
   if (!validate(json)) {
-    return { ok: false, errors: (validate.errors ?? []).map(formatAjvError), warnings: [] };
+    // `if` の指摘は「then / else のどちらかに合わない」というまとめで、合わない所そのものは、別の指摘に出ている
+    const found = (validate.errors ?? []).filter((e) => e.keyword !== 'if');
+    return { ok: false, errors: found.map(formatAjvError), warnings: [] };
   }
   const graph = json as GraphV2;
   const { errors, warnings } = checkGraph(graph);
