@@ -99,7 +99,7 @@ function itemLabel(nodes: ReadonlyMap<string, NodeV2>, ref: string): string {
  * 箱の meta.route を、メソッドとパスに分ける。書き方は 2 つ（`"POST /items"` と `{ method: "POST", path: "/items" }`）。
  * メソッドの無いもの・読めないものは、照らす相手にしない（undefined）
  */
-function routeOf(n: NodeV2 | undefined): { method: string; path: string } | undefined {
+export function nodeRoute(n: NodeV2 | undefined): { method: string; path: string } | undefined {
   const route: unknown = n?.meta?.route;
   if (typeof route === 'string') {
     const m = /^([A-Za-z]+)\s+(\S.*)$/.exec(route.trim());
@@ -147,7 +147,7 @@ export function behaviorView(graph: GraphV2, behaviorId: string): BehaviorView |
     if (place.parallel) view.parallel = place.parallel;
     if (step.say !== undefined) view.say = step.say;
     if (step.when !== undefined) view.when = { ...step.when };
-    const route = vias.includes('http') && from?.runtime === 'browser' ? routeOf(to) : undefined;
+    const route = vias.includes('http') && from?.runtime === 'browser' ? nodeRoute(to) : undefined;
     if (route) view.request = route;
     steps.push(view);
     return next;
