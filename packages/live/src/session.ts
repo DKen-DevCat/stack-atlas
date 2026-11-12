@@ -38,7 +38,7 @@ import type {
 } from 'playwright';
 import { checkLiveUrl, checkLocalName, isLocalHost, proxyBypass, resolverRules } from './local.js';
 import { startRefuser, type Refuser } from './refuser.js';
-import { startLiveServer, type LiveServer } from './server.js';
+import { MINIMAL_PAGE_DIR, defaultPageDir, startLiveServer, type LiveServer } from './server.js';
 import { liveWatcher } from './watcher.js';
 
 /** 起動できなかった（exitCode: 1 = 図に誤りがある、2 = 引数・環境の誤り） */
@@ -64,6 +64,8 @@ export interface LiveOptions {
   localNames?: string[];
   /** 窓を出さない（確かめ用） */
   headless?: boolean;
+  /** 配るライブの画面のファイルの置き場（確かめ用。既定は defaultPageDir()） */
+  pageDir?: string;
   /** 端末への案内（値は渡さない） */
   log?: (line: string) => void;
 }
@@ -150,7 +152,12 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
   };
 
   try {
-    server = await startLiveServer({ hostname: appUrl.hostname, appOrigin });
+    const pageDir = opts.pageDir ?? defaultPageDir();
+    if (pageDir === MINIMAL_PAGE_DIR)
+      log(
+        'ビューアのライブの画面が組み立てられていないので、出来事を並べるだけの画面で開きます（pnpm build で組み立てると、経路と再生が出ます）',
+      );
+    server = await startLiveServer({ hostname: appUrl.hostname, appOrigin, pageDir });
     const live = server;
     const noSandbox = process.env[NO_SANDBOX_ENV] === '1';
     if (noSandbox) log(`${NO_SANDBOX_ENV}=1 なので、ブラウザをサンドボックス無しで起動します`);

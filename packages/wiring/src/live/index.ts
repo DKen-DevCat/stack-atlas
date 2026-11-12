@@ -28,3 +28,4 @@ export {
   type LiveChoice,
 } from './choose.js';
 export { progressAt, timelineOf, type LiveTimeline, type TimeSlice } from './timeline.js';
+export { stepTimings, type StepTiming } from './playback.js';

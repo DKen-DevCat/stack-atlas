@@ -8,11 +8,12 @@
     "predev": "node ../../scripts/sync-samples.mjs",
     "dev": "vite",
     "prebuild": "node ../../scripts/sync-samples.mjs",
-    "build": "vite build",
+    "build": "vite build && vite build --config vite.live.config.ts",
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "build:live": "vite build --config vite.live.config.ts"
   },
   "dependencies": {
     "@stack-atlas/schema": "workspace:*",

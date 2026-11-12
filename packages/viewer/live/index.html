@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stack Atlas ライブ</title>
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <!-- ライブの画面（docs/27 §4.4）。左にアプリ、右に挙動の一覧と経路。アプリの画面の上に、道具の面を重ねない。
+         道具とは、ブラウザを動かす部品の口だけで話す。図とアプリから来た文字は、どれも文字として出す -->
+    <main class="live" id="live">
+      <section class="shot" aria-label="アプリ">
+        <div class="chrome">
+          <button
+            class="ibtn"
+            id="reload"
+            type="button"
+            title="アプリを開き直す"
+            aria-label="アプリを開き直す"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 3a5 5 0 1 0 4.6 3h-1.7A3.5 3.5 0 1 1 8 4.5V7l3.5-3L8 1z" />
+            </svg>
+          </button>
+          <span class="url" id="url"></span>
+        </div>
+        <div class="frame">
+          <div id="app-pane"></div>
+          <div class="overlay" id="overlay" aria-hidden="true"></div>
+        </div>
+      </section>
+
+      <section class="flow" aria-label="挙動と経路">
+        <div class="guards">
+          <button
+            class="guard"
+            id="reveal"
+            type="button"
+            aria-pressed="false"
+            title="通信の値を見る（既定は切。入れているあいだ、色が変わる）"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path
+                d="M8 3C4 3 1.5 8 1.5 8S4 13 8 13s6.5-5 6.5-5S12 3 8 3zm0 8a3 3 0 1 1 0-6 3 3 0 0 1 0 6z"
+              />
+            </svg>
+            <span>値を見る</span>
+          </button>
+          <button
+            class="guard"
+            id="hold"
+            type="button"
+            aria-pressed="false"
+            title="手元への書きこみを、出る直前で止める（止めきれない通信もある）"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 1 2.5 3v4.5C2.5 11 5 13.7 8 15c3-1.3 5.5-4 5.5-7.5V3z" />
+            </svg>
+            <span>止めて見る</span>
+          </button>
+        </div>
+        <p class="note" id="note"></p>
+        <label class="screens" id="screens" hidden
+          >画面
+          <select id="screen"></select
+        ></label>
+
+        <h2 class="cap">この画面の挙動</h2>
+        <div class="chips" id="behaviors"></div>
+        <div class="flow-head" aria-live="polite">
+          <h2 id="f-name">操作を待っています</h2>
+          <span class="tag" id="f-state" hidden></span>
+          <span class="tag" id="f-verdict" hidden></span>
+        </div>
+
+        <div class="player" id="player" hidden>
+          <button
+            class="pbtn"
+            id="p-play"
+            type="button"
+            aria-label="再生・一時停止"
+            title="再生・一時停止"
+          >
+            <svg class="i-play" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M4 2.5v11l9-5.5z" />
+            </svg>
+            <svg class="i-pause" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M3.5 2.5h3v11h-3zM9.5 2.5h3v11h-3z" />
+            </svg>
+          </button>
+          <div class="seek">
+            <div class="segs" id="p-segs"></div>
+            <input
+              id="p-seek"
+              type="range"
+              min="0"
+              max="1"
+              step="any"
+              value="0"
+              aria-label="再生位置"
+              title="再生位置"
+            />
+          </div>
+          <div class="speed" title="見せる速さ（左が 0.1 倍、右が 1 倍）">
+            <svg viewBox="0 0 8 12" aria-hidden="true"><path d="M1 1l6 5-6 5z" /></svg>
+            <input
+              id="p-speed"
+              type="range"
+              min="0.1"
+              max="1"
+              step="0.1"
+              value="0.2"
+              aria-label="見せる速さ（0.1 倍から 1 倍）"
+            />
+            <svg viewBox="0 0 22 12" aria-hidden="true">
+              <path d="M1 1l6 5-6 5zM8 1l6 5-6 5zM15 1l6 5-6 5z" />
+            </svg>
+          </div>
+        </div>
+
+        <div class="path" id="path"></div>
+        <div class="key">
+          <span class="s"><i></i>実際に見えたもの（ブラウザから出た通信まで）</span>
+          <span class="d"><i></i>図に書かれているもの（その先は、見えない）</span>
+        </div>
+
+        <div class="sec" id="sec-lines" hidden>
+          <h3>図との食い違い</h3>
+          <pre id="lines"></pre>
+          <button class="small-btn" id="copy" type="button">写す</button>
+        </div>
+        <div class="sec">
+          <h3>時間の内訳（実際にかかった時間）</h3>
+          <div id="s-times"><div class="empty">操作すると、ここに出ます。</div></div>
+        </div>
+        <div class="sec">
+          <h3>画面に反映されたもの</h3>
+          <div id="s-dom"><div class="empty">まだありません。</div></div>
+        </div>
+        <details class="sec">
+          <summary>実際の通信</summary>
+          <div id="s-reqs"><div class="empty">まだありません。</div></div>
+        </details>
+        <div class="sec">
+          <h3>これまでの操作</h3>
+          <ol class="history" id="history"></ol>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="../src/live/main.ts"></script>
+  </body>
+</html>

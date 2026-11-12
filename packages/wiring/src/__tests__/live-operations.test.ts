@@ -13,6 +13,7 @@ import {
   progressAt,
   screenFor,
   startsBehavior,
+  stepTimings,
   timelineOf,
   verdictLines,
   worthShowing,
@@ -649,5 +650,42 @@ describe('道具は、言語を選ばない（docs/24。docs/27 の条件 11）'
     expect(files.length).toBeGreaterThan(5);
     for (const f of files)
       expect(readFileSync(`${dir}${f}`, 'utf8').match(names)?.[0], f).toBeUndefined();
+  });
+});
+
+describe('stepTimings: 経路の段が、時間の軸のどこで光るか', () => {
+  const view = behaviorView(graph, 'post-comment')!;
+  const op = record(postEvents, 60_000).closed[0]!;
+  const line = timelineOf(op);
+  const verdict = matchRequests(view, op.requests);
+  const timings = stepTimings(view, verdict, line);
+
+  it('通信の段は、実際に送った時刻と、返事が来た時刻。奥の段は、その通信の中に並ぶ。手前の段は、返事のあと', () => {
+    const at = (i: number) => timings.find((t) => t.index === i)!;
+    // 段 0: 投稿の POST（5〜505ms）、段 1: 受け口 → データの置き場（POST の中）
+    expect(at(0)).toMatchObject({ observed: true, request: 'r1', sendAt: 5, backAt: 505 });
+    expect(at(1).observed).toBe(false);
+    expect(at(1).sendAt).toBeGreaterThan(5);
+    expect(at(1).sendAt).toBeLessThan(255);
+    // 段 2: 返ってから、読み直しを呼ぶ（POST の返事のあと）
+    expect(at(2)).toMatchObject({ observed: false, sendAt: 505 });
+    // 段 3: 読み直しの GET（510〜730ms）、段 4: その中、段 5〜7: 返ってから描く
+    expect(at(3)).toMatchObject({ observed: true, request: 'r2', sendAt: 510, backAt: 730 });
+    expect(at(4).sendAt).toBeGreaterThan(510);
+    expect(at(4).backAt).toBeGreaterThan(at(4).sendAt!);
+    expect(at(4).backAt).toBeLessThan(730);
+    for (const i of [5, 6, 7]) expect(at(i).sendAt).toBe(730);
+  });
+
+  it('出なかった通信の段は、光らず、印が付く。返らない通信は、行きだけ光る', () => {
+    const lone = record(
+      [part(0, 'submit', 'comment-form'), req(5, 'r1', 'POST /api/comments')],
+      60_000,
+    ).closed[0]!;
+    const t = stepTimings(view, matchRequests(view, lone.requests), timelineOf(lone));
+    expect(t[0]).toMatchObject({ observed: true, sendAt: 5 });
+    expect(t[0]!.backAt).toBeUndefined();
+    expect(t.find((x) => x.index === 3)).toMatchObject({ observed: false, missing: true });
+    expect(t.find((x) => x.index === 3)!.sendAt).toBeUndefined();
   });
 });
