@@ -285,3 +285,4 @@ export {
   type LocalReadResult,
 } from './local-files.js';
 export { clipRegion } from '@stack-atlas/wiring';
+export * from './atlas/index.js';

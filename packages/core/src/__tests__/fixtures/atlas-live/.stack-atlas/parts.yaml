@@ -1,0 +1,17 @@
+# 画面の部品: 画面の中の要素（セレクタ）を、図の箱に結ぶ
+parts:
+  - id: comment-form
+    name: "コメント欄 ＋ Post Comment"
+    box: "part:comment-form"
+    screen: "screen:/"
+    selector: "#comment-form"
+  - id: comment-delete
+    name: "コメントの削除ボタン"
+    box: "part:comment-delete"
+    screen: "screen:/"
+    selector: "button.del"
+  - id: comment-list
+    name: "コメントの一覧"
+    box: "part:comment-list"
+    screen: "screen:/"
+    selector: "#comments"

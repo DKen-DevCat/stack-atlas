@@ -1,6 +1,7 @@
 export { main, USAGE } from './main.js';
 export { runBuild, formatBuildSummary, type BuildOptions } from './commands/build.js';
 export { runValidate, strictReportErrors, type ValidateOptions } from './commands/validate.js';
+export { runCheck, type CheckOptions } from './commands/check.js';
 export { runDiff, formatDiff } from './commands/diff.js';
 export {
   runInitFlows,
