@@ -3,9 +3,11 @@ import { validateGraphV2 } from '@stack-atlas/schema';
 import {
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -86,5 +88,74 @@ describe('stack-atlas bundle', () => {
 
   it('引数が多ければ終了コード 2', () => {
     expect(runBundle(['a', 'b'], () => {})).toBe(2);
+  });
+
+  // ここから下は、PR を作る前のレビュー（docs/26 §9）で見つかったこと
+  it('図に誤りがあるとき、前にまとめた graph.json を残さない（古い図を、今の図としてビューアに出さない）', () => {
+    const root = copy();
+    const out = join(root, '.stack-atlas/out/graph.json');
+    expect(runBundle([root], () => {})).toBe(0);
+    expect(existsSync(out)).toBe(true);
+
+    const parts = join(root, '.stack-atlas/parts.yaml');
+    writeFileSync(
+      parts,
+      readFileSync(parts, 'utf8').replace('box: "part:status"', 'box: "part:nothing"'),
+    );
+    const lines: string[] = [];
+    expect(runBundle([root], (l) => lines.push(l))).toBe(1);
+    expect(existsSync(out)).toBe(false);
+    expect(lines.join('\n')).toContain(
+      `前にまとめた graph.json は、今の図と合わないので消しました: ${out}`,
+    );
+    // --json でも、消したファイルが出る。もう残っていなければ null
+    const json: string[] = [];
+    expect(runBundle([root], (l) => json.push(l), { json: true })).toBe(1);
+    expect(JSON.parse(json.join('\n'))).toMatchObject({ written: null, removed: null, kept: null });
+  });
+
+  it('消すのは、bundle が書いた graph.json だけ（ほかの手段で作ったもの・読めないものには触らず、残っていると知らせる）', () => {
+    const root = copy();
+    const parts = join(root, '.stack-atlas/parts.yaml');
+    writeFileSync(
+      parts,
+      readFileSync(parts, 'utf8').replace('box: "part:status"', 'box: "part:nothing"'),
+    );
+    const outDir = mkdtempSync(join(tmpdir(), 'stack-atlas-cli-bundle-out-'));
+    const out = join(outDir, 'graph.json');
+    for (const other of ['{"version":2,"nodes":[],"wires":[]}', 'not json', 'null']) {
+      writeFileSync(out, other);
+      const lines: string[] = [];
+      expect(runBundle([root], (l) => lines.push(l), { out: outDir, json: true })).toBe(1);
+      expect(readFileSync(out, 'utf8')).toBe(other);
+      expect(JSON.parse(lines.join('\n'))).toMatchObject({ removed: null, kept: out });
+    }
+    // 出力先の graph.json がリンクなら、読みも消しもしない（リンクも、リンクの先も、そのまま）
+    const target = join(mkdtempSync(join(tmpdir(), 'stack-atlas-cli-bundle-else-')), 'target.json');
+    writeFileSync(target, '{"project":{"generator":{"v2":"atlas"}}}');
+    rmSync(out);
+    symlinkSync(target, out);
+    expect(runBundle([root], () => {}, { out: outDir })).toBe(1);
+    expect(lstatSync(out).isSymbolicLink()).toBe(true);
+    expect(existsSync(target)).toBe(true);
+  });
+
+  it('出力先に index.html があれば、serve がそれを配信することを知らせる', () => {
+    const root = copy();
+    mkdirSync(join(root, '.stack-atlas/out'));
+    const index = join(root, '.stack-atlas/out/index.html');
+    writeFileSync(index, '<p>?</p>');
+    const lines: string[] = [];
+    expect(runBundle([root], (l) => lines.push(l))).toBe(0);
+    expect(lines.join('\n')).toContain(`この index.html を配信します`);
+    expect(lines.join('\n')).toContain(index);
+    const json: string[] = [];
+    expect(runBundle([root], (l) => json.push(l), { json: true })).toBe(0);
+    expect((JSON.parse(json.join('\n')) as { notes: string[] }).notes).toHaveLength(1);
+    // 無ければ、何も足さない
+    const clean = copy();
+    const quiet: string[] = [];
+    expect(runBundle([clean], (l) => quiet.push(l), { json: true })).toBe(0);
+    expect((JSON.parse(quiet.join('\n')) as { notes: string[] }).notes).toEqual([]);
   });
 });

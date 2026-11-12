@@ -2,18 +2,24 @@
  * 挙動（graph.json v2 の behaviors。Phase 10、docs/26 §4）を、見せるための形にする: 段ごとに、どの箱からどの箱へ、何を送り、何が返るか。
  * ビューア（挙動の経路を上から下へ並べる面。docs/25 §3.5）が使う。純粋な計算で、DOM も、対象のコードも見ない。
  *
- * 検査を通った graph を前提にする（解けない線の段は、飛ばさずに、分かる範囲で出す）
+ * 検査を通った graph を前提にする（解けない線の段は、飛ばさずに、分かる範囲で出す）。
+ * 段のたどり方と、経路の進め方は、検査（@stack-atlas/schema の checkBehaviors）と同じ関数を使う（決まりを 2 か所に書かない）
  */
 import {
+  WIRE_VIAS,
+  advancePath,
+  behaviorStartBox,
   parseItemRef,
-  type BehaviorStepV2,
+  walkBehavior,
+  wireKey,
+  wireRefBoxes,
   type BehaviorV2,
   type GraphV2,
   type ItemV2,
   type NodeV2,
   type PartV2,
   type TriggerAction,
-  type WireRef,
+  type When,
   type WireVia,
 } from '@stack-atlas/schema';
 
@@ -36,14 +42,18 @@ export interface StepView {
   depth: number;
   from: BoxView;
   to: BoxView;
-  via: WireVia | undefined;
+  /** 送る線の運び方（重複なし。契約の語彙の順）。1 つの段の線は、ふつうは同じ運び方。解けない線は数えない */
+  vias: WireVia[];
   /** 送るもの・返るものの名前（項目の name を、親から `.` でつないだもの） */
   send: string[];
   back: string[];
   say?: string;
+  /** この段が通るときの分岐（キーは `<箱 id>#<分岐 id>`） */
+  when?: When;
   /**
    * 画面の側（runtime: browser）から、受け口（meta.route のある箱）へ、通信（via: http）で出る段なら、そのメソッドとパス。
-   * ライブ（docs/25 D206）は、この段だけを「実際に見える段」として、ブラウザから出た通信と照らす
+   * ライブ（docs/25 D206）は、この段だけを「実際に見える段」として、ブラウザから出た通信と照らす。
+   * 照らすためだけの値で、道具がこの値で通信を送ることはない
    */
   request?: { method: string; path: string };
 }
@@ -51,10 +61,13 @@ export interface StepView {
 export interface BehaviorView {
   id: string;
   name: string;
+  /** 挙動の画面の箱。始まりの部品と、変わる部品は、別の画面の部品のこともある（部品の screen を見る。docs/26 §4） */
   screen: string;
   trigger: { action: TriggerAction; part?: PartV2 };
   steps: StepView[];
   result?: { say?: string; part?: PartV2 };
+  /** この挙動が起こせるときの分岐（キーは `<箱 id>#<分岐 id>`） */
+  when?: When;
 }
 
 const boxView = (n: NodeV2 | undefined, id: string): BoxView => {
@@ -82,12 +95,21 @@ function itemLabel(nodes: ReadonlyMap<string, NodeV2>, ref: string): string {
   return names.join('.');
 }
 
-/** `"POST /items"` の形の meta.route を、メソッドとパスに分ける */
+/**
+ * 箱の meta.route を、メソッドとパスに分ける。書き方は 2 つ（`"POST /items"` と `{ method: "POST", path: "/items" }`）。
+ * メソッドの無いもの・読めないものは、照らす相手にしない（undefined）
+ */
 function routeOf(n: NodeV2 | undefined): { method: string; path: string } | undefined {
-  const route = n?.meta?.route;
-  if (typeof route !== 'string') return undefined;
-  const m = /^([A-Za-z]+)\s+(\S.*)$/.exec(route.trim());
-  return m ? { method: m[1]!.toUpperCase(), path: m[2]! } : undefined;
+  const route: unknown = n?.meta?.route;
+  if (typeof route === 'string') {
+    const m = /^([A-Za-z]+)\s+(\S.*)$/.exec(route.trim());
+    return m ? { method: m[1]!.toUpperCase(), path: m[2]! } : undefined;
+  }
+  if (typeof route !== 'object' || route === null) return undefined;
+  const { method, path } = route as { method?: unknown; path?: unknown };
+  if (typeof method !== 'string' || typeof path !== 'string') return undefined;
+  const m = /^[A-Za-z]+$/.exec(method.trim());
+  return m && path.trim() ? { method: m[0].toUpperCase(), path: path.trim() } : undefined;
 }
 
 /**
@@ -97,57 +119,41 @@ export function behaviorView(graph: GraphV2, behaviorId: string): BehaviorView |
   const b: BehaviorV2 | undefined = graph.behaviors?.find((x) => x.id === behaviorId);
   if (!b) return undefined;
   const nodes = new Map(graph.nodes.map((n) => [n.id, n] as const));
-  const vias = new Map(graph.wires.map((w) => [`${w.from}\u0000${w.to}`, w.via] as const));
+  const viaOf = new Map(graph.wires.map((w) => [wireKey(w), w.via] as const));
   const parts = new Map((graph.parts ?? []).map((p) => [p.id, p] as const));
-  const boxOf = (w: WireRef | undefined, side: 'from' | 'to') =>
-    (w && parseItemRef(w[side])?.nodeId) ?? '';
 
   const steps: StepView[] = [];
-  /** 1 段を足して、進んだあとの経路（箱 id の列）を返す。つながりの決まりは、検査（checkBehaviors）と同じ */
-  const push = (
-    step: BehaviorStepV2,
-    stack: string[],
-    parallel?: { group: number; lane: number },
-  ): string[] => {
-    const first = step.send[0];
-    const fromId = boxOf(first, 'from');
-    const toId = boxOf(first, 'to');
-    const at = stack.lastIndexOf(fromId);
-    const kept = at < 0 ? stack : stack.slice(0, at + 1);
+  const start = behaviorStartBox(b, (id) => parts.get(id)?.box) ?? b.screen;
+  walkBehavior<readonly string[]>(b, [start], (path, step, place) => {
+    // 検査を通った graph では、送る線は 1 つの箱から 1 つの箱へ出る。そうでない段は、先に書かれた箱で出す
+    const ends = wireRefBoxes(step.send);
+    const fromId = [...ends.froms][0] ?? '';
+    const toId = [...ends.tos][0] ?? '';
+    // 出る箱が経路に無い段（検査が誤りにする段）は、経路を捨てずに、いちばん先に足す
+    const next = advancePath(path, fromId, toId) ?? [...path, toId];
     const from = nodes.get(fromId);
     const to = nodes.get(toId);
-    const via = first ? vias.get(`${first.from}\u0000${first.to}`) : undefined;
+    const used = new Set(step.send.map((w) => viaOf.get(wireKey(w))));
+    const vias = WIRE_VIAS.filter((v) => used.has(v));
     const view: StepView = {
       index: steps.length,
-      depth: Math.max(0, kept.length - 1),
+      depth: next.length - 2,
       from: boxView(from, fromId),
       to: boxView(to, toId),
-      via,
+      vias,
       send: step.send.map((w) => itemLabel(nodes, w.from)),
       back: (step.back ?? []).map((w) => itemLabel(nodes, w.from)),
     };
-    if (parallel) view.parallel = parallel;
+    if (place.parallel) view.parallel = place.parallel;
     if (step.say !== undefined) view.say = step.say;
-    const route = via === 'http' && from?.runtime === 'browser' ? routeOf(to) : undefined;
+    if (step.when !== undefined) view.when = { ...step.when };
+    const route = vias.includes('http') && from?.runtime === 'browser' ? routeOf(to) : undefined;
     if (route) view.request = route;
     steps.push(view);
-    return [...kept, toId];
-  };
+    return next;
+  });
 
   const triggerPart = b.trigger.part === undefined ? undefined : parts.get(b.trigger.part);
-  let stack: string[] = [triggerPart?.box ?? b.screen];
-  let group = 0;
-  for (const entry of b.steps) {
-    if ('parallel' in entry) {
-      // 同時に呼ぶ: どの列も、分かれる前の経路から始まる。列が済んだら、分かれる前の経路に戻る
-      for (const [lane, laneSteps] of entry.parallel.entries()) {
-        let laneStack = [...stack];
-        for (const step of laneSteps) laneStack = push(step, laneStack, { group, lane });
-      }
-      group++;
-    } else stack = push(entry, stack);
-  }
-
   const view: BehaviorView = {
     id: b.id,
     name: b.name,
@@ -163,5 +169,6 @@ export function behaviorView(graph: GraphV2, behaviorId: string): BehaviorView |
     const part = b.result.part === undefined ? undefined : parts.get(b.result.part);
     if (part) view.result.part = part;
   }
+  if (b.when !== undefined) view.when = { ...b.when };
   return view;
 }

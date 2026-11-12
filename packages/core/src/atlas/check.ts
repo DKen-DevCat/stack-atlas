@@ -7,12 +7,7 @@
  *   検査の決まりは、契約の側に 1 つだけある（ビューアが図を読むときも、同じ決まりで確かめる）。
  *   ここでは、検証器の指摘の場所（`/behaviors/1/steps/2` など）を、「どのファイルの、どの箱・線・挙動の段か」に直す
  */
-import {
-  validateGraphV2,
-  type BehaviorRule,
-  type GraphV2,
-  type ValidationIssue,
-} from '@stack-atlas/schema';
+import { validateGraphV2, type GraphV2, type ValidationIssue } from '@stack-atlas/schema';
 import { loadAtlas } from './load.js';
 import { ATLAS_PATHS, type AtlasIssue, type AtlasReport, type LoadedAtlas } from './types.js';
 
@@ -27,7 +22,10 @@ export function toGraph(atlas: LoadedAtlas): GraphV2 {
   return graph;
 }
 
-/** 検証器の場所（`/nodes/3/ports/0`・`/behaviors/1/steps/2/parallel/0/1` など）を、ファイルと、人が読む場所に直す */
+/**
+ * 検証器の場所（`/nodes/3/ports/0`・`/behaviors/1/steps/2/parallel/0/1` など）を、ファイルと、人が読む場所に直す。
+ * 検証器の番号は、形の合った要素だけを並べた中の番号で、ファイルの中の番号とは限らない。番号のままでは出さず、id で名指しする
+ */
 function locate(atlas: LoadedAtlas, path: string): { file: string; path: string } {
   const m = /^\/(nodes|wires|types|parts|behaviors)\/(\d+)(.*)$/.exec(path);
   if (!m) return { file: GRAPH, path };
@@ -57,11 +55,18 @@ function locate(atlas: LoadedAtlas, path: string): { file: string; path: string 
     }
     case 'parts': {
       const p = atlas.parts[i];
-      return { file: PARTS, path: p && rest === '' ? `部品 "${p.id}"` : `/parts/${i}${rest}` };
+      const name = p ? `部品 "${p.id}"` : `部品 ${nth(atlas.partAt, i)}`;
+      // id の重複は、同じ名前が 2 つあるので、ファイルの中の何番めかも出す
+      return {
+        file: PARTS,
+        path: rest === '/id' ? `${name}（${nth(atlas.partAt, i)}）` : `${name}${rest}`,
+      };
     }
     default: {
       const b = atlas.behaviors[i];
-      const name = b ? `挙動 "${b.id}"` : `挙動 ${i + 1} 番め`;
+      const name = b ? `挙動 "${b.id}"` : `挙動 ${nth(atlas.behaviorAt, i)}`;
+      if (rest === '/id')
+        return { file: BEHAVIORS, path: `${name}（${nth(atlas.behaviorAt, i)}）` };
       // /steps/<段>(/parallel/<列>/<段>)? を、「段 N（の列 M の段 K）」に直す
       const step = /^\/steps\/(\d+)(?:\/parallel\/(\d+)\/(\d+))?(.*)$/.exec(rest);
       if (step) {
@@ -72,10 +77,13 @@ function locate(atlas: LoadedAtlas, path: string): { file: string; path: string 
           path: `${name} の段 ${Number(step[1]) + 1}${lane}${step[4] ?? ''}`,
         };
       }
-      return { file: BEHAVIORS, path: rest === '' ? name : `/behaviors/${i}${rest}` };
+      return { file: BEHAVIORS, path: `${name}${rest}` };
     }
   }
 }
+
+/** 並びの i 番めの要素が、ファイルの中で何番めか（人が数える 1 からの番号） */
+const nth = (at: readonly number[], i: number) => `${(at[i] ?? i) + 1} 番め`;
 
 /** 図を読んで検査する。読みこんだ図（形の合った分）も返す（bundle が使う） */
 export function inspectAtlas(root: string): { atlas: LoadedAtlas; report: AtlasReport } {
@@ -96,7 +104,7 @@ export function inspectAtlas(root: string): { atlas: LoadedAtlas; report: AtlasR
   const note = (e: ValidationIssue) => {
     const at = locate(atlas, e.path);
     // 形の検査は load.ts で済んでいる。ここでスキーマに合わないのは、合わせたあとにだけ起きる誤り
-    const check = v.graph ? ((e as { rule?: BehaviorRule }).rule ?? 'ref') : 'form';
+    const check = v.graph ? (e.rule ?? 'ref') : 'form';
     add(e.level, check, at.file, e.message, at.path);
   };
   v.errors.forEach(note);

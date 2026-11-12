@@ -74,6 +74,9 @@ export interface LoadedAtlas {
   nodeFiles: string[];
   wireFiles: string[];
   typeFiles: string[];
+  /** parts[i]・behaviors[i] が、ファイルの中で何番めか（0 から。形の違う要素を捨てると、並びの番号とずれるため） */
+  partAt: number[];
+  behaviorAt: number[];
   status: { parts: AtlasFileStatus; behaviors: AtlasFileStatus };
 }
 

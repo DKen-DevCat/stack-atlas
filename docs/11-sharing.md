@@ -64,6 +64,7 @@ stack-atlas serve out --repo ../my-app      # http://127.0.0.1:4173/
 - ビューアは同じオリジンの `GET /api/memos` が JSON を返すと、パネルに「サーバーに保存」を出す。
 - 押すと `POST /api/memos`（`Content-Type: application/json`、本文は `{ "ノードID": "メモ" }`）で
   `<repo>/.stack-atlas/memos.json` と `out/memos.json` に書き込む。成功するとパネルの印が「共有」に戻る。
+- serve が配信するのは、出力先（と、同梱のビューア）の中の普通のファイルだけ。シンボリックリンクを解いた先が出力先の外なら 404（出力先を対象の repo の中に置いたとき、repo に仕込まれたリンクの先を配信しないため。出力先の中を指すリンクは配信する。docs/26 D226）
 - `--repo` なしで serve すると書き込みは 405 になり、「このサーバーは書き込みに対応していません（--repo なしで serve）」と出る（読むだけ）。
 - 書き込んだファイルはふつうに `git diff` / コミットする。
 

@@ -18,13 +18,83 @@ import {
 } from './v2.js';
 
 /** どの検査の指摘か: ref（参照が解けない・重複）か、behavior（段の線・向き・つながり・分岐） */
-export type BehaviorRule = 'ref' | 'behavior';
+export type BehaviorRule = NonNullable<ValidationIssue['rule']>;
 export interface BehaviorIssue extends ValidationIssue {
   rule: BehaviorRule;
 }
 
-const wireKey = (w: WireRef) => `${w.from}\u0000${w.to}`;
+/** 線を、両端の組で引くためのキー（線に id は無い） */
+export const wireKey = (w: WireRef): string => `${w.from}\u0000${w.to}`;
 const arrow = (w: WireRef) => `"${w.from}" → "${w.to}"`;
+
+/** 線の名指しの列の、出る箱と着く箱（解けない名指しは数えない） */
+export function wireRefBoxes(refs: readonly WireRef[]): { froms: Set<string>; tos: Set<string> } {
+  const froms = new Set<string>();
+  const tos = new Set<string>();
+  for (const w of refs) {
+    const f = parseItemRef(w.from)?.nodeId;
+    const t = parseItemRef(w.to)?.nodeId;
+    if (f) froms.add(f);
+    if (t) tos.add(t);
+  }
+  return { froms, tos };
+}
+
+/**
+ * 段のつながり（docs/26 §4、D210）。path は「いま通っている経路」（始まりの箱から、呼び出しが重なっていく順）。
+ * 次の段は、この経路の上のどれかの箱から出る: いちばん先の箱から出れば「さらに奥を呼ぶ」、手前の箱から出れば「戻ってから次を呼ぶ」。
+ * 進んだあとの経路（出る箱より先を捨てて、着く箱を足したもの）を返す。出る箱が経路に無ければ undefined
+ */
+export function advancePath(
+  path: readonly string[],
+  from: string,
+  to: string,
+): string[] | undefined {
+  const at = path.lastIndexOf(from);
+  return at < 0 ? undefined : [...path.slice(0, at + 1), to];
+}
+
+/** 挙動の始まりの箱: open なら画面の箱、ほかは始まりの部品の箱（部品が無ければ undefined） */
+export function behaviorStartBox(
+  b: Pick<BehaviorV2, 'screen' | 'trigger'>,
+  partBox: (partId: string) => string | undefined,
+): string | undefined {
+  if (b.trigger.action === 'open') return b.screen;
+  return b.trigger.part === undefined ? undefined : partBox(b.trigger.part);
+}
+
+/** 段の場所: 挙動の中の JSON の場所（`/steps/2`・`/steps/2/parallel/0/1`）と、並んだ列の中なら、その組と列の番号 */
+export interface StepPlace {
+  path: string;
+  parallel?: { group: number; lane: number };
+}
+
+/**
+ * 挙動の段を、書かれた順にたどる（検査と、見せる形（@stack-atlas/wiring の behaviorView）が、同じたどり方をするための 1 つの道）。
+ * state は、段から段へ渡す値（経路など）。同時に呼ぶ所は、どの列も、分かれる前の state から始まり、列が済んだら、分かれる前の state に戻る。
+ * visit は、渡された state を書き換えずに、次の state を返すこと
+ */
+export function walkBehavior<S>(
+  b: Pick<BehaviorV2, 'steps'>,
+  start: S,
+  visit: (state: S, step: BehaviorStepV2, place: StepPlace) => S,
+): void {
+  let state = start;
+  let group = 0;
+  for (const [i, entry] of b.steps.entries()) {
+    if ('parallel' in entry) {
+      for (const [lane, steps] of entry.parallel.entries()) {
+        let laneState = state;
+        for (const [si, step] of steps.entries())
+          laneState = visit(laneState, step, {
+            path: `/steps/${i}/parallel/${lane}/${si}`,
+            parallel: { group, lane },
+          });
+      }
+      group++;
+    } else state = visit(state, entry, { path: `/steps/${i}` });
+  }
+}
 
 /**
  * @param badWires 検証器が誤りにした線（端が解けない・重複）の番号。挙動からは「無い線」として扱う
@@ -46,7 +116,6 @@ export function checkBehaviors(
   const wires = new Map<string, { reply: boolean }>();
   for (const [i, w] of g.wires.entries())
     if (!badWires.has(i)) wires.set(wireKey(w), { reply: w.reply === true });
-  const boxOf = (ref: string) => parseItemRef(ref)?.nodeId;
 
   /** 分岐のキーは `<箱 id>#<分岐 id>`。箱があり、その分岐を宣言していること */
   const checkWhen = (when: Record<string, boolean> | undefined, path: string) => {
@@ -103,8 +172,7 @@ export function checkBehaviors(
   ): { from: string; to: string } | undefined => {
     let ok = true;
     const ends = (refs: WireRef[], side: 'send' | 'back') => {
-      const froms = new Set<string>();
-      const tos = new Set<string>();
+      const found: WireRef[] = [];
       for (const w of refs) {
         const hit = wires.get(wireKey(w));
         if (!hit) {
@@ -117,6 +185,7 @@ export function checkBehaviors(
           ok = false;
           continue;
         }
+        found.push(w);
         if (side === 'send' && hit.reply) {
           add(
             'error',
@@ -133,12 +202,8 @@ export function checkBehaviors(
             path,
             `back の線 ${arrow(w)} に、図の側で reply: true が付いていません`,
           );
-        const f = boxOf(w.from);
-        const t = boxOf(w.to);
-        if (f) froms.add(f);
-        if (t) tos.add(t);
       }
-      return { froms, tos };
+      return wireRefBoxes(found);
     };
     const send = ends(step.send, 'send');
     if (ok && (send.froms.size !== 1 || send.tos.size !== 1)) {
@@ -174,8 +239,7 @@ export function checkBehaviors(
   };
 
   /**
-   * 段のつながり（docs/26 §4、D210）。stack は「いま通っている経路」（始まりの箱から、呼び出しが重なっていく順）。
-   * 次の段は、この経路の上のどれかの箱から出る: いちばん先の箱から出れば「さらに奥を呼ぶ」、手前の箱から出れば「戻ってから次を呼ぶ」。
+   * 段のつながり（advancePath）を確かめて、進んだあとの経路を返す。
    *
    * 段が解けなかった・つながらなかったあとは null にして、その挙動（その列）の残りでは、つながりを問わない。
    * 1 つの誤りで、後ろの正しい段に指摘を重ねないため
@@ -183,8 +247,8 @@ export function checkBehaviors(
   const advance = (stack: string[] | null, step: BehaviorStepV2, path: string): string[] | null => {
     const r = resolveStep(step, path); // つながりを問わないときも、線があるかは確かめる
     if (!r || !stack) return null;
-    const at = stack.lastIndexOf(r.from);
-    if (at < 0) {
+    const next = advancePath(stack, r.from, r.to);
+    if (!next)
       add(
         'error',
         'behavior',
@@ -193,9 +257,7 @@ export function checkBehaviors(
           ? `最初の段は、始まり（"${stack[0]}"）から出る線にしてください。この段は "${r.from}" から出ています`
           : `段がつながっていません: この段は "${r.from}" から出ていますが、ここまでの経路（${stack.join(' → ')}）に、その箱がありません`,
       );
-      return null;
-    }
-    return [...stack.slice(0, at + 1), r.to];
+    return next ?? null;
   };
 
   const checkBehavior = (b: BehaviorV2, index: number) => {
@@ -203,7 +265,6 @@ export function checkBehaviors(
     const name = `挙動 "${b.id}"`;
     checkScreen(b.screen, path, `${name} `);
     checkWhen(b.when, path);
-    let stack: string[] | null = [b.screen]; // open: 画面を開くことが始まり
     if (b.trigger.action === 'open') {
       if (b.trigger.part !== undefined)
         add(
@@ -212,26 +273,23 @@ export function checkBehaviors(
           `${path}/trigger`,
           'action が open のとき、part は書きません（画面を開くことが始まりです）',
         );
-    } else if (b.trigger.part === undefined) {
+    } else if (b.trigger.part === undefined)
       add(
         'error',
         'behavior',
         `${path}/trigger`,
         `action が ${b.trigger.action} のとき、part（部品の id）が要ります`,
       );
-      stack = null;
-    } else {
-      const part = parts.get(b.trigger.part);
-      if (!part) {
-        add(
-          'error',
-          'ref',
-          path,
-          `${name} の始まりの部品 "${b.trigger.part}" が、部品（parts）にありません`,
-        );
-        stack = null;
-      } else stack = [part.box];
-    }
+    else if (!parts.has(b.trigger.part))
+      add(
+        'error',
+        'ref',
+        path,
+        `${name} の始まりの部品 "${b.trigger.part}" が、部品（parts）にありません`,
+      );
+    // 始まりの箱が決まらない（部品が無い・部品の箱が無い）ときは、つながりを問わない。もとの誤りは、もう指摘してある
+    const start = behaviorStartBox(b, (id) => parts.get(id)?.box);
+    const stack: string[] | null = start !== undefined && nodes.has(start) ? [start] : null;
     if (b.result?.part !== undefined && !parts.has(b.result.part))
       add(
         'error',
@@ -240,17 +298,7 @@ export function checkBehaviors(
         `${name} の result の部品 "${b.result.part}" が、部品（parts）にありません`,
       );
 
-    for (const [i, entry] of b.steps.entries()) {
-      const here = `${path}/steps/${i}`;
-      if ('parallel' in entry) {
-        // 同時に呼ぶ: どの列も、分かれる前の経路から始まる。列が済んだら、分かれる前の経路に戻る
-        for (const [li, lane] of entry.parallel.entries()) {
-          let laneStack = stack ? [...stack] : null;
-          for (const [si, step] of lane.entries())
-            laneStack = advance(laneStack, step, `${here}/parallel/${li}/${si}`);
-        }
-      } else stack = advance(stack, entry, here);
-    }
+    walkBehavior(b, stack, (at, step, place) => advance(at, step, `${path}${place.path}`));
   };
   const seen = new Set<string>();
   for (const [i, b] of (g.behaviors ?? []).entries()) {

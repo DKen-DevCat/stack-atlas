@@ -324,6 +324,13 @@ export interface ViewV2 {
 export const TRIGGER_ACTIONS = ['open', 'click', 'submit', 'input', 'change'] as const;
 export type TriggerAction = (typeof TRIGGER_ACTIONS)[number];
 
+/**
+ * 部品・挙動の id に使える字か（スキーマの `localId` と同じ決まり: 空でなく、`#` と制御文字を含まない）。
+ * 図を読む側（packages/core の atlas）が、同じ決まりで、わかりやすい指摘を出すために使う
+ */
+export const isLocalId = (id: string): boolean =>
+  id.length > 0 && !id.includes('#') && ![...id].some((c) => c.charCodeAt(0) < 0x20);
+
 /** 線の名指し。線に id は無いので、両端の組で指す（wires にある線と同じ参照） */
 export interface WireRef {
   from: ItemRef;

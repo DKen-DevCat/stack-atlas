@@ -9,4 +9,14 @@ export {
   graphSchemaV2,
 } from './validate-v2.js';
 export type { ValidationResultV2 } from './validate-v2.js';
-export { checkBehaviors, type BehaviorIssue, type BehaviorRule } from './behaviors.js';
+export {
+  advancePath,
+  behaviorStartBox,
+  checkBehaviors,
+  walkBehavior,
+  wireKey,
+  wireRefBoxes,
+  type BehaviorIssue,
+  type BehaviorRule,
+  type StepPlace,
+} from './behaviors.js';

@@ -502,3 +502,231 @@ describe('checkAtlas: レビューで見つかったこと', () => {
     ]);
   });
 });
+
+// PR を作る前のコードレビューと、セキュリティのレビュー（10-1c の後半。docs/26 §9）で見つかったこと
+describe('checkAtlas: 2 回めのレビューで見つかったこと', () => {
+  it('名指しの形が違う（箱 id の形でない box・項目まで書いていない線）: 要素を捨てずに、何が無いかを名指しで言う', () => {
+    const part = withEdits({
+      [PARTS]: swap('    box: "part:comment-form"', '    box: comment-form-box'),
+    }).report;
+    expect(part.counts.parts).toBe(3);
+    // 指摘は 1 件だけ。この部品から始まる挙動（post-comment）に、「部品が無い」「つながらない」を重ねない
+    expect(errors(part)).toEqual([
+      {
+        level: 'error',
+        check: 'ref',
+        file: PARTS,
+        path: '部品 "comment-form"',
+        message: '部品 "comment-form" の box "comment-form-box" の箱がありません',
+      },
+    ]);
+
+    const wire = withEdits({
+      [BEHAVIORS]: swap(
+        'send: [{ from: "endpoint:POST /api/comments#req/row", to: "table:comments#write/row" }]',
+        'send: [{ from: "endpoint:POST /api/comments#req", to: "table:comments#write/row" }]',
+      ),
+    }).report;
+    expect(wire.counts.behaviors).toBe(3);
+    expect(errors(wire)).toHaveLength(1);
+    expect(errors(wire)[0]).toMatchObject({
+      check: 'behavior',
+      file: BEHAVIORS,
+      path: '挙動 "post-comment" の段 2',
+      message:
+        'send の線 "endpoint:POST /api/comments#req" → "table:comments#write/row" が、図の線（wires）にありません',
+    });
+
+    const when = withEdits({
+      [BEHAVIORS]: swap(
+        'trigger: { action: submit, part: comment-form }',
+        'trigger: { action: submit, part: comment-form }\n    when: { "Comment Form#Filled": true }',
+      ),
+    }).report;
+    expect(when.counts.behaviors).toBe(3);
+    expect(messages(when)).toEqual([
+      'when のキー "Comment Form#Filled" の箱 "Comment Form" がありません',
+    ]);
+  });
+
+  it('形の違う要素を捨てたあとでも、指摘の場所は、id と、ファイルの中の番号で言う（形の合った要素だけを並べた番号を出さない）', () => {
+    // 1 つめの挙動は形が違うので捨てられる。3 つめの id を、2 つめと同じにする
+    const behaviors = withEdits({
+      [BEHAVIORS]: (t) =>
+        swap(
+          'trigger: { action: open }',
+          'trigger: { action: tap }',
+        )(swap('  - id: delete-comment', '  - id: post-comment')(t)),
+    }).report;
+    expect(errors(behaviors).find((e) => e.message.includes('重複'))).toMatchObject({
+      check: 'ref',
+      file: BEHAVIORS,
+      path: '挙動 "post-comment"（3 番め）',
+    });
+    // 部品も同じ（1 つめを捨てて、3 つめの id を、2 つめと同じにする）
+    const parts = withEdits({
+      [PARTS]: (t) =>
+        swap(
+          '    selector: "#comment-form"\n',
+          '',
+        )(swap('  - id: comment-list', '  - id: comment-delete')(t)),
+    }).report;
+    expect(errors(parts).find((e) => e.message.includes('重複'))).toMatchObject({
+      check: 'ref',
+      file: PARTS,
+      path: '部品 "comment-delete"（3 番め）',
+    });
+    for (const e of [...errors(behaviors), ...errors(parts)])
+      if (e.check !== 'form') expect(e.path).not.toMatch(/^\/(parts|behaviors)\//);
+  });
+
+  it('部品と挙動の形の誤りは、どれも、手書きの確かめが先に拾う（契約のスキーマの読みにくい指摘を、書いた人に見せない）', () => {
+    const part = {
+      id: 'comment-form',
+      name: 'コメント欄',
+      box: 'part:comment-form',
+      screen: 'screen:/',
+      selector: '#comment-form',
+    };
+    const step = {
+      send: [
+        {
+          from: 'part:comment-form#out/comment',
+          to: 'endpoint:POST /api/comments#in/body.comment',
+        },
+      ],
+      back: [
+        {
+          from: 'endpoint:POST /api/comments#out/body.comment',
+          to: 'part:comment-form#in/created',
+        },
+      ],
+    };
+    const behavior = {
+      id: 'post-comment',
+      name: 'コメントを投稿する',
+      screen: 'screen:/',
+      trigger: { action: 'submit', part: 'comment-form' },
+      steps: [step],
+      result: { say: '増える', part: 'comment-form' },
+    };
+    const run = (file: string, key: 'parts' | 'behaviors', value: unknown) => {
+      const root = mkdtempSync(join(tmpdir(), 'stack-atlas-check-'));
+      cpSync(ANSWER, root, { recursive: true });
+      // YAML は JSON を含むので、JSON で書く
+      writeFileSync(join(root, file), JSON.stringify({ [key]: [value] }));
+      const report = checkAtlas(root);
+      return { report, form: report.issues.filter((i) => i.file === file && i.check === 'form') };
+    };
+    // もとの形は通る
+    expect(run(PARTS, 'parts', part).form).toEqual([]);
+    expect(run(BEHAVIORS, 'behaviors', behavior).form).toEqual([]);
+
+    const badParts: unknown[] = [
+      'x',
+      null,
+      { ...part, id: 7 },
+      { ...part, id: '' },
+      { ...part, id: 'a#b' },
+      { ...part, id: 'a\nb' },
+      { ...part, name: 7 },
+      { ...part, name: null },
+      { ...part, box: '' },
+      { ...part, box: 7 },
+      { ...part, screen: [] },
+      { ...part, selector: '' },
+      { ...part, selector: 7 },
+      { ...part, selectors: '#x' },
+    ];
+    const withStep = (s: unknown) => ({ ...behavior, steps: [s] });
+    const badBehaviors: unknown[] = [
+      'x',
+      null,
+      { ...behavior, id: undefined },
+      { ...behavior, id: 'a#b' },
+      { ...behavior, name: 7 },
+      { ...behavior, name: '' },
+      { ...behavior, screen: 7 },
+      { ...behavior, trigger: undefined },
+      { ...behavior, trigger: 'click' },
+      { ...behavior, trigger: { action: 'tap', part: 'comment-form' } },
+      { ...behavior, trigger: { action: 'click', part: 'comment-form', on: 'x' } },
+      { ...behavior, trigger: { action: 'click', part: 7 } },
+      { ...behavior, trigger: { action: 'click', part: '' } },
+      { ...behavior, trigger: { action: 'open', part: 'comment-form' } },
+      { ...behavior, steps: [] },
+      { ...behavior, steps: 'x' },
+      { ...behavior, results: {} },
+      { ...behavior, result: 'x' },
+      { ...behavior, result: null },
+      { ...behavior, result: { say: 7 } },
+      { ...behavior, result: { part: '' } },
+      { ...behavior, result: { parts: 'x' } },
+      { ...behavior, when: 'x' },
+      { ...behavior, when: [] },
+      { ...behavior, when: null },
+      { ...behavior, when: { 'part:comment-form#filled': 'yes' } },
+      withStep('x'),
+      withStep({ ...step, send: [] }),
+      withStep({ ...step, send: 'x' }),
+      withStep({ ...step, send: [{ from: 7, to: 'x' }] }),
+      withStep({ ...step, send: [{ from: '', to: 'x' }] }),
+      withStep({ ...step, send: [{ from: 'a', to: 'b', via: 'http' }] }),
+      withStep({ ...step, back: 'x' }),
+      withStep({ ...step, back: null }),
+      withStep({ ...step, back: [{ from: 'a' }] }),
+      withStep({ ...step, bak: [] }),
+      withStep({ ...step, say: 7 }),
+      withStep({ ...step, say: null }),
+      withStep({ ...step, when: { a: 1 } }),
+      withStep({ parallel: 'x' }),
+      withStep({ parallel: null }),
+      withStep({ parallel: [[step]] }),
+      withStep({ parallel: [[step], []] }),
+      withStep({ parallel: [[step], [{ ...step, send: [] }]] }),
+      withStep({ parallel: [[step], [step]], send: step.send }),
+    ];
+    const noisy = /スキーマ違反|パターン|未定義のフィールド|必須フィールド|型が違います|個以上必要/;
+    for (const [file, key, list] of [
+      [PARTS, 'parts', badParts],
+      [BEHAVIORS, 'behaviors', badBehaviors],
+    ] as const) {
+      for (const bad of list) {
+        const { report, form } = run(file, key, bad);
+        const label = JSON.stringify(bad);
+        expect(report.counts[key], label).toBe(0); // 捨てられる
+        expect(form.length, label).toBeGreaterThan(0);
+        for (const i of form) {
+          expect(i.path, label).toMatch(key === 'parts' ? /^\/parts\/0/ : /^\/behaviors\/0/);
+          expect(i.message, label).not.toMatch(noisy);
+        }
+      }
+    }
+  });
+
+  it('JSON に写せない値（日付・集合・無限大。YAML が作れる）のあるファイルは読まない（まとめた graph.json が、契約と違う形にならない）', () => {
+    const date = withEdits({
+      [BEHAVIORS]: (t) =>
+        `%YAML 1.1\n---\n${swap(
+          'trigger: { action: open }',
+          'trigger: { action: open }\n    when: 2001-12-14',
+        )(t)}`,
+    }).report;
+    expect(date.counts.behaviors).toBe(0);
+    expect(errors(date)).toHaveLength(1);
+    expect(errors(date)[0]).toMatchObject({ check: 'form', file: BEHAVIORS });
+    expect(messages(date)[0]).toContain('日付・集合・無限大');
+    // 「ありません」「1 つもありません」と言わない（読めない理由だけを出す）
+    expect(date.issues.filter((i) => i.file === BEHAVIORS)).toHaveLength(1);
+
+    const inf = withEdits({ [GRAPH]: (t) => t.replace(/line: \d+/, 'line: .inf') }).report;
+    expect(messages(inf).find((m) => m.includes('日付・集合・無限大'))).toBeDefined();
+    expect(inf.counts.nodes).toBe(0);
+
+    // 日付に見える値も、%YAML の行が無ければ文字列。引用符で囲めば、いつでも文字列
+    const quoted = withEdits({
+      [BEHAVIORS]: swap('say: "投稿のあと、一覧を読み直す"', 'say: 2001-12-14'),
+    }).report;
+    expect(errors(quoted)).toEqual([]);
+  });
+});

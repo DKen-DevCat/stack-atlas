@@ -221,6 +221,7 @@ body の無い応答（`out/status`）から呼び出し元の `ret_n` への線
   - `steps[]` の 1 段は `{ send: [{ from, to }…], back?: [{ from, to }…], say?, when? }`。線は両端の組で名指しする（views の線の始点と同じ）。同時に呼ぶ所は `{ parallel: [[段…], [段…]] }`
   - `trigger.action` は `open`・`click`・`submit`・`input`・`change`。`open` のとき `part` は書かない
 - `id` に `#` と制御文字は使えない。`when` のキーは、必ず `<nodeId>#<variantId>`（箱が宣言した分岐）
+- 部品と挙動の中の名指し（`box`・`screen`・`trigger.part`・`result.part`・段の線の `from` / `to`・`when` のキー）は、スキーマでは空でない文字列（`when` は真偽の値）とだけ決める。形と、解けるかどうかは、検証が確かめる（解けない名指しに、何が無いかを名指しした指摘を出すため。docs/26 D223）
 - 検証（`validateGraphV2`）は、部品と挙動の参照と、段のつながりも確かめる（`packages/schema/src/behaviors.ts` の `checkBehaviors`。指摘に `rule: "ref" | "behavior"` が付く）。検証器が誤りにした線は、挙動からは「無い線」として扱う
 
 ## 9. 検証（validateGraph v2）
