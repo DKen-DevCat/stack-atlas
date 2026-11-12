@@ -89,8 +89,8 @@ export const SESSION_LIMITS = {
   values: 200,
   /** 値の長さ */
   value: 4000,
-  /** 枠の中からの知らせの、1 秒あたりの上限 */
-  reportsPerSecond: 60,
+  /** 枠の中からの知らせの、種類ごとの 1 秒あたりの上限 */
+  reportsPerSecond: { part: 30, dom: 30, parts: 10 } as Record<string, number>,
   /** 出来事を並べ直すために、ためておく時間 */
   reorderMs: 200,
   flushMs: 100,
@@ -140,7 +140,10 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
   let server: LiveServer | undefined;
   // 利用者の領域は、ブラウザを動かす部品が、毎回、空のものを作り、閉じるときに消す（D240。持ちこす形では開かない）
   let browser: Browser | undefined;
+  let timer: ReturnType<typeof setInterval> | undefined;
   const cleanup = async () => {
+    if (timer) clearInterval(timer);
+    timer = undefined;
     await browser?.close().catch(() => {});
     await server?.close().catch(() => {});
     await refuser.close().catch(() => {});
@@ -172,8 +175,12 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
     const state: LiveStatus = {
       protocol: 1,
       app: appUrl.href,
-      // 暗号つきのアプリは、枠の中では Cookie がほとんど送られないので、別の窓（D235）
-      mode: opts.window || appUrl.protocol === 'https:' ? 'window' : 'frame',
+      // 別の窓にするもの（D235）: 暗号つきのアプリ（枠の中では Cookie がほとんど送られない）、
+      // IPv6 のアドレスで開くアプリ（読みこみ元を絞るヘッダに、IPv6 のアドレスを書けない）
+      mode:
+        opts.window || appUrl.protocol === 'https:' || appUrl.hostname.startsWith('[')
+          ? 'window'
+          : 'frame',
       reveal: false,
       hold: opts.holdWrites === true,
       holdLocked: opts.holdWrites === true,
@@ -182,44 +189,63 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
     let appPage: Page | undefined;
     /** 終わりかけ（ライブの画面か、ブラウザが閉じた）。このあとは、窓を開かない */
     let closing = false;
+    /** アプリが上の窓を移したあと、ライブの画面を開き直しているあいだ（このあいだは、何も渡さない） */
+    let swapping = false;
+    const quiet = (p: Promise<unknown>) => void p.catch(() => {});
 
-    // --- ライブの画面へ渡す ---
+    // --- ライブの画面へ渡す（渡す先の出所を、ページの中でも確かめる。アプリの文書に渡さない） ---
     const queue: LiveEvent[] = [];
     const deliver = async (msg: LiveMessage) => {
-      if (livePage.isClosed()) return;
+      if (swapping || livePage.isClosed()) return;
       await livePage
-        .evaluate((m) => {
-          const receive = (window as unknown as { __stackAtlasLiveReceive?: (m: unknown) => void })
-            .__stackAtlasLiveReceive;
-          receive?.(m);
-        }, msg)
+        .evaluate(
+          ([m, origin]) => {
+            if (location.origin !== origin) return;
+            const receive = (
+              window as unknown as { __stackAtlasLiveReceive?: (m: unknown) => void }
+            ).__stackAtlasLiveReceive;
+            receive?.(m);
+          },
+          [msg, live.origin] as const,
+        )
         .catch(() => {});
     };
     const emit = (ev: LiveEvent) => queue.push(ev);
     const flush = async (all = false) => {
+      if (swapping) return;
       const limit = Date.now() - SESSION_LIMITS.reorderMs;
       queue.sort((a, b) => a.at - b.at);
       const ready: LiveEvent[] = [];
       while (queue.length && (all || queue[0]!.at <= limit)) ready.push(queue.shift()!);
       if (ready.length) await deliver({ t: 'events', events: ready });
     };
-    const timer = setInterval(() => void flush(), SESSION_LIMITS.flushMs);
+    timer = setInterval(() => void flush(), SESSION_LIMITS.flushMs);
     const sendStatus = () => deliver({ t: 'status', status: { ...state } });
+    const sendInit = async () => {
+      await deliver({ t: 'graph', graph });
+      await sendStatus();
+    };
 
     // --- 値（「値を見る」のあいだだけ渡す。メモリに直近の分だけ持つ。ファイルにも端末にも出さない） ---
     const values = new Map<string, LiveValues>();
-    const remember = (id: string, patch: Partial<LiveValues> & { raw?: string }) => {
+    const remember = (id: string, patch: Partial<LiveValues>) => {
       const v = values.get(id) ?? { id, raw: '' };
       Object.assign(v, patch);
       values.delete(id);
       values.set(id, v);
       while (values.size > SESSION_LIMITS.values) values.delete(values.keys().next().value!);
     };
+    /** 「値を見る」を切ったとき、まだ渡していない出来事から、値を外す */
+    const stripQueued = () => {
+      for (const ev of queue) {
+        if (ev.t === 'request') delete ev.raw;
+        if ((ev.t === 'request' || ev.t === 'response') && ev.body) delete ev.body.value;
+      }
+    };
 
-    // --- アプリの枠か ---
-    /** アプリの出所の枠（ライブの画面のいちばん上の枠ではないもの） */
-    const isAppFrame = (f: Frame) =>
-      !(f.page() === livePage && f === livePage.mainFrame()) && originOf(f.url()) === appOrigin;
+    // --- アプリの側か ---
+    /** アプリの出所の枠（ライブの画面の出所とは、ポートが違う） */
+    const isAppFrame = (f: Frame) => originOf(f.url()) === appOrigin;
     /** 通信を出した枠が、アプリの側か（ライブの画面のいちばん上の枠が出したもの = 画面の資産、は数えない） */
     const fromApp = (r: PwRequest): boolean => {
       try {
@@ -231,24 +257,35 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
     };
 
     // --- 通信（ブラウザの外から見る） ---
+    // 時刻: 通信は、道具が知らせを受けた時刻。返事は、その時刻に、ブラウザが測った「送ってから返事が来るまで」を足したもの
+    // （通信の知らせの時点では、ブラウザの測った始まりの時刻が、まだ無い。時計を混ぜると、返事が通信より前に並ぶ）
     let seq = 0;
-    const tracked = new WeakMap<PwRequest, { id: string; outside: boolean; responded: boolean }>();
+    const tracked = new WeakMap<
+      PwRequest,
+      { id: string; at: number; outside: boolean; responded: boolean }
+    >();
     const held = new WeakSet<PwRequest>();
-    /** 裏で動く部品（返事を差し替える仕組み）の書きこみを止めたもの。画面の側の通信の失敗を「止めた」と見分ける */
+    /** 裏で動く部品（返事を差し替える仕組み）が出した通信の時刻（素通しを見分ける・止めたものを見分ける） */
+    const swSent = new Map<string, number>();
     const heldKeys = new Map<string, number>();
+    const prune = (m: Map<string, number>, now: number) => {
+      for (const [k, at] of m) if (at < now - 10_000) m.delete(k);
+    };
     const kindOf = (r: PwRequest): 'script' | 'form' | undefined => {
       const type = r.resourceType();
       if (type === 'fetch' || type === 'xhr' || type === 'ping') return 'script';
       if (type === 'document' && r.method() !== 'GET') return 'form';
       return undefined; // 画面の資産・画面の移動・つなぎっぱなしの通信は、数えない
     };
-    const startOf = (r: PwRequest) => {
-      const t = r.timing().startTime;
-      return t > 0 ? t : Date.now();
-    };
 
     context.on('request', (r) => {
-      if (r.serviceWorker() || !fromApp(r)) return;
+      if (r.serviceWorker()) {
+        const now = Date.now();
+        prune(swSent, now);
+        swSent.set(`${r.method()} ${r.url()}`, now);
+        return;
+      }
+      if (!fromApp(r)) return;
       const kind = kindOf(r);
       if (!kind) return;
       let url: URL;
@@ -258,8 +295,9 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
         return;
       }
       const id = `r${++seq}`;
+      const at = Date.now();
       const outside = !isLocalHost(url.hostname, localNames);
-      tracked.set(r, { id, outside, responded: false });
+      tracked.set(r, { id, at, outside, responded: false });
       const route = findRoute(routes, r.method(), url.pathname);
       const buffer = r.postDataBuffer();
       const type = r.headers()['content-type'];
@@ -268,14 +306,13 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
           ? buffer.toString('utf8')
           : undefined;
       const raw = clip(`${url.pathname}${url.search}`, SESSION_LIMITS.value);
-      remember(id, {
-        raw,
-        ...(text !== undefined ? { sent: clip(text, SESSION_LIMITS.value) } : {}),
-      });
+      // ファイルを運ぶ形の中身は、「値を見る」でも出さない（§5.3）ので、持たない
+      const keep = text !== undefined && !/multipart\/form-data/i.test(type ?? '');
+      remember(id, { raw, ...(keep ? { sent: clip(text, SESSION_LIMITS.value) } : {}) });
       const body = maskBody(type, text, buffer?.length ?? 0, state.reveal);
       emit({
         t: 'request',
-        at: startOf(r),
+        at,
         id,
         method: r.method(),
         path: route ? route.path : maskPath(url.pathname),
@@ -288,56 +325,89 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
       });
     });
 
+    const TIMED_OUT = Symbol('timed out');
+    const within = <T>(p: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> =>
+      Promise.race([p, new Promise<typeof TIMED_OUT>((ok) => setTimeout(() => ok(TIMED_OUT), ms))]);
+
     context.on('response', (res: PwResponse) => {
       const r = res.request();
       const entry = tracked.get(r);
       if (!entry || entry.responded) return;
       entry.responded = true;
       const t = r.timing();
-      const at =
-        t.startTime > 0 && t.responseStart >= 0 ? t.startTime + t.responseStart : Date.now();
+      const at = t.responseStart >= 0 ? entry.at + t.responseStart : Math.max(Date.now(), entry.at);
       if (entry.outside) {
         // 行き先の無い中継の返事（403）は、アプリの側の返事ではない
         emit({ t: 'failed', at, id: entry.id, why: 'outside' });
         return;
       }
-      void (async () => {
-        const type = res.headers()['content-type'];
-        const length = Number(res.headers()['content-length'] ?? NaN);
-        let text: string | undefined;
-        let bytes = Number.isFinite(length) ? length : 0;
-        if (textual(type) && !(bytes > SESSION_LIMITS.bodyBytes)) {
-          try {
-            const buf = await res.body();
-            bytes = buf.length;
-            if (buf.length <= SESSION_LIMITS.bodyBytes) text = buf.toString('utf8');
-          } catch {
-            // 中身の無い返事（204 など）・読めない返事
-          }
-        }
-        if (text !== undefined) remember(entry.id, { received: clip(text, SESSION_LIMITS.value) });
+      // 返事を差し替える仕組みが、素通しした（自分で通信を出した）ものは、「ブラウザの中で返事が作られた」に数えない
+      const passed = (swSent.get(`${r.method()} ${r.url()}`) ?? 0) >= entry.at - 100;
+      const inBrowser = res.fromServiceWorker() && !passed;
+      const type = res.headers()['content-type'];
+      const length = Number(res.headers()['content-length'] ?? NaN);
+      const declared = Number.isFinite(length) ? length : 0;
+      // 流しっぱなしの返事・大きな返事は、中身を読まない（読み終わるまで待つと、返事の知らせが届かない）
+      const readable =
+        textual(type) &&
+        !/event-stream/i.test(type ?? '') &&
+        !(declared > SESSION_LIMITS.bodyBytes);
+      const send = (text: string | undefined, bytes: number) => {
         const body = maskBody(type, text, bytes, state.reveal);
         emit({
           t: 'response',
           at,
           id: entry.id,
           status: res.status(),
-          inBrowser: res.fromServiceWorker(),
+          inBrowser,
           ...(body ? { body } : {}),
         });
-      })();
+      };
+      if (!readable) return send(undefined, declared);
+      const reading = res.body().then(
+        (buf) => buf,
+        () => undefined, // 中身の無い返事（204 など）・読めない返事
+      );
+      const keep = (buf: Buffer | undefined) => {
+        if (buf && buf.length <= SESSION_LIMITS.bodyBytes)
+          remember(entry.id, { received: clip(buf.toString('utf8'), SESSION_LIMITS.value) });
+      };
+      // 並べ直しの間に合ううちに読めたら、中身の形も付ける。間に合わなければ、形なしで先に知らせる
+      void within(reading, SESSION_LIMITS.reorderMs - 50).then((first) => {
+        if (first === TIMED_OUT) {
+          send(undefined, declared);
+          void within(reading, 5_000).then((late) => late !== TIMED_OUT && keep(late));
+          return;
+        }
+        keep(first);
+        const ok = first && first.length <= SESSION_LIMITS.bodyBytes;
+        send(ok ? first.toString('utf8') : undefined, first?.length ?? declared);
+      });
     });
 
+    // 枠に入るのを、応答で拒むアプリ（D235）: アプリの出所の画面の読みこみが、応答か、読みこみ元を絞るヘッダで止められた
+    // （つながらなかった画面一般とは分ける。手元の外へ移ろうとしたときも、つながらなかった画面になる）
+    const refusedFrame = (r: PwRequest): boolean => {
+      if (r.resourceType() !== 'document' || state.mode !== 'frame') return false;
+      if (originOf(r.url()) !== appOrigin) return false;
+      if (!/BLOCKED_BY_(RESPONSE|CSP)/.test(r.failure()?.errorText ?? '')) return false;
+      try {
+        return r.frame().parentFrame() === livePage.mainFrame();
+      } catch {
+        return false;
+      }
+    };
     context.on('requestfailed', (r) => {
+      if (refusedFrame(r)) quiet(toWindow('枠に入るのを拒むアプリなので、別の窓で開きます'));
       const entry = tracked.get(r);
       // 返事を見たあとの失敗（中身の無い返事のあとに来る、など）は、失敗にしない
       if (!entry || entry.responded) return;
       entry.responded = true;
-      const key = `${r.method()} ${r.url()}`;
-      const heldNow = held.has(r) || (heldKeys.get(key) ?? 0) > Date.now() - 2_000;
+      const now = Date.now();
+      const heldNow = held.has(r) || (heldKeys.get(`${r.method()} ${r.url()}`) ?? 0) > now - 2_000;
       emit({
         t: 'failed',
-        at: Date.now(),
+        at: Math.max(now, entry.at),
         id: entry.id,
         why: entry.outside ? 'outside' : heldNow ? 'held' : 'error',
       });
@@ -348,7 +418,11 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
       if (READ_ONLY.has(request.method()) || (!request.serviceWorker() && !fromApp(request)))
         return route.continue().catch(() => {});
       held.add(request);
-      if (request.serviceWorker()) heldKeys.set(`${request.method()} ${request.url()}`, Date.now());
+      if (request.serviceWorker()) {
+        const now = Date.now();
+        prune(heldKeys, now);
+        heldKeys.set(`${request.method()} ${request.url()}`, now);
+      }
       return route.abort('blockedbyclient').catch(() => {});
     };
     let routed = false;
@@ -364,22 +438,33 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
     await applyHold();
 
     // --- 枠の中からの知らせと、ライブの画面からの合図（同じ口。呼んだ枠で見分ける。§4.2） ---
-    let windowStart = Date.now();
-    let inWindow = 0;
+    // 知らせの上限は、種類ごと（画面の変化が速いアプリでも、部品への操作を捨てない）
+    const budget = new Map<string, { start: number; count: number }>();
+    const allow = (kind: string, now: number) => {
+      const b = budget.get(kind) ?? { start: now, count: 0 };
+      if (now - b.start >= 1_000) {
+        b.start = now;
+        b.count = 0;
+      }
+      b.count++;
+      budget.set(kind, b);
+      return b.count <= (SESSION_LIMITS.reportsPerSecond[kind] ?? 0);
+    };
     await context.exposeBinding('__stackAtlasLive', async (source, payload: unknown) => {
       const frame = source.frame;
       const fromLive =
+        !swapping &&
         source.page === livePage &&
         frame === livePage.mainFrame() &&
         originOf(frame.url()) === live.origin;
       if (fromLive) return onSignal(payload);
       if (!isAppFrame(frame)) return;
       const now = Date.now();
-      if (now - windowStart >= 1_000) {
-        windowStart = now;
-        inWindow = 0;
-      }
-      if (++inWindow > SESSION_LIMITS.reportsPerSecond) return;
+      const kind =
+        typeof payload === 'object' && payload !== null
+          ? String((payload as { t?: unknown }).t)
+          : '';
+      if (!allow(kind, now)) return;
       const report = sanitizeReport(payload, now, knownParts);
       if (report) emit(report);
     });
@@ -389,6 +474,7 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
       const s = payload as Partial<LiveSignal> & { on?: unknown };
       if (s.t === 'reveal' && typeof s.on === 'boolean') {
         state.reveal = s.on;
+        if (!state.reveal) stripQueued();
         await sendStatus();
         // 入れる前に起きた操作の分も、メモリから渡す
         if (state.reveal) await deliver({ t: 'values', values: [...values.values()] });
@@ -408,7 +494,7 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
     // --- 画面を開いた（枠の移動を、ブラウザの外から見る） ---
     const appTop = (f: Frame) =>
       state.mode === 'frame'
-        ? f.parentFrame() === livePage.mainFrame()
+        ? f.page() === livePage && f.parentFrame() === livePage.mainFrame()
         : appPage !== undefined && f === appPage.mainFrame();
     const onNavigated = (f: Frame) => {
       if (!appTop(f)) return;
@@ -451,41 +537,44 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
     };
 
     // --- ライブの画面 ---
-    livePage = await context.newPage();
-    livePage.on('framenavigated', (f) => {
+    const onLiveNavigated = (f: Frame) => {
+      if (f.page() !== livePage) return;
       // アプリが、いちばん上の窓を自分に移した（D235）。その窓をアプリの窓にして、ライブの画面を開き直す
       if (f === livePage.mainFrame() && originOf(f.url()) !== live.origin) {
-        void (async () => {
-          state.mode = 'window';
-          appPage = livePage;
-          appPage.on('framenavigated', onNavigated);
-          log('アプリが、いちばん上の窓を移したので、アプリを別の窓にしました');
-          livePage = await context.newPage();
-          await openLive();
-        })();
+        if (swapping || closing) return;
+        swapping = true; // 待つ前に印を立てる（このあいだに、もう一度入れ替えない・何も渡さない）
+        const taken = livePage;
+        taken.off('framenavigated', onLiveNavigated);
+        taken.off('load', onLiveLoad);
+        state.mode = 'window';
+        appPage = taken;
+        appPage.on('framenavigated', onNavigated);
+        log('アプリが、いちばん上の窓を移したので、アプリを別の窓にしました');
+        quiet(
+          (async () => {
+            const next = await context.newPage();
+            livePage = next;
+            swapping = false;
+            attachLive(next);
+            await next.goto(live.url);
+          })().catch(() => {
+            swapping = false;
+          }),
+        );
         return;
       }
       onNavigated(f);
-    });
-    const openLive = async () => {
-      await livePage.goto(live.url);
-      await deliver({ t: 'graph', graph });
-      await sendStatus();
     };
-    await openLive();
-    // 枠に入るのを、応答で拒むアプリ（D235）: アプリの出所の画面の読みこみが、応答で止められた
-    // （つながらなかった画面一般とは分ける。手元の外へ移ろうとしたときも、つながらなかった画面になる）
-    context.on('requestfailed', (r) => {
-      if (r.resourceType() !== 'document' || state.mode !== 'frame') return;
-      if (originOf(r.url()) !== appOrigin) return;
-      if (!/BLOCKED_BY_RESPONSE/.test(r.failure()?.errorText ?? '')) return;
-      try {
-        if (r.frame().parentFrame() !== livePage.mainFrame()) return;
-      } catch {
-        return;
-      }
-      void toWindow('枠に入るのを拒むアプリなので、別の窓で開きます');
-    });
+    // ライブの画面を読みこむたび（利用者が読み直したときも）、図と状態を渡し直す
+    const onLiveLoad = () => quiet(sendInit());
+    const attachLive = (p: Page) => {
+      p.on('framenavigated', onLiveNavigated);
+      p.on('load', onLiveLoad);
+    };
+    livePage = await context.newPage();
+    attachLive(livePage);
+    await livePage.goto(live.url);
+    await sendInit();
     if (state.mode === 'window') await openAppWindow();
     if (!opts.headless) await livePage.bringToFront();
 
@@ -495,7 +584,6 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
     const close = async () => {
       if (closing) return closed;
       closing = true;
-      clearInterval(timer);
       values.clear();
       await cleanup();
       resolveClosed();
@@ -503,9 +591,9 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
     };
     browser.on('disconnected', () => void close());
     context.on('close', () => void close());
-    const watchLive = (p: Page) => p.on('close', () => p === livePage && void close());
-    watchLive(livePage);
-    context.on('page', (p) => watchLive(p));
+    // ライブの画面を閉じたら終わる（入れ替えたあとのライブの画面も）
+    context.on('page', (p) => p.on('close', () => p === livePage && !swapping && void close()));
+    livePage.on('close', () => !swapping && void close());
 
     return {
       get livePage() {

@@ -42,6 +42,12 @@ export function liveWatcher({ appOrigin, parts }: WatcherArgs): void {
     return typeof check === 'function' ? check.call(el, { visibilityProperty: true }) : true;
   };
   const SKIP = 'script,style,template,noscript,textarea,select';
+  /**
+   * 外れた要素の中で、隠れていたと分かるもの（外れたあとは、見えていたかを測れないので、印と書き方で見る）。
+   * 様式の決まりで隠していたものは見分けられない（docs/27 §5.5）。開いてから足された要素は、足したときの文字を覚えておく
+   */
+  const HIDDEN =
+    '[hidden],[aria-hidden="true"],[style*="display:none"],[style*="display: none"],[style*="visibility:hidden"],[style*="visibility: hidden"]';
   /** 要素の中の文字（区切りを入れてつなぐ）。つながっている要素は、見えている文字だけ。長さに上限 */
   const textOf = (node: Node, connected: boolean): string => {
     const out: string[] = [];
@@ -50,7 +56,7 @@ export function liveWatcher({ appOrigin, parts }: WatcherArgs): void {
     for (let n = walker.nextNode(); n && length < LIMIT.text; n = walker.nextNode()) {
       const parent = n.parentElement;
       if (!parent || closest.call(parent, SKIP)) continue;
-      if (connected && !visible(parent)) continue;
+      if (connected ? !visible(parent) : closest.call(parent, HIDDEN)) continue;
       const t = (n.nodeValue ?? '').replace(/\s+/g, ' ').trim();
       if (!t) continue;
       out.push(t);

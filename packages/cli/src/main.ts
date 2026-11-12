@@ -8,7 +8,7 @@ import { runInitFlows } from './commands/init-flows.js';
 import { harnessVersion, runInitSkill } from './commands/init-skill.js';
 import { runInitViews } from './commands/init-views.js';
 import { runServe } from './commands/serve.js';
-import { LIVE_USAGE, runLive } from './commands/live.js';
+import { runLive } from './commands/live.js';
 import { runValidate } from './commands/validate.js';
 import { createStderrLogger } from './commands/harness.js';
 
@@ -129,12 +129,8 @@ export async function main(argv: string[]): Promise<number> {
           window: { type: 'boolean' },
           'local-name': { type: 'string', multiple: true },
         });
-        if (!values.url) {
-          console.error(LIVE_USAGE);
-          return 2;
-        }
         return await runLive(positionals, (l) => console.log(l), {
-          url: values.url as string,
+          url: values.url as string | undefined,
           holdWrites: Boolean(values['hold-writes']),
           window: Boolean(values.window),
           localNames: (values['local-name'] as unknown as string[] | undefined) ?? [],

@@ -69,8 +69,13 @@ export async function startLiveServer(opts: LiveServerOptions): Promise<LiveServ
       body: readFileSync(`${dir}${name}`),
       type: TYPES[name.split('.').pop()!] ?? 'application/octet-stream',
     });
-  // [::1] で開いたアプリは、::1 で聞く（同じ名前にするため）。ほかは 127.0.0.1
-  const listenHost = opts.hostname === '[::1]' ? '::1' : '127.0.0.1';
+  // アプリと同じ名前にするため、アプリがループバックのアドレス（127.0.0.2 など・::1）なら、そのアドレスで聞く。名前なら 127.0.0.1
+  const listenHost =
+    opts.hostname === '[::1]'
+      ? '::1'
+      : /^127\.\d+\.\d+\.\d+$/.test(opts.hostname)
+        ? opts.hostname
+        : '127.0.0.1';
   let origin = '';
   const server = createServer((req, res) => {
     // Host が、ライブの画面の名前と違えば断る（ほかの名前で届く通信を受けない。DNS の付け替えへの守り）

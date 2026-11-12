@@ -50,6 +50,17 @@ describe('手元の判定', () => {
     expect(checkLocalName('API-1.dev')).toBeUndefined();
     for (const bad of ['192.168.1.5', '10.0.0.1', 'a_b.test', 'a b', '', 'http://x', '-a.test'])
       expect(checkLocalName(bad), bad).toBeDefined();
+    // 2026-11-12 追加（セキュリティのレビュー 2）: 数で終わる名前は、ブラウザがアドレスとして読む（16 進・8 進の書き方も）
+    for (const bad of [
+      '0xc0a80105',
+      '0xc0.0xa8.1.5',
+      '1.2.3.0x4',
+      '0x7f000001',
+      'dev.0x1',
+      'a.08',
+      'dev.1',
+    ])
+      expect(checkLocalName(bad), bad).toBeDefined();
   });
 
   it('checkLiveUrl: http・https で、宛先が手元のときだけ通す', () => {
@@ -68,8 +79,18 @@ describe('手元の判定', () => {
   });
 
   it('ブラウザの起動の設定: 手元だけを直に出し、名指しした名前はループバックに固定する', () => {
-    expect(LOOPBACK_BYPASS).toEqual(['127.0.0.0/8', '[::1]', 'localhost', '*.localhost']);
-    expect(proxyBypass(['dev.test'])).toBe('127.0.0.0/8,[::1],localhost,*.localhost,dev.test');
+    // 2026-11-12 変更（セキュリティのレビュー 1）: 先頭に <-loopback> を置く。ブラウザが暗黙に中継を外す宛先
+    // （ループバックとリンクローカル）をいったん取り消し、ループバックだけを戻す。順序に意味がある（あとの規則が勝つ）
+    expect(LOOPBACK_BYPASS).toEqual([
+      '<-loopback>',
+      '127.0.0.0/8',
+      '[::1]',
+      'localhost',
+      '*.localhost',
+    ]);
+    expect(proxyBypass(['dev.test'])).toBe(
+      '<-loopback>,127.0.0.0/8,[::1],localhost,*.localhost,dev.test',
+    );
     expect(resolverRules(['dev.test', 'api.dev.test'])).toEqual([
       '--host-resolver-rules=MAP dev.test 127.0.0.1, MAP api.dev.test 127.0.0.1',
     ]);

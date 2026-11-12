@@ -4,8 +4,19 @@
  * （道具が解いた結果と、ブラウザが実際につなぐ先は、別になりうる）
  */
 
-/** ブラウザの中継の設定で、中継を通さずに直に出す宛先（これ以外は、行き先の無い中継に回る） */
-export const LOOPBACK_BYPASS = ['127.0.0.0/8', '[::1]', 'localhost', '*.localhost'] as const;
+/**
+ * ブラウザの中継の設定で、中継を通さずに直に出す宛先（これ以外は、行き先の無い中継に回る）。
+ * 先頭の `<-loopback>` は、ブラウザが暗黙に中継を外す宛先（ループバックと、リンクローカルのアドレス）を、いったん取り消す。
+ * そのあとに書いたループバックだけを戻す（あとの規則が勝つ）。取り消さないと、`169.254.0.0/16`・`fe80::/10` が、
+ * 中継を通らずに直に出る（2026-11-12 のセキュリティのレビュー。試して確かめた）
+ */
+export const LOOPBACK_BYPASS = [
+  '<-loopback>',
+  '127.0.0.0/8',
+  '[::1]',
+  'localhost',
+  '*.localhost',
+] as const;
 
 /** 名指しできる名前の形（英小文字・数字・`-` の段を `.` でつないだもの。IP アドレスの形は名指しできない） */
 const NAME =
@@ -30,7 +41,16 @@ export function checkLocalName(name: string): string | undefined {
   const n = name.toLowerCase();
   if (!NAME.test(n))
     return `--local-name "${name}" は、名前の形ではありません（英字・数字・- と . だけ）`;
-  if (/^[\d.]+$/.test(n)) return `--local-name に、アドレスは書けません（"${name}"）`;
+  // アドレスの形（数で終わる名前。16 進・8 進の書き方も、ブラウザはアドレスとして読む）は、名指しできない
+  const last = n.split('.').pop() ?? '';
+  let hostname: string;
+  try {
+    hostname = new URL(`http://${n}/`).hostname;
+  } catch {
+    hostname = '';
+  }
+  if (/^(\d+|0x[0-9a-f]*)$/i.test(last) || hostname !== n)
+    return `--local-name に、アドレスは書けません（"${name}"）`;
   return undefined;
 }
 
