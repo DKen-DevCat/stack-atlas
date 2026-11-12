@@ -1,0 +1,64 @@
+behaviors:
+  - id: open
+    name: "記事を開いて、コメントを読む"
+    screen: "screen:/"
+    trigger: { action: open }
+    steps:
+      - send: [{ from: "screen:/#out/open", to: "fn:load#in/call" }]
+        say: "Service Worker（sw.js）を登録し、準備ができて画面を受け持つまで待ってから、読みこむ"
+      - send: [{ from: "fn:load#out/request", to: "endpoint:GET /api/comments#in/request" }]
+        back: [{ from: "endpoint:GET /api/comments#out/body.comments", to: "fn:load#in/comments" }]
+      - send: [{ from: "endpoint:GET /api/comments#req/all", to: "table:comments#key/all" }]
+        back: [{ from: "table:comments#read/rows", to: "endpoint:GET /api/comments#res/rows" }]
+      - send: [{ from: "fn:load#out/count", to: "part:status#in/count" }]
+        say: "「読みこみ中…」を「N 件のコメント」に替える"
+      - send: [{ from: "fn:load#out/comments", to: "part:comment-list#in/comments" }]
+        say: "一覧を、読んだコメントで描き直す（自分のコメントには削除のボタンを付ける）"
+    result: { say: "コメントの一覧が出て、件数が出る。", part: comment-list }
+
+  - id: post-comment
+    name: "コメントを書いて送る"
+    screen: "screen:/"
+    trigger: { action: submit, part: comment-form }
+    steps:
+      - send: [{ from: "part:comment-form#out/comment", to: "endpoint:POST /api/comments#in/body.comment" }]
+        back: [{ from: "endpoint:POST /api/comments#out/body.comment", to: "part:comment-form#in/saved" }]
+        say: "本文の前後の空白を除き、空なら何も送らない。返事（足したコメント）は待つが、使わない"
+      - send: [{ from: "endpoint:POST /api/comments#req/row", to: "table:comments#write/row" }]
+        say: "番号を nextId から振り、本文を 500 字で切り、author を me にして、並びの先頭に足す"
+      - send: [{ from: "part:comment-form#out/reload", to: "fn:load#in/call" }]
+        say: "欄を空にしてから、読み直す"
+      - send: [{ from: "fn:load#out/request", to: "endpoint:GET /api/comments#in/request" }]
+        back: [{ from: "endpoint:GET /api/comments#out/body.comments", to: "fn:load#in/comments" }]
+      - send: [{ from: "endpoint:GET /api/comments#req/all", to: "table:comments#key/all" }]
+        back: [{ from: "table:comments#read/rows", to: "endpoint:GET /api/comments#res/rows" }]
+      - send: [{ from: "fn:load#out/count", to: "part:status#in/count" }]
+        say: "件数を描き直す"
+      - send: [{ from: "fn:load#out/comments", to: "part:comment-list#in/comments" }]
+        say: "一覧を描き直す"
+    result: { say: "一覧の先頭に、書いたコメントが出る（削除のボタンつき）。件数が 1 増え、欄が空になる。", part: comment-list }
+
+  - id: delete-comment
+    name: "自分のコメントを削除する"
+    screen: "screen:/"
+    trigger: { action: click, part: delete-button }
+    when: { "part:delete-button#mine": true }
+    steps:
+      - send: [{ from: "part:delete-button#out/id", to: "endpoint:DELETE /api/comments/{id}#in/path.id" }]
+        back: [{ from: "endpoint:DELETE /api/comments/{id}#out/done", to: "part:delete-button#in/done" }]
+        say: "押しは一覧（#comments）がまとめて受け、押されたボタンの data-id を送る"
+      - send:
+          - { from: "endpoint:DELETE /api/comments/{id}#req/id", to: "table:comments#key/id" }
+          - { from: "endpoint:DELETE /api/comments/{id}#req/remove", to: "table:comments#write/remove" }
+        say: "その番号のコメントを、並びから除く"
+      - send: [{ from: "part:delete-button#out/reload", to: "fn:load#in/call" }]
+        say: "204 の返事を待ってから、読み直す"
+      - send: [{ from: "fn:load#out/request", to: "endpoint:GET /api/comments#in/request" }]
+        back: [{ from: "endpoint:GET /api/comments#out/body.comments", to: "fn:load#in/comments" }]
+      - send: [{ from: "endpoint:GET /api/comments#req/all", to: "table:comments#key/all" }]
+        back: [{ from: "table:comments#read/rows", to: "endpoint:GET /api/comments#res/rows" }]
+      - send: [{ from: "fn:load#out/count", to: "part:status#in/count" }]
+        say: "件数を描き直す"
+      - send: [{ from: "fn:load#out/comments", to: "part:comment-list#in/comments" }]
+        say: "一覧を描き直す"
+    result: { say: "そのコメントが一覧から消え、件数が 1 減る。", part: comment-list }

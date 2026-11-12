@@ -94,6 +94,19 @@ describe('根拠: 根拠つきの図', () => {
     );
   });
 
+  it('手順書 0.4 と例だけを渡したエージェントが書いた図（手を入れていない）が、根拠 29 件とも見つかって通る（docs/28 §12）', () => {
+    const r = checkAtlas(
+      fileURLToPath(new URL('./fixtures/atlas-evidence-agent/', import.meta.url)),
+    );
+    expect(r.issues).toEqual([]);
+    expect(r.evidence).toEqual({
+      nodes: { with: 10, total: 10 },
+      wires: { with: 16, total: 16 },
+      entries: 29,
+      found: 29,
+    });
+  });
+
   it('bundle（と live）は、根拠と未読を見ない。根拠に誤りがあっても、まとめる（docs/28 D261）', () => {
     const { atlas } = copy(loadEvidence('app/index.html', '[78, 81]', 'async function nothing()'));
     expect(errors(checkAtlas(atlas))).toHaveLength(1);

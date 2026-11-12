@@ -1,0 +1,156 @@
+# 受け口の側（app/sw.js。Service Worker が /api/* の通信を受けて返事を作る）の箱と、そこから出る線。
+# Service Worker は利用者の端末の中で動くが、通信を受けて返事を作る役なので runtime: server と書く（§4.1）。
+nodes:
+  - id: "endpoint:GET /api/comments"
+    kind: endpoint
+    name: "GET /api/comments（Service Worker）"
+    runtime: server
+    file: app/sw.js
+    line: 28
+    evidence: [{ file: app/sw.js, lines: [28, 30], text: "url.pathname === '/api/comments' && req.method === 'GET'" }]
+    meta: { route: "GET /api/comments" }
+    ports:
+      - { id: in, dir: in, items: [{ id: request, name: "入力なし", type: void }] }
+      - { id: req, dir: out, items: [{ id: all, name: "全部を読む", type: void }] }
+      - id: res
+        dir: in
+        items:
+          - id: rows
+            name: comments
+            type: "object[]"
+            children:
+              - { id: id, name: id, type: number }
+              - { id: body, name: body, type: string }
+              - { id: author, name: author, type: string }
+      - id: out
+        dir: out
+        items:
+          - id: body
+            name: body
+            type: object
+            children:
+              - id: comments
+                name: comments
+                type: "object[]"
+                children:
+                  - { id: id, name: id, type: number }
+                  - { id: body, name: body, type: string }
+                  - { id: author, name: author, type: string }
+
+  - id: "endpoint:POST /api/comments"
+    kind: endpoint
+    name: "POST /api/comments（Service Worker）"
+    runtime: server
+    file: app/sw.js
+    line: 31
+    evidence: [{ file: app/sw.js, lines: [31, 36], text: "url.pathname === '/api/comments' && req.method === 'POST'" }]
+    meta: { route: "POST /api/comments" }
+    ports:
+      - id: in
+        dir: in
+        items:
+          - id: body
+            name: body
+            type: object
+            children:
+              - id: comment
+                name: comment
+                type: object
+                children:
+                  - { id: body, name: body, type: string }
+      - id: req
+        dir: out
+        items:
+          - id: row
+            name: row
+            type: object
+            children:
+              - { id: id, name: "id（nextId から振る）", type: number }
+              - { id: body, name: "body（500 字で切る）", type: string }
+              - { id: author, name: "author（いつも me）", type: string }
+      - id: out
+        dir: out
+        items:
+          - id: body
+            name: body
+            type: object
+            children:
+              - id: comment
+                name: comment
+                type: object
+                children:
+                  - { id: id, name: id, type: number }
+                  - { id: body, name: body, type: string }
+                  - { id: author, name: author, type: string }
+
+  - id: "endpoint:DELETE /api/comments/{id}"
+    kind: endpoint
+    name: "DELETE /api/comments/{id}（Service Worker）"
+    runtime: server
+    file: app/sw.js
+    line: 37
+    evidence: [{ file: app/sw.js, lines: [37, 41], text: "if (m && req.method === 'DELETE')" }]
+    meta: { route: "DELETE /api/comments/{id}" }
+    ports:
+      - id: in
+        dir: in
+        items:
+          - id: path
+            name: path
+            type: object
+            children:
+              - { id: id, name: id, type: string }
+      - id: req
+        dir: out
+        items:
+          - { id: id, name: "Number(id)", type: number }
+          - { id: remove, name: "消す", type: void }
+      - { id: out, dir: out, items: [{ id: done, name: "204（中身なし）", type: void }] }
+
+  - id: "table:comments"
+    kind: table
+    name: "comments（Service Worker のメモリの中の並び）"
+    runtime: data
+    file: app/sw.js
+    line: 5
+    evidence: [{ file: app/sw.js, lines: [4, 8], text: "let comments = [" }]
+    ports:
+      - id: key
+        dir: in
+        items:
+          - { id: all, name: "全部", type: void }
+          - { id: id, name: id, type: number }
+      - id: write
+        dir: in
+        items:
+          - id: row
+            name: "row（先頭に足す）"
+            type: object
+            children:
+              - { id: id, name: id, type: number }
+              - { id: body, name: body, type: string }
+              - { id: author, name: author, type: string }
+          - { id: remove, name: "消す", type: void }
+      - id: read
+        dir: out
+        items:
+          - id: rows
+            name: comments
+            type: "object[]"
+            children:
+              - { id: id, name: id, type: number }
+              - { id: body, name: body, type: string }
+              - { id: author, name: author, type: string }
+
+wires:
+  # 一覧を読む
+  - { from: "endpoint:GET /api/comments#out/body.comments", to: "fn:load#in/comments", via: http, reply: true, evidence: [{ file: app/index.html, lines: [79, 79], text: "const { comments } = await" }] }
+  - { from: "endpoint:GET /api/comments#req/all", to: "table:comments#key/all", via: call, evidence: [{ file: app/sw.js, lines: [29, 29], text: "return json({ comments });" }] }
+  - { from: "table:comments#read/rows", to: "endpoint:GET /api/comments#res/rows", via: call, reply: true, evidence: [{ file: app/sw.js, lines: [29, 29], text: "json({ comments })" }] }
+  # コメントを足す
+  - { from: "endpoint:POST /api/comments#out/body.comment", to: "part:comment-form#in/saved", via: http, reply: true, evidence: [{ file: app/sw.js, lines: [35, 35], text: "return json({ comment: row }, 201);" }] }
+  - { from: "endpoint:POST /api/comments#req/row", to: "table:comments#write/row", via: call, evidence: [{ file: app/sw.js, lines: [34, 34], text: "comments = [row, ...comments];" }] }
+  # コメントを消す
+  - { from: "endpoint:DELETE /api/comments/{id}#out/done", to: "part:delete-button#in/done", via: http, reply: true, evidence: [{ file: app/sw.js, lines: [40, 40], text: "return new Response(null, { status: 204 });" }] }
+  - { from: "endpoint:DELETE /api/comments/{id}#req/id", to: "table:comments#key/id", via: call, evidence: [{ file: app/sw.js, lines: [39, 39], text: "c.id !== Number(m[1])" }] }
+  - { from: "endpoint:DELETE /api/comments/{id}#req/remove", to: "table:comments#write/remove", via: call, evidence: [{ file: app/sw.js, lines: [39, 39], text: "comments = comments.filter(" }] }
