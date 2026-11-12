@@ -1,6 +1,7 @@
 import { createConsoleLogger } from '@stack-atlas/core';
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { runBuild } from './commands/build.js';
+import { runCheck } from './commands/check.js';
 import { runDiff } from './commands/diff.js';
 import { runInitFlows } from './commands/init-flows.js';
 import { harnessVersion, runInitSkill } from './commands/init-skill.js';
@@ -19,6 +20,11 @@ export const USAGE = `使い方: stack-atlas <コマンド> [オプション]
       --with-viewer でビューアも同梱する。--v1 は graph.json に v1 だけを書く（従来の出力）。検証エラーがあれば終了コード 1。
       --dry-run は出力先に書かない（スクショも撮らない）。--json は標準出力を build の報告の JSON だけにする（ログは標準エラー）。
       --strict は埋められる隙間（結べない呼び出し・解けない補いなど。docs/19 §3.3）があれば終了コード 1（CI の関門）
+  check [<dir>] [--json]
+      <dir>（既定はカレント）の .stack-atlas/ の図（箱・線・部品・挙動。エージェントが書いたもの）を検査する。
+      形・参照・挙動（段の線が図にあるか、段がつながっているか、始まりの部品が合っているか）を見る。対象のコードは読まない。
+      --json は結果を JSON で出す（検査できなかったときも { error } の JSON）。
+      終了コード: 0 = 誤りなし、1 = 図に誤りがある、2 = 検査できなかった
   validate [--strict] <graph.json...>
       graph.json をスキーマと参照整合性で検証する（version 1 / 2 を見て検証器を選ぶ）。
       --strict は graph.json の build の報告を読み、報告が無い・言語アダプタを飛ばした・strict の違反がある graph をエラーにする
@@ -90,6 +96,10 @@ export async function main(argv: string[]): Promise<number> {
           strict: Boolean(values.strict),
           log: values.json ? createStderrLogger({ level }) : createConsoleLogger({ level }),
         });
+      }
+      case 'check': {
+        const { values, positionals } = parse(rest, { json: { type: 'boolean' } });
+        return runCheck(positionals, console.log, { json: Boolean(values.json) });
       }
       case 'validate': {
         const { values, positionals } = parse(rest, { strict: { type: 'boolean' } });

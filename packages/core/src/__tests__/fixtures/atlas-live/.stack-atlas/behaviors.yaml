@@ -1,0 +1,49 @@
+# 挙動: 「どの部品を、どうすると」「どの線を順に通って」「何が返り、画面がどう変わるか」
+behaviors:
+  - id: open
+    name: "ページを開く"
+    screen: "screen:/"
+    trigger: { action: open }
+    steps:
+      - send: [{ from: "screen:/#out/open", to: "fn:load#in/call" }]
+      - send: [{ from: "fn:load#out/request", to: "endpoint:GET /api/comments#in/request" }]
+        back: [{ from: "endpoint:GET /api/comments#out/body.comments", to: "fn:load#in/comments" }]
+      - send: [{ from: "endpoint:GET /api/comments#req/all", to: "table:comments#key/all" }]
+        back: [{ from: "table:comments#read/rows", to: "endpoint:GET /api/comments#res/rows" }]
+      - send: [{ from: "fn:load#out/render", to: "part:comment-list#in/comments" }]
+    result: { say: "コメントの一覧が出る。", part: comment-list }
+
+  - id: post-comment
+    name: "コメントを投稿する"
+    screen: "screen:/"
+    trigger: { action: submit, part: comment-form }
+    steps:
+      - send: [{ from: "part:comment-form#out/comment", to: "endpoint:POST /api/comments#in/body.comment" }]
+        back: [{ from: "endpoint:POST /api/comments#out/body.comment", to: "part:comment-form#in/created" }]
+      - send: [{ from: "endpoint:POST /api/comments#req/row", to: "table:comments#write/row" }]
+        back: [{ from: "table:comments#read/row", to: "endpoint:POST /api/comments#res/row" }]
+      - send: [{ from: "part:comment-form#out/reload", to: "fn:load#in/call" }]
+        say: "投稿のあと、一覧を読み直す"
+      - send: [{ from: "fn:load#out/request", to: "endpoint:GET /api/comments#in/request" }]
+        back: [{ from: "endpoint:GET /api/comments#out/body.comments", to: "fn:load#in/comments" }]
+      - send: [{ from: "endpoint:GET /api/comments#req/all", to: "table:comments#key/all" }]
+        back: [{ from: "table:comments#read/rows", to: "endpoint:GET /api/comments#res/rows" }]
+      - send: [{ from: "fn:load#out/render", to: "part:comment-list#in/comments" }]
+    result: { say: "一覧を読み直し、コメントが 1 つ増える。", part: comment-list }
+
+  - id: delete-comment
+    name: "コメントを削除する"
+    screen: "screen:/"
+    trigger: { action: click, part: comment-delete }
+    steps:
+      - send: [{ from: "part:comment-delete#out/id", to: "endpoint:DELETE /api/comments/{id}#in/id" }]
+        back: [{ from: "endpoint:DELETE /api/comments/{id}#out/status", to: "part:comment-delete#in/done" }]
+      - send: [{ from: "endpoint:DELETE /api/comments/{id}#req/id", to: "table:comments#key/id" }]
+      - send: [{ from: "part:comment-delete#out/reload", to: "fn:load#in/call" }]
+        say: "削除のあと、一覧を読み直す"
+      - send: [{ from: "fn:load#out/request", to: "endpoint:GET /api/comments#in/request" }]
+        back: [{ from: "endpoint:GET /api/comments#out/body.comments", to: "fn:load#in/comments" }]
+      - send: [{ from: "endpoint:GET /api/comments#req/all", to: "table:comments#key/all" }]
+        back: [{ from: "table:comments#read/rows", to: "endpoint:GET /api/comments#res/rows" }]
+      - send: [{ from: "fn:load#out/render", to: "part:comment-list#in/comments" }]
+    result: { say: "一覧を読み直し、そのコメントが消える。", part: comment-list }

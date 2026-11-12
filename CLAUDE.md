@@ -5,7 +5,7 @@
 > **2026-11-11: 要件を改めた。正は `docs/24-requirements-v2.md`。**
 > Stack Atlas は「本物の画面を見ながら挙動を選ぶと、その経路だけが光り、データが流れる」道具に絞る。コードを読む仕事は、利用者の手元のエージェントが受け持つ。道具の中に、特定の言語やフレームワークを前提にした処理を持たない。共有用の静的な全体図と要件整理は Claude Whiteboards に任せる。
 > **要件・仕様・完成条件・手順書に、言語やフレームワークの名前を書かない**（docs/24 §4）。
-> 下の「結論」「現在の状態」「リポジトリ内容」は、今あるコードの説明としては正しい。ただし、進む向き（抽出器を足す・Phase 9-L の 9-L1 以降）は止めた。コードを読む抽出器は、エージェントが書きこむ道が動いたあとで捨てる（消す前にユーザーに確かめる）。次の作業は docs/24 §7 の未決から始める設計。
+> 下の「結論」「現在の状態」「リポジトリ内容」は、今あるコードの説明としては正しい。ただし、進む向き（抽出器を足す・Phase 9-L の 9-L1 以降）は止めた。コードを読む抽出器は、エージェントが書きこむ道が動いたあとで捨てる（消す前にユーザーに確かめる）。設計は `docs/25-design-screen-first.md`、エージェントが書く図の形は `docs/26-atlas-files.md`（契約 v0）。実装は Phase 10（docs/06）の順で進めている。新しい道のコードは `packages/core/src/atlas/` と `stack-atlas check`、試しは `prototype/live/`。
 
 ## 結論（このプロジェクトは何か）
 
@@ -38,7 +38,7 @@
 
 ## 現在の状態と次のタスク
 
-テストは `pnpm test` で 1546 件（skip 2。`STACK_ATLAS_REQUIRE_GO=1` で go の側も）、viewer の e2e は 71 件（skip 4。3D の地図の spec は手元のヘッドレスで止まる・遅いことがある。CI で実行。配線図だけを確かめる spec は `&pane=wiring`）。`examples/fixture-poly/`（2 repo の合成）は 56 ノード / 95 エッジ / 2 フロー / エラー 0。
+テストは `pnpm test` で 1580 件（skip 2。`STACK_ATLAS_REQUIRE_GO=1` で go の側も）、viewer の e2e は 71 件（skip 4。3D の地図の spec は手元のヘッドレスで止まる・遅いことがある。CI で実行。配線図だけを確かめる spec は `&pane=wiring`）。`examples/fixture-poly/`（2 repo の合成）は 56 ノード / 95 エッジ / 2 フロー / エラー 0。
 実リポジトリでは設定を**この公開リポジトリの外**（兄弟ディレクトリ。`repos: { web: ../damage-web, platform: ../damage-platform }`）に置いて build し、149 / 330 / エラー 0 / 警告 0 を確認した（内訳は `HANDOFF.md` §0）。
 
 次にやること（2026-11-11 から）: **docs/24 の要件 v2 の設計**（エージェントの書きこみ口・検査・画面から始めるビューア。docs/24 §7）。以下はそれより前の記録で、Phase 6 の残りのうち抽出器に依るものは進めない。
@@ -111,4 +111,4 @@ prototype/                         ← 単一 HTML のプロトタイプ（three
 scripts/                           ← export-prototype-data / validate-graph（互換ラッパ）/ sync-samples
 ```
 
-主なコマンド: `pnpm atlas build examples/fixture-repo -o out --with-viewer --no-screenshots`（または `examples/fixture-poly`）→ `pnpm atlas serve out`、`pnpm validate <graph.json>`、`pnpm dev`（ビューア開発サーバ）。ハーネス: `pnpm atlas build <repo> --dry-run --json`（止まったときも `{ error }` の JSON）/ `--strict --no-screenshots`、`pnpm atlas validate --strict <graph.json>`、`pnpm atlas init --skill <dir> [--update]`、`pnpm atlas init-views <repo>`（docs/13 §3.6b）。
+主なコマンド: `pnpm atlas build examples/fixture-repo -o out --with-viewer --no-screenshots`（または `examples/fixture-poly`）→ `pnpm atlas serve out`、`pnpm validate <graph.json>`、`pnpm dev`（ビューア開発サーバ）。新しい道（docs/25・docs/26）: `pnpm atlas check <dir>`（`<dir>/.stack-atlas/` の図を検査する。`--json`）。ハーネス: `pnpm atlas build <repo> --dry-run --json`（止まったときも `{ error }` の JSON）/ `--strict --no-screenshots`、`pnpm atlas validate --strict <graph.json>`、`pnpm atlas init --skill <dir> [--update]`、`pnpm atlas init-views <repo>`（docs/13 §3.6b）。
