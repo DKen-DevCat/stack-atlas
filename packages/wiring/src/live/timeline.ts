@@ -27,7 +27,15 @@ export interface LiveTimeline {
   /** いちばん長い帯の番号（帯が無ければ -1） */
   longest: number;
   /** 通信ごとの「送ってから返るまで」。同時に出た通信は重なるので、合計は total と合わないことがある */
-  requests: Array<{ id: string; from: number; to: number; ms: number; pending: boolean }>;
+  requests: Array<{
+    id: string;
+    from: number;
+    to: number;
+    ms: number;
+    pending: boolean;
+    /** 返事が無かった理由（止めた・手元の外・失敗） */
+    failed?: 'held' | 'outside' | 'error';
+  }>;
   /** 画面の変化ごとの時刻（op.changes と同じ順・同じ数。届いた順 = 時刻の順） */
   changes: number[];
 }
@@ -40,7 +48,14 @@ export function timelineOf(op: LiveOperation): LiveTimeline {
       const from = Math.min(rel(r.start), total);
       const pending = r.end === undefined;
       const to = pending ? total : Math.min(Math.max(rel(r.end!), from), total);
-      return { id: r.id, from, to, ms: to - from, pending };
+      return {
+        id: r.id,
+        from,
+        to,
+        ms: to - from,
+        pending,
+        ...(r.failed ? { failed: r.failed } : {}),
+      };
     })
     .sort((a, b) => a.from - b.from);
   const changes = op.changes.map((c) => Math.min(rel(c.at), total));

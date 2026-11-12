@@ -38,7 +38,7 @@
 
 ## 現在の状態と次のタスク
 
-テストは `pnpm test` で 1706 件（skip 2。`STACK_ATLAS_REQUIRE_GO=1` で go の側も）、viewer の e2e は 71 件（skip 4。3D の地図の spec は手元のヘッドレスで止まる・遅いことがある。CI で実行。配線図だけを確かめる spec は `&pane=wiring`）。`examples/fixture-poly/`（2 repo の合成）は 56 ノード / 95 エッジ / 2 フロー / エラー 0。
+テストは `pnpm test` で 1723 件（skip 2。`STACK_ATLAS_REQUIRE_GO=1` で go の側も）、viewer の e2e は 71 件（skip 4。3D の地図の spec は手元のヘッドレスで止まる・遅いことがある。CI で実行。配線図だけを確かめる spec は `&pane=wiring`）。`examples/fixture-poly/`（2 repo の合成）は 56 ノード / 95 エッジ / 2 フロー / エラー 0。
 実リポジトリでは設定を**この公開リポジトリの外**（兄弟ディレクトリ。`repos: { web: ../damage-web, platform: ../damage-platform }`）に置いて build し、149 / 330 / エラー 0 / 警告 0 を確認した（内訳は `HANDOFF.md` §0）。
 
 次にやること（2026-11-11 から）: **docs/24 の要件 v2 の設計**（エージェントの書きこみ口・検査・画面から始めるビューア。docs/24 §7）。以下はそれより前の記録で、Phase 6 の残りのうち抽出器に依るものは進めない。
@@ -91,7 +91,7 @@ packages/
   core/                            ← 抽出器の契約（src/types.ts）、repo / classify / deploy / merge / overrides / flows / rules/ / buildGraph()（src/pipeline.ts）、diff、memos
   tf-graph/                        ← IaC 共通: Terraform JSON → infra ノード・エッジ・cache（cdktf / terraform / cloudformation が使う）
   cli/                             ← stack-atlas コマンド（src/commands/ に build / validate / serve / diff / init-flows / init-views / init-skill、harness.ts）
-  viewer/                          ← Vite + TypeScript + three.js の静的アプリ（src/graph・layout・scene・screen・ui・wiring（配線図）・split（2 面）、e2e/）
+  viewer/                          ← Vite + TypeScript + three.js の静的アプリ（src/graph・layout・scene・screen・ui・wiring（配線図）・split（2 面）、e2e/）。ライブの画面は live/index.html と src/live/（vite.live.config.ts が dist-live/ に組み立てる。docs/27 §13）
 harness/skill/                     ← Claude Code の skill（SKILL.md・references/・templates/・VERSION）。`init --skill` のコピー元（docs/19 §3.5）
 extractors/                        ← 15 個。CLI の順: files → cdktf → terraform → cloudformation → nextjs-app → ts-imports → ts-types → go → go-types → openapi → sql → api-link → cache → screenshots → screens
   files/  cdktf/  terraform/  cloudformation/   ← glob → ノード、インフラ層（CDKtf / HCL / CDK・SAM・CFn）

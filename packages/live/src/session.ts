@@ -38,7 +38,7 @@ import type {
 } from 'playwright';
 import { checkLiveUrl, checkLocalName, isLocalHost, proxyBypass, resolverRules } from './local.js';
 import { startRefuser, type Refuser } from './refuser.js';
-import { startLiveServer, type LiveServer } from './server.js';
+import { MINIMAL_PAGE_DIR, defaultPageDir, startLiveServer, type LiveServer } from './server.js';
 import { liveWatcher } from './watcher.js';
 
 /** 起動できなかった（exitCode: 1 = 図に誤りがある、2 = 引数・環境の誤り） */
@@ -64,6 +64,8 @@ export interface LiveOptions {
   localNames?: string[];
   /** 窓を出さない（確かめ用） */
   headless?: boolean;
+  /** 配るライブの画面のファイルの置き場（確かめ用。既定は defaultPageDir()） */
+  pageDir?: string;
   /** 端末への案内（値は渡さない） */
   log?: (line: string) => void;
 }
@@ -150,7 +152,12 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
   };
 
   try {
-    server = await startLiveServer({ hostname: appUrl.hostname, appOrigin });
+    const pageDir = opts.pageDir ?? defaultPageDir();
+    if (pageDir === MINIMAL_PAGE_DIR)
+      log(
+        'ビューアのライブの画面が組み立てられていないので、出来事を並べるだけの画面で開きます（pnpm build で組み立てると、経路と再生が出ます）',
+      );
+    server = await startLiveServer({ hostname: appUrl.hostname, appOrigin, pageDir });
     const live = server;
     const noSandbox = process.env[NO_SANDBOX_ENV] === '1';
     if (noSandbox) log(`${NO_SANDBOX_ENV}=1 なので、ブラウザをサンドボックス無しで起動します`);
@@ -185,7 +192,7 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
       hold: opts.holdWrites === true,
       holdLocked: opts.holdWrites === true,
     };
-    let livePage: Page;
+    let livePage = undefined as unknown as Page;
     let appPage: Page | undefined;
     /** 終わりかけ（ライブの画面か、ブラウザが閉じた）。このあとは、窓を開かない */
     let closing = false;
@@ -196,7 +203,8 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
     // --- ライブの画面へ渡す（渡す先の出所を、ページの中でも確かめる。アプリの文書に渡さない） ---
     const queue: LiveEvent[] = [];
     const deliver = async (msg: LiveMessage) => {
-      if (swapping || livePage.isClosed()) return;
+      // ライブの画面を開く前（時計は先に動く）・入れ替えのあいだ・閉じたあとは、渡さない
+      if (swapping || livePage === undefined || livePage.isClosed()) return;
       await livePage
         .evaluate(
           ([m, origin]) => {
@@ -217,7 +225,8 @@ export async function startLive(opts: LiveOptions): Promise<LiveSession> {
       queue.sort((a, b) => a.at - b.at);
       const ready: LiveEvent[] = [];
       while (queue.length && (all || queue[0]!.at <= limit)) ready.push(queue.shift()!);
-      if (ready.length) await deliver({ t: 'events', events: ready });
+      // 出来事が無くても、どこまで渡し終えたか（upTo）を渡す。ライブの画面は、この時刻で「静かになった」を判定する
+      await deliver({ t: 'events', events: ready, upTo: all ? Date.now() : limit });
     };
     timer = setInterval(() => void flush(), SESSION_LIMITS.flushMs);
     const sendStatus = () => deliver({ t: 'status', status: { ...state } });

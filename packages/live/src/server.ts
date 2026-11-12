@@ -4,7 +4,7 @@
  * ライブの画面に直に渡す。D230）。対象の repo の中のファイルは配らない。
  * 届いたヘッダ（アプリの Cookie も届く）は、使わない・記録しない
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +22,15 @@ const TYPES: Record<string, string> = {
   css: 'text/css; charset=utf-8',
 };
 
-export const PAGE_DIR = fileURLToPath(new URL('../page/', import.meta.url));
+/** 最小のライブの画面（出来事を文字で並べるだけ）。ビューアのライブの画面を組み立てていないときに使う */
+export const MINIMAL_PAGE_DIR = fileURLToPath(new URL('../page/', import.meta.url));
+/** ビューアのライブの画面（`pnpm --filter @stack-atlas/viewer build` が、決まった名前のファイルを出す。docs/27 §4.4） */
+export const VIEWER_LIVE_DIR = fileURLToPath(new URL('../../viewer/dist-live/', import.meta.url));
+/** 配るライブの画面: ビューアのものを組み立ててあれば、それ。無ければ、最小のもの */
+export const defaultPageDir = (): string =>
+  Object.values(PAGE_FILES).every((name) => existsSync(`${VIEWER_LIVE_DIR}${name}`))
+    ? VIEWER_LIVE_DIR
+    : MINIMAL_PAGE_DIR;
 
 export interface LiveServer {
   server: Server;
@@ -61,7 +69,7 @@ export function pageHeaders(appOrigin: string): Record<string, string> {
 }
 
 export async function startLiveServer(opts: LiveServerOptions): Promise<LiveServer> {
-  const dir = opts.pageDir ?? PAGE_DIR;
+  const dir = opts.pageDir ?? defaultPageDir();
   // 起動のときに読んでおく（配る途中で、ファイルを開かない）
   const files = new Map<string, { body: Buffer; type: string }>();
   for (const [path, name] of Object.entries(PAGE_FILES))

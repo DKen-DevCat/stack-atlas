@@ -1,7 +1,8 @@
 // ライブ（docs/27）を、実際のブラウザで確かめる。人の代わりに、テストがアプリの枠を操作する（道具は押さない）。
 // 図は、試しでエージェントが書いたもの。アプリは、試しのサンプルのアプリ（prototype/live/app）。
 // ブラウザが起動できない環境では、飛ばさずに失敗させる（CI は STACK_ATLAS_CHROMIUM_NO_SANDBOX=1 で起動する）
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { networkInterfaces, tmpdir } from 'node:os';
@@ -9,7 +10,8 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { LiveMessage } from '@stack-atlas/wiring';
 import type { Page } from 'playwright';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { MINIMAL_PAGE_DIR, VIEWER_LIVE_DIR } from '../server.js';
 import { LiveError, startLive, type LiveSession } from '../session.js';
 
 const APP_DIR = fileURLToPath(new URL('../../../../prototype/live/app/', import.meta.url));
@@ -59,11 +61,13 @@ afterEach(async () => {
 });
 async function open(url: string, more: Partial<Parameters<typeof startLive>[0]> = {}) {
   const lines: string[] = [];
+  // 見張りの確かめは、最小のライブの画面で行う（ビューアのライブの画面を組み立てたかどうかで、結果を変えない）
   const session = await startLive({
     root: ATLAS,
     url,
     headless: true,
     log: (l) => lines.push(l),
+    pageDir: MINIMAL_PAGE_DIR,
     ...more,
   });
   sessions.push(session);
@@ -549,6 +553,189 @@ self.addEventListener('fetch', (e) => { if (new URL(e.request.url).pathname === 
     },
     60_000,
   );
+});
+
+// ビューアのライブの画面（10-2c。docs/27 §4.4）。いまのコードで確かめるため、毎回、初めに組み立てる
+// （2026-11-13 変更（レビュー 10）: 前は、組み立てたものがあれば使っていたので、直したあとも古い画面で確かめていた）
+describe('ビューアのライブの画面（実際のブラウザ）', () => {
+  beforeAll(() => {
+    execFileSync('pnpm', ['--filter', '@stack-atlas/viewer', 'build:live'], {
+      cwd: fileURLToPath(new URL('../../../../', import.meta.url)),
+      stdio: 'ignore',
+    });
+  }, 120_000);
+  const played = (page: Page) =>
+    page.evaluate(() =>
+      (
+        window as unknown as {
+          __stackAtlasLivePlayed: () => Array<{ behavior?: string; ok?: boolean; total: number }>;
+        }
+      ).__stackAtlasLivePlayed(),
+    );
+
+  it('操作に合わせて挙動が選ばれ、経路・再生・時間の内訳・画面の変化が出る。値は伏せたまま。再生の操作に文字が無い', async () => {
+    const app = await serve(APP_DIR);
+    servers.push(app.server);
+    const { session } = await open(app.url, { pageDir: VIEWER_LIVE_DIR });
+    const live = session.livePage;
+    const frame = live.frameLocator('#app-pane iframe');
+    // 開いた: 「開く」の挙動が選ばれ、図と合っている
+    await until(
+      () => played(live),
+      (ps) => ps.some((p) => p.behavior === 'open'),
+    );
+    expect((await played(live)).find((p) => p.behavior === 'open')).toMatchObject({ ok: true });
+    expect(await live.locator('#behaviors button').count()).toBe(3);
+
+    const TEXT = 'ビューアの画面の確かめ 2b9e';
+    await frame.locator('.card').first().waitFor();
+    await frame.locator('textarea').fill(TEXT);
+    await frame.locator('#comment-form button').click();
+    await frame.locator('.card', { hasText: TEXT }).waitFor();
+    await until(
+      () => played(live),
+      (ps) => ps.some((p) => p.behavior === 'post-comment'),
+    );
+    expect((await played(live)).find((p) => p.behavior === 'post-comment')).toMatchObject({
+      ok: true,
+    });
+    await expect.poll(() => live.locator('#f-name').textContent()).toBe('コメントを投稿する');
+    expect(await live.locator('#f-verdict').textContent()).toBe('図と合っている');
+    // 経路は 8 段。再生の操作は、部品だけ（文字が無い）
+    expect(await live.locator('#path .hop').count()).toBe(8);
+    expect(await live.locator('#player').isVisible()).toBe(true);
+    expect((await live.locator('#player').innerText()).trim()).toBe('');
+    expect(await live.locator('#p-speed').inputValue()).toBe('0.2');
+    // 時間の内訳: いちばん長いのは、投稿の返事を待つ所（サンプルのバックエンドは、投稿を遅らせて返す）
+    expect(await live.locator('#s-times .trow.max .lbl').textContent()).toBe(
+      'POST /api/comments の返事を待つ',
+    );
+    // 画面に反映されたもの: 増えた投稿（丸ごと描き直しても、増えた 1 件だけ）
+    expect(await live.locator('#s-dom').innerText()).toContain(`増えた: ${TEXT}`);
+    // 値は伏せたまま。入れると出る
+    // 「実際の通信」は、たたんだ欄の中にあるので、見えている文字（innerText）ではなく、要素の中の文字で確かめる
+    expect(await live.locator('#s-reqs').textContent()).toContain('POST');
+    expect(await live.locator('#s-reqs').textContent()).not.toContain(TEXT);
+    await live.locator('#reveal').click();
+    await expect.poll(() => live.locator('#s-reqs').textContent()).toContain(TEXT);
+    expect(await live.locator('#reveal').getAttribute('aria-pressed')).toBe('true');
+    // 2026-11-13 追加（セキュリティのレビュー 1）: 切ると、入れていたあいだの値も消える（選び直しても出ない）
+    await live.locator('#reveal').click();
+    await expect.poll(() => live.locator('#reveal').getAttribute('aria-pressed')).toBe('false');
+    await expect.poll(() => live.locator('#s-reqs').textContent()).not.toContain(TEXT);
+    await live.locator('#history button').last().click();
+    await live.locator('#history button').first().click();
+    expect(await live.locator('#s-reqs').textContent()).not.toContain(TEXT);
+    expect(
+      JSON.stringify(
+        await live.evaluate(() =>
+          (
+            window as unknown as { __stackAtlasLiveDelivered: unknown[] }
+          ).__stackAtlasLiveDelivered.filter((m) => (m as { t: string }).t !== 'events'),
+        ),
+      ),
+    ).not.toContain(TEXT);
+
+    // 削除（重なった部品）: 削除の挙動が選ばれる。押した部品の名前が出る
+    const replayed = () =>
+      live.evaluate(
+        () =>
+          (window as unknown as { __stackAtlasLiveReplayed?: number }).__stackAtlasLiveReplayed ??
+          0,
+      );
+    await live.locator('#p-speed').fill('1');
+    const before = await replayed();
+    await frame.locator('.card', { hasText: TEXT }).locator('button.del').click();
+    await until(
+      () => played(live),
+      (ps) => ps.some((p) => p.behavior === 'delete-comment'),
+    );
+    expect((await played(live)).find((p) => p.behavior === 'delete-comment')).toMatchObject({
+      ok: true,
+    });
+    await expect
+      .poll(() => live.locator('#f-part').textContent())
+      .toContain('押した部品: 削除ボタン');
+    // 2026-11-13 変更（レビュー 8）: 削除の操作の再生が、最後まで進む（前は、それより前の再生の回数で通っていた）
+    await expect.poll(replayed).toBeGreaterThan(before);
+    expect(await live.locator('#history li').count()).toBeGreaterThanOrEqual(3);
+  }, 60_000);
+
+  it('一覧から挙動を選ぶと、操作しなくても、経路と、始まりの部品の場所が出る', async () => {
+    const app = await serve(APP_DIR);
+    servers.push(app.server);
+    const { session } = await open(app.url, { pageDir: VIEWER_LIVE_DIR });
+    const live = session.livePage;
+    await live.frameLocator('#app-pane iframe').locator('.card').first().waitFor();
+    await until(
+      () => played(live),
+      (ps) => ps.length > 0,
+    );
+    await live.locator('#behaviors button', { hasText: 'コメントを投稿する' }).click();
+    expect(await live.locator('#f-name').textContent()).toBe('コメントを投稿する');
+    expect(await live.locator('#f-state').textContent()).toBe('図のまま');
+    expect(await live.locator('#path .hop.drawn').count()).toBe(8);
+    // 2026-11-13 追加（レビュー 3）: 選んだ経路は、全部光る（docs/24 の核「挙動を選ぶと、経路が光る」）
+    expect(await live.locator('#path .hop.go-on').count()).toBe(8);
+    expect(await live.locator('#path .pnode:not(.lit)').count()).toBe(0);
+    expect(await live.locator('#f-part').textContent()).toContain('始まりの部品');
+    await expect.poll(() => live.locator('#overlay .box.part.stay').count()).toBe(1);
+    expect(await live.locator('#player').isVisible()).toBe(false);
+  }, 60_000);
+
+  it('図とアプリから来た文字は、HTML として解釈されない', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'stack-atlas-live-xss-'));
+    cpSync(ATLAS, root, { recursive: true });
+    const file = join(root, '.stack-atlas/behaviors.yaml');
+    writeFileSync(
+      file,
+      readFileSync(file, 'utf8').replace(
+        'name: "画面を開く"',
+        'name: "<img src=x onerror=window.__pwned=1><b>開く</b>"',
+      ),
+    );
+    const app = await serve(undefined, (req, res) => {
+      res
+        .writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        .end(
+          '<!doctype html><p id="x">app</p><script>setTimeout(() => { document.getElementById("x").textContent = "<img src=y onerror=top.__pwned2=1>"; }, 300);</script>',
+        );
+      return true;
+    });
+    servers.push(app.server);
+    const { session } = await open(app.url, { root, pageDir: VIEWER_LIVE_DIR });
+    const live = session.livePage;
+    await expect
+      .poll(() => live.locator('#behaviors').innerText())
+      .toContain('<img src=x onerror=window.__pwned=1><b>開く</b>');
+    expect(await live.locator('#behaviors img, #behaviors b').count()).toBe(0);
+    expect(
+      await live.evaluate(() => (window as unknown as { __pwned?: number }).__pwned),
+    ).toBeUndefined();
+    // 2026-11-13 変更（レビュー 12）: アプリの側の文字も、画面に反映されたものとして、文字のまま出る
+    await expect.poll(() => live.locator('#s-dom').textContent()).toContain('<img src=y onerror');
+    expect(await live.locator('#s-dom img, #path img, #behaviors img').count()).toBe(0);
+  }, 60_000);
+
+  it('道具が画面を決められないとき（画面が 2 つ以上・アドレスの書き無し）、画面を選ぶ欄が出る', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'stack-atlas-live-screens-'));
+    cpSync(ATLAS, root, { recursive: true });
+    const file = join(root, '.stack-atlas/graph/comments.yaml');
+    writeFileSync(
+      file,
+      readFileSync(file, 'utf8').replace(
+        'nodes:\n',
+        'nodes:\n  - { id: "screen:/other", kind: screen, name: "別の画面", runtime: browser, ports: [] }\n',
+      ),
+    );
+    const app = await serve(APP_DIR);
+    servers.push(app.server);
+    const { session } = await open(app.url, { root, pageDir: VIEWER_LIVE_DIR });
+    const live = session.livePage;
+    await expect.poll(() => live.locator('#screens').isVisible()).toBe(true);
+    await live.locator('#screen').selectOption('screen:/');
+    expect(await live.locator('#behaviors button').count()).toBe(3);
+  }, 60_000);
 });
 
 /** この機械の、ループバックではない IPv4 のアドレス（外の代わりの受け側を聞かせる。無ければ undefined） */

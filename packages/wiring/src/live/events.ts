@@ -171,7 +171,12 @@ export interface LiveValues {
 export type LiveMessage =
   | { t: 'status'; status: LiveStatus }
   | { t: 'graph'; graph: GraphV2 }
-  | { t: 'events'; events: LiveEvent[] }
+  /**
+   * upTo: 道具が、この時刻までの出来事は渡し終えた、という印（道具は、並べ直すために出来事を少しためてから渡す）。
+   * ライブの画面は、操作への区切りの「いま」に、この時刻を使う（今の時刻を使うと、まだ届いていない出来事があるのに、
+   * 静かになったと判定してしまう）
+   */
+  | { t: 'events'; events: LiveEvent[]; upTo?: number }
   | { t: 'values'; values: LiveValues[] };
 
 /** ライブの画面が、道具に送る合図。道具は、ライブの画面の、いちばん上の枠から来たものだけを受ける（docs/27 §4.2） */

@@ -9,7 +9,15 @@ export {
   resolverRules,
 } from './local.js';
 export { startRefuser, type Refuser } from './refuser.js';
-export { PAGE_DIR, PAGE_FILES, pageHeaders, startLiveServer, type LiveServer } from './server.js';
+export {
+  MINIMAL_PAGE_DIR,
+  PAGE_FILES,
+  VIEWER_LIVE_DIR,
+  defaultPageDir,
+  pageHeaders,
+  startLiveServer,
+  type LiveServer,
+} from './server.js';
 export {
   LiveError,
   NO_SANDBOX_ENV,

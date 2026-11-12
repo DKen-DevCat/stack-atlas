@@ -4,6 +4,7 @@
   "private": true,
   "description": "Stack Atlas の graph.json の型・JSON Schema・検証",
   "type": "module",
+  "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
