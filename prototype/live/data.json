@@ -1,0 +1,51 @@
+{
+  "note": "サンプルのアプリ（app/）の図。手で書いたもの。本物では、エージェントがコードを読んで書く（docs/25 §3.1・§3.2）。",
+  "parts": [
+    { "id": "comment-form", "selector": "#comment-form", "name": "コメント欄 ＋ Post Comment" },
+    { "id": "comment-delete", "selector": "button.del", "name": "コメントの削除ボタン" }
+  ],
+  "behaviors": [
+    {
+      "id": "open",
+      "name": "ページを開く",
+      "trigger": { "how": "open" },
+      "nodes": [
+        { "k": "part", "n": "ページ全体", "src": "app/index.html:31" },
+        { "k": "api", "n": "GET /api/comments", "src": "app/index.html:78（呼ぶ所）・app/sw.js:28（受ける所）" },
+        { "k": "store", "n": "comments", "src": "app/sw.js:5", "nt": "読む" }
+      ],
+      "expect": { "method": "GET", "path": "/api/comments" },
+      "go": ["入力なし", "読む"],
+      "back": ["comments", "行の列"],
+      "result": "コメントの一覧が出る。"
+    },
+    {
+      "id": "post-comment",
+      "name": "コメントを投稿する",
+      "trigger": { "how": "submit", "part": "comment-form" },
+      "nodes": [
+        { "k": "part", "n": "コメント欄 ＋ Post Comment", "src": "app/index.html:33" },
+        { "k": "api", "n": "POST /api/comments", "src": "app/index.html:83（呼ぶ所）・app/sw.js:31（受ける所）" },
+        { "k": "store", "n": "comments", "src": "app/sw.js:5", "nt": "1 行を書く" }
+      ],
+      "expect": { "method": "POST", "path": "/api/comments" },
+      "go": ["comment: { body }", "1 行を書く"],
+      "back": ["comment", "新しい行"],
+      "result": "一覧を読み直し、コメントが 1 つ増える。"
+    },
+    {
+      "id": "delete-comment",
+      "name": "コメントを削除する",
+      "trigger": { "how": "click", "part": "comment-delete" },
+      "nodes": [
+        { "k": "part", "n": "コメントの削除ボタン", "src": "app/index.html:68" },
+        { "k": "api", "n": "DELETE /api/comments/{id}", "src": "app/index.html:96（呼ぶ所）・app/sw.js:38（受ける所）" },
+        { "k": "store", "n": "comments", "src": "app/sw.js:5", "nt": "1 行を消す" }
+      ],
+      "expect": { "method": "DELETE", "path": "/api/comments/{id}" },
+      "go": ["id（パスの中）", "1 行を消す"],
+      "back": ["204（本文なし）", "なし"],
+      "result": "一覧を読み直し、そのコメントが消える。"
+    }
+  ]
+}

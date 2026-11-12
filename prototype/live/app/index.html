@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ja">
+<!-- ライブの試しのための、小さなサンプルのアプリ（「本物のアプリ」の代わり）。
+     バックエンドは無く、sw.js（Service Worker）が /api/* の返事を差し替える。
+     道具のための印は、どこにも付けていない。 -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A map is not the territory</title>
+<style>
+  body { margin: 0; font: 15px/1.6 system-ui, "Hiragino Sans", sans-serif; color: #1f2733; background: #ffffff; }
+  header { background: #263041; color: #f3f6fa; padding: 18px 24px; }
+  header h1 { margin: 0 0 4px; font-size: 22px; }
+  header small { opacity: 0.75; }
+  main { padding: 18px 24px 28px; display: flex; flex-direction: column; gap: 14px; max-width: 620px; }
+  p { margin: 0; }
+  form, .card { border: 1px solid #dfe4ea; border-radius: 6px; }
+  textarea { display: block; width: 100%; box-sizing: border-box; border: 0; padding: 10px 12px; font: inherit; min-height: 56px; resize: vertical; border-radius: 6px 6px 0 0; }
+  .foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 10px; background: #f3f5f8; border-top: 1px solid #dfe4ea; border-radius: 0 0 6px 6px; font-size: 13px; color: #6b7686; }
+  button { font: inherit; cursor: pointer; }
+  button[type="submit"] { background: #2f8f5b; color: #ffffff; border: 0; border-radius: 4px; padding: 4px 12px; font-weight: 600; font-size: 13px; }
+  .del { border: 1px solid #dfe4ea; background: #ffffff; color: #b64040; border-radius: 4px; padding: 0 8px; font-size: 13px; }
+  ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .card .txt { padding: 10px 12px; }
+  #status { color: #6b7686; font-size: 13px; }
+</style>
+
+<header>
+  <h1>A map is not the territory</h1>
+  <small>mio ・ 2026-11-09</small>
+</header>
+<main>
+  <p>地図は、土地そのものではありません。けれど、初めての町を歩くとき、わたしたちは地図のほうを先に見ます。</p>
+  <form id="comment-form">
+    <textarea name="comment" placeholder="Write a comment..." rows="2"></textarea>
+    <div class="foot"><span>me</span><button type="submit">Post Comment</button></div>
+  </form>
+  <div id="status">読みこみ中…</div>
+  <ul id="comments"></ul>
+</main>
+
+<script>
+  const list = document.getElementById('comments');
+  const form = document.getElementById('comment-form');
+  const status = document.getElementById('status');
+
+  async function api(path, opts) {
+    const res = await fetch('/api' + path, opts);
+    return res.status === 204 ? null : res.json();
+  }
+
+  function render(comments) {
+    status.textContent = comments.length + ' 件のコメント';
+    list.replaceChildren(...comments.map((c) => {
+      const li = document.createElement('li');
+      li.className = 'card';
+      li.dataset.id = c.id;
+      const txt = document.createElement('div');
+      txt.className = 'txt';
+      txt.textContent = c.body;
+      const foot = document.createElement('div');
+      foot.className = 'foot';
+      const who = document.createElement('span');
+      who.textContent = c.author;
+      foot.append(who);
+      if (c.author === 'me') {
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'del';
+        del.dataset.id = c.id;
+        del.textContent = '削除';
+        foot.append(del);
+      }
+      li.append(txt, foot);
+      return li;
+    }));
+  }
+
+  async function load() {
+    const { comments } = await api('/comments');
+    render(comments);
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = form.comment.value.trim();
+    if (!body) return;
+    await api('/comments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ comment: { body } }),
+    });
+    form.comment.value = '';
+    await load();
+  });
+
+  list.addEventListener('click', async (e) => {
+    const del = e.target.closest('button.del');
+    if (!del) return;
+    await api('/comments/' + del.dataset.id, { method: 'DELETE' });
+    await load();
+  });
+
+  (async () => {
+    await navigator.serviceWorker.register('sw.js');
+    await navigator.serviceWorker.ready;
+    if (!navigator.serviceWorker.controller) {
+      await new Promise((r) => navigator.serviceWorker.addEventListener('controllerchange', r, { once: true }));
+    }
+    await load();
+  })();
+</script>
+</html>
