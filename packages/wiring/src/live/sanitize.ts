@@ -17,12 +17,12 @@ export const REPORT_LIMITS = {
   changes: 40,
   /** 1 回の知らせの、部品の場所の数 */
   rects: 2000,
-  /** 部品の id の長さ */
-  id: 200,
   /** 画面の文字の長さ */
   text: 200,
-  /** 道具の時計と、これ以上ずれた時刻は、道具の時計に置き換える（ミリ秒） */
-  clockSkew: 60_000,
+  /** 道具の時計より、これ以上前の時刻は、道具の時計に置き換える（ミリ秒） */
+  late: 60_000,
+  /** 道具の時計より、これ以上先の時刻は、道具の時計に置き換える（先の時刻の知らせは、操作の区切りを止める） */
+  early: 1_000,
 } as const;
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -51,21 +51,20 @@ function changeOf(v: unknown): LiveChange | undefined {
 }
 
 /**
- * @param now 道具の時計（ミリ秒）。知らせの時刻が、これと大きくずれていれば、置き換える
- * @param known 図にある部品の id。無い id は捨てる（省くと、id は確かめない）
+ * @param now 道具の時計（ミリ秒）。知らせの時刻が、これより先・大きく前なら、置き換える
+ * @param known 図にある部品の id。無い id は捨てる
  */
 export function sanitizeReport(
   raw: unknown,
   now: number,
-  known?: ReadonlySet<string>,
+  known: ReadonlySet<string>,
 ): LiveReport | undefined {
   if (!isObject(raw)) return undefined;
-  const at = finite(raw.at) && Math.abs(raw.at - now) <= REPORT_LIMITS.clockSkew ? raw.at : now;
-  const knownId = (id: unknown): id is string =>
-    typeof id === 'string' &&
-    id.length > 0 &&
-    id.length <= REPORT_LIMITS.id &&
-    (known === undefined || known.has(id));
+  const at =
+    finite(raw.at) && raw.at <= now + REPORT_LIMITS.early && raw.at >= now - REPORT_LIMITS.late
+      ? raw.at
+      : now;
+  const knownId = (id: unknown): id is string => typeof id === 'string' && known.has(id);
 
   if (raw.t === 'part') {
     if (!LIVE_ACTIONS.includes(raw.how as LiveAction) || !Array.isArray(raw.parts))
@@ -81,13 +80,15 @@ export function sanitizeReport(
     return changes.length ? { t: 'dom', at, changes } : undefined;
   }
   if (raw.t === 'parts') {
-    if (!isObject(raw.rects)) return undefined;
-    const rects: Record<string, LiveRect> = {};
-    for (const [id, r] of Object.entries(raw.rects).slice(0, REPORT_LIMITS.rects)) {
+    if (!Array.isArray(raw.rects)) return undefined;
+    const rects = new Map<string, LiveRect>();
+    for (const pair of raw.rects.slice(0, REPORT_LIMITS.rects)) {
+      if (!Array.isArray(pair)) continue;
+      const [id, r] = pair as unknown[];
       const rect = rectOf(r);
-      if (rect && knownId(id)) rects[id] = rect;
+      if (rect && knownId(id)) rects.set(id, rect);
     }
-    return { t: 'parts', at, rects };
+    return { t: 'parts', at, rects: [...rects] };
   }
   return undefined;
 }

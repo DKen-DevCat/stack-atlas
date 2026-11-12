@@ -239,12 +239,12 @@ describe('sanitizeReport: アプリの枠からの知らせは、形と大きさ
       { t: 'part', how: 'click', parts: 'comment-list' },
       { t: 'dom', changes: 'x' },
       { t: 'dom', changes: [{ kind: 'moved', text: 'x' }] },
-      { t: 'parts', rects: [] },
+      { t: 'parts', rects: {} },
     ])
       expect(sanitizeReport(raw, now, known), JSON.stringify(raw)).toBeUndefined();
   });
 
-  it('長い文字・多すぎる数は切る。道具の時計と大きくずれた時刻は、道具の時計に置き換える', () => {
+  it('長い文字・多すぎる数は切る。道具の時計より先の時刻・大きく前の時刻は、道具の時計に置き換える', () => {
     const dom = sanitizeReport(
       {
         t: 'dom',
@@ -254,12 +254,15 @@ describe('sanitizeReport: アプリの枠からの知らせは、形と大きさ
         ],
       },
       now,
+      known,
     );
     expect(dom).toMatchObject({ t: 'dom', at: now });
     const changes = (dom as { changes: { text: string }[] }).changes;
     expect(changes).toHaveLength(REPORT_LIMITS.changes);
     expect(changes[0]!.text).toHaveLength(REPORT_LIMITS.text);
-    expect(sanitizeReport({ t: 'dom', at: 'soon', changes: [{ kind: 'removed' }] }, now)).toEqual({
+    expect(
+      sanitizeReport({ t: 'dom', at: 'soon', changes: [{ kind: 'removed' }] }, now, known),
+    ).toEqual({
       t: 'dom',
       at: now,
       changes: [{ kind: 'removed', text: '' }],
@@ -271,6 +274,7 @@ describe('sanitizeReport: アプリの枠からの知らせは、形と大きさ
       sanitizeReport(
         { t: 'dom', at: now, changes: [{ kind: 'text', before: 'a', text: 'b' }] },
         now,
+        known,
       ),
     ).toEqual({ t: 'dom', at: now, changes: [{ kind: 'text', before: 'a', text: 'b' }] });
     expect(
@@ -278,15 +282,150 @@ describe('sanitizeReport: アプリの枠からの知らせは、形と大きさ
         {
           t: 'parts',
           at: now,
-          rects: {
-            'comment-list': { x: 0, y: 0, w: 10, h: 10 },
-            ghost: { x: 0, y: 0, w: 1, h: 1 },
-            'delete-button': { x: 0, y: 0, w: -1, h: 1 },
-          },
+          rects: [
+            ['comment-list', { x: 0, y: 0, w: 10, h: 10 }],
+            ['ghost', { x: 0, y: 0, w: 1, h: 1 }],
+            ['delete-button', { x: 0, y: 0, w: -1, h: 1 }],
+            'x',
+          ],
         },
         now,
         known,
       ),
-    ).toEqual({ t: 'parts', at: now, rects: { 'comment-list': { x: 0, y: 0, w: 10, h: 10 } } });
+    ).toEqual({ t: 'parts', at: now, rects: [['comment-list', { x: 0, y: 0, w: 10, h: 10 }]] });
+  });
+});
+
+// PR を作る前のコードレビューと、セキュリティのレビュー（10-2a）で見つかったこと
+describe('値を伏せる（レビューで見つかったこと）', () => {
+  const SECRET = 'hunter2-secret';
+
+  it('名前か値か分からない欄（= の無い欄・名前らしくない字・値に見える、値の無い欄）は、名前として出さない', () => {
+    const form = (text: string) =>
+      maskBody('application/x-www-form-urlencoded; charset=UTF-8', text, text.length);
+    // キーと値の形の文字を、フォームの種類で送る通信: 形を読む
+    expect(form(`{"password":"${SECRET}","user":"bob"}`)).toEqual({
+      kind: 'tree',
+      shape: {
+        t: 'object',
+        keys: [
+          ['password', { t: 'string' }],
+          ['user', { t: 'string' }],
+        ],
+      },
+    });
+    // 読めないもの・= の無い欄・符号のうしろに = が付いた形は、伏せた印
+    for (const text of [
+      `{"password":"${SECRET}"`,
+      `a=1&${SECRET}`,
+      `a=1&dG9rZW4tc2VjcmV0==`,
+      `a=1&${SECRET}=`,
+      `a=1&%7B%22token%22%3A%22${SECRET}%22%7D=x`,
+      `a=1&${'k'.repeat(80)}=x`,
+    ]) {
+      const masked = form(text);
+      expect(JSON.stringify(masked), text).not.toContain(SECRET);
+      expect(JSON.stringify(masked), text).not.toContain('dG9r');
+      expect(JSON.stringify(masked), text).not.toContain('kkkkkkkkkkkkkkkkkkkkkkkkkkkkk');
+    }
+    expect(form(`a=1&${SECRET}`)).toEqual({ kind: 'form', keys: ['a', MASKED] });
+    // 名前らしい名前は、値が空でも残る
+    expect(form('q=&page=2&user[name]=x&a.b=1')).toEqual({
+      kind: 'form',
+      keys: ['q', 'page', 'user[name]', 'a.b'],
+    });
+  });
+
+  it('問い合わせの文字列も同じ。パスごと渡されても、? より後ろだけを読む', () => {
+    expect(queryKeys(`?${SECRET}`)).toEqual([MASKED]);
+    expect(queryKeys('?dG9rZW4tc2VjcmV0==')).toEqual([MASKED]);
+    expect(queryKeys(`?a=1&${SECRET}`)).toEqual(['a', MASKED]);
+    expect(queryKeys('/a?token=1#frag')).toEqual(['token']);
+  });
+
+  it('ファイルを運ぶ形は、区切りのすぐあとの見出しだけを読む（欄の値・ファイルの中の name="…" を拾わない）', () => {
+    const body = [
+      '--x',
+      'Content-Disposition: form-data; name="note"',
+      '',
+      `my api key is name="${SECRET}"`,
+      '--x',
+      'Content-Disposition: form-data; name="file"; filename="people.xml"',
+      'Content-Type: text/xml',
+      '',
+      `<people><person name="${SECRET}" card-name="4111-1111-1111-1111"/></people>`,
+      '--x--',
+      '',
+    ].join('\r\n');
+    expect(maskBody('multipart/form-data; boundary=x', body, body.length, true)).toEqual({
+      kind: 'form',
+      keys: ['note', 'file'],
+    });
+    expect(maskBody('multipart/form-data; boundary="x"', body, body.length)).toEqual({
+      kind: 'form',
+      keys: ['note', 'file'],
+    });
+    // 区切りが分からなければ、種類と大きさだけ
+    expect(maskBody('multipart/form-data', body, body.length)).toEqual({
+      kind: 'other',
+      type: 'multipart/form-data',
+      bytes: body.length,
+    });
+  });
+
+  it('パスは、英字と . _ ~ - だけの短い部分だけを残す（符号化された字・; や = を含む部分は伏せる）', () => {
+    expect(maskPath('/users/%EA%BA%AA')).toBe(`/users/${MASKED}`);
+    expect(maskPath('/a;jsessionid=ABCDEF')).toBe(`/${MASKED}`);
+    expect(maskPath('/api/comments/new')).toBe('/api/comments/new');
+    expect(maskPath('/assets/app.min.css')).toBe('/assets/app.min.css');
+  });
+});
+
+describe('アプリの枠からの知らせ（レビューで見つかったこと）', () => {
+  const now = 1_700_000_000_000;
+  const known = new Set(['comment-list', '__proto__', 'constructor']);
+
+  it('部品の場所は、id と場所の組の列で返す（アプリが選べる id を、入れ物のキーにしない）', () => {
+    const r = sanitizeReport(
+      {
+        t: 'parts',
+        at: now,
+        rects: [
+          ['__proto__', { x: 1, y: 2, w: 3, h: 4 }],
+          ['constructor', { x: 5, y: 6, w: 7, h: 8 }],
+        ],
+      },
+      now,
+      known,
+    ) as { rects: Array<[string, unknown]> };
+    expect(r.rects).toEqual([
+      ['__proto__', { x: 1, y: 2, w: 3, h: 4 }],
+      ['constructor', { x: 5, y: 6, w: 7, h: 8 }],
+    ]);
+    expect(Array.isArray(r.rects)).toBe(true);
+    // 前の形（id をキーにした入れ物）は、受けない
+    expect(
+      sanitizeReport(
+        { t: 'parts', at: now, rects: { 'comment-list': { x: 0, y: 0, w: 1, h: 1 } } },
+        now,
+        known,
+      ),
+    ).toBeUndefined();
+  });
+
+  it('先の時刻の知らせ（区切りを止める）は、道具の時計に置き換える', () => {
+    const r = sanitizeReport(
+      { t: 'part', at: now + 59_000, how: 'click', parts: ['comment-list'] },
+      now,
+      known,
+    );
+    expect(r).toMatchObject({ at: now });
+    expect(
+      sanitizeReport(
+        { t: 'part', at: now + 500, how: 'click', parts: ['comment-list'] },
+        now,
+        known,
+      ),
+    ).toMatchObject({ at: now + 500 });
   });
 });

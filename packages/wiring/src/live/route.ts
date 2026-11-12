@@ -24,12 +24,35 @@ const decode = (segment: string): string => {
   }
 };
 
-/** パスが、受け口のパスの書き方に合うか。`{名前}` は、どの値とも合う。問い合わせの文字列は比べない */
+/** パスが、パスの書き方に合うか。`{名前}` は、どの値とも合う。問い合わせの文字列は比べない */
 export function pathMatches(template: string, pathname: string): boolean {
   const want = segments(template);
   const got = segments(pathname);
   if (want.length !== got.length) return false;
   return want.every((w, i) => isSlot(w) || decode(w) === decode(got[i]!));
+}
+
+/**
+ * パスに合うもののうち、文字どおりの部分が、いちばん多いもの（`/items/new` と `/items/{id}` なら、前者）。
+ * 同じなら、先に書かれたもの。受け口（findRoute）と、画面（screenFor）の両方が使う
+ */
+export function mostLiteral<T>(
+  items: readonly T[],
+  pathOf: (item: T) => string | undefined,
+  pathname: string,
+): T | undefined {
+  let best: T | undefined;
+  let bestLiteral = -1;
+  for (const item of items) {
+    const path = pathOf(item);
+    if (path === undefined || !pathMatches(path, pathname)) continue;
+    const literal = segments(path).filter((s) => !isSlot(s)).length;
+    if (literal > bestLiteral) {
+      best = item;
+      bestLiteral = literal;
+    }
+  }
+  return best;
 }
 
 /** 図の受け口（meta.route のある箱）の一覧。同じ書き方は 1 つ */
@@ -42,25 +65,16 @@ export function graphRoutes(graph: Pick<GraphV2, 'nodes'>): RouteTemplate[] {
   return [...seen.values()];
 }
 
-/**
- * 通信に合う受け口。2 つ以上合うときは、文字どおりの部分が多いもの（`/items/new` と `/items/{id}` なら、前者）。
- * それも同じなら、先に書かれたもの
- */
+/** 通信に合う受け口（メソッドが同じで、パスが合うもの。2 つ以上合うときは mostLiteral） */
 export function findRoute(
   routes: readonly RouteTemplate[],
   method: string,
   pathname: string,
 ): RouteTemplate | undefined {
   const m = method.toUpperCase();
-  let best: RouteTemplate | undefined;
-  let bestLiteral = -1;
-  for (const r of routes) {
-    if (r.method !== m || !pathMatches(r.path, pathname)) continue;
-    const literal = segments(r.path).filter((s) => !isSlot(s)).length;
-    if (literal > bestLiteral) {
-      best = r;
-      bestLiteral = literal;
-    }
-  }
-  return best;
+  return mostLiteral(
+    routes.filter((r) => r.method === m),
+    (r) => r.path,
+    pathname,
+  );
 }
