@@ -1,0 +1,11 @@
+parts:
+  - id: add-form
+    name: "品物を足す欄"
+    box: "part:add-form"
+    screen: "screen:/list"
+    selector: "form.add"
+  - id: item-list
+    name: "品物の一覧"
+    box: "part:item-list"
+    screen: "screen:/list"
+    selector: "ul.items"

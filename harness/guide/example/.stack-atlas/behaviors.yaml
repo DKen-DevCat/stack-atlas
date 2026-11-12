@@ -1,0 +1,25 @@
+behaviors:
+  - id: open
+    name: "一覧を開く"
+    screen: "screen:/list"
+    trigger: { action: open }
+    steps:
+      - send: [{ from: "screen:/list#out/open", to: "endpoint:GET /items#in/request" }]
+        back: [{ from: "endpoint:GET /items#out/body.items", to: "screen:/list#in/items" }]
+      - send: [{ from: "endpoint:GET /items#req/all", to: "table:items#key/all" }]
+        back: [{ from: "table:items#read/rows", to: "endpoint:GET /items#res/rows" }]
+      - send: [{ from: "screen:/list#out/items", to: "part:item-list#in/items" }]
+    result: { say: "品物の一覧が出る。", part: item-list }
+
+  - id: add-item
+    name: "品物を足す"
+    screen: "screen:/list"
+    trigger: { action: submit, part: add-form }
+    steps:
+      - send: [{ from: "part:add-form#out/item", to: "endpoint:POST /items#in/body.item" }]
+        back: [{ from: "endpoint:POST /items#out/body.item", to: "part:add-form#in/saved" }]
+      - send: [{ from: "endpoint:POST /items#req/row", to: "table:items#write/row" }]
+        back: [{ from: "table:items#read/row", to: "endpoint:POST /items#res/row" }]
+      - send: [{ from: "part:add-form#out/added", to: "part:item-list#in/item" }]
+        say: "足した品物を、一覧に描く"
+    result: { say: "一覧に、品物が 1 つ増える。", part: item-list }
